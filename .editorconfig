@@ -1,0 +1,59 @@
+# EditorConfig is awesome: https://EditorConfig.org
+
+# top-most EditorConfig file
+root = true
+
+# Unix-style newlines with a newline ending every file
+[*]
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+charset = utf-8
+
+# Python files
+[*.{py,pyi}]
+indent_style = space
+indent_size = 4
+max_line_length = 88
+quote_type = double
+spaces_around_operators = true
+spaces_around_brackets = false
+continuation_indent_size = 8
+
+# TypeScript/React files
+[*.{ts,tsx}]
+indent_style = space
+indent_size = 2
+max_line_length = 100
+quote_type = single
+spaces_around_operators = true
+spaces_around_brackets = false
+curly_bracket_next_line = false
+continuation_indent_size = 2
+block_comment_start = /*
+block_comment_end = */
+jsx_quotes = double
+
+# YAML files
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+max_line_length = 80
+quote_type = single
+allow_duplicate_keys = false
+
+# JSON files
+[*.json]
+indent_style = space
+indent_size = 2
+max_line_length = 80
+allow_comments = false
+allow_trailing_comma = false
+
+# Markdown files
+[*.md]
+trim_trailing_whitespace = false
+indent_style = space
+indent_size = 2
+max_line_length = 120
+insert_final_newline = true
