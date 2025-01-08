@@ -1,85 +1,99 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Button, Typography, Alert, useTheme } from '@mui/material'; // v5.14.0
+import { Box, Button, Typography, useTheme } from '@mui/material'; // v5.14.0
 import { Add as AddIcon } from '@mui/icons-material'; // v5.14.0
+import { useDebounce } from 'use-debounce'; // v9.0.0
 import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
-import ClientTable from './ClientTable';
+
+import ClientTable, { ClientTableProps } from './ClientTable';
 import ClientForm from './ClientForm';
 import SearchField from '../../common/Forms/SearchField';
-import { useAuth } from '../../../hooks/useAuth';
 import { Client, ClientStatus } from '../../../types/client';
+import { useAuth } from '../../../hooks/useAuth';
 import { UserRole } from '../../../types/auth';
 
-// Enhanced state interface with comprehensive error handling
 interface ClientListState {
+  loading: boolean;
+  deleting: boolean;
   clients: Client[];
   total: number;
   page: number;
   pageSize: number;
   searchQuery: string;
-  loading: boolean;
-  deleting: boolean;
   formOpen: boolean;
   selectedClient: Client | undefined;
   error: Error | null;
   abortController: AbortController | null;
 }
 
-// Error fallback component with accessibility support
 const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> = ({
   error,
   resetErrorBoundary
 }) => (
-  <Alert 
-    severity="error" 
-    onClose={resetErrorBoundary}
-    sx={{ margin: 2 }}
+  <Box
+    role="alert"
+    sx={{
+      p: 3,
+      color: 'error.main',
+      textAlign: 'center'
+    }}
   >
-    <Typography variant="h6">Error loading clients</Typography>
-    <Typography>{error.message}</Typography>
-    <Button onClick={resetErrorBoundary} sx={{ mt: 1 }}>
+    <Typography variant="h6" gutterBottom>
+      Error loading clients:
+    </Typography>
+    <Typography variant="body1" gutterBottom>
+      {error.message}
+    </Typography>
+    <Button onClick={resetErrorBoundary} variant="contained" color="primary">
       Try Again
     </Button>
-  </Alert>
+  </Box>
 );
 
 const ClientList: React.FC = React.memo(() => {
   const theme = useTheme();
   const { user } = useAuth();
-  
-  // Initialize state with proper type safety
   const [state, setState] = useState<ClientListState>({
+    loading: true,
+    deleting: false,
     clients: [],
     total: 0,
     page: 1,
     pageSize: 10,
     searchQuery: '',
-    loading: true,
-    deleting: false,
     formOpen: false,
     selectedClient: undefined,
     error: null,
     abortController: null
   });
 
-  // Fetch clients with proper error handling and cleanup
+  const [debouncedSearch] = useDebounce(state.searchQuery, 300);
+
   const fetchClients = useCallback(async (
     page: number,
     pageSize: number,
-    searchQuery: string,
-    signal?: AbortSignal
+    search?: string
   ) => {
-    try {
-      setState(prev => ({ ...prev, loading: true, error: null }));
+    // Cancel previous request if exists
+    if (state.abortController) {
+      state.abortController.abort();
+    }
 
-      const response = await fetch(
-        `/api/clients?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(searchQuery)}`,
-        {
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          signal
-        }
-      );
+    const controller = new AbortController();
+    setState(prev => ({ ...prev, loading: true, error: null, abortController: controller }));
+
+    try {
+      const queryParams = new URLSearchParams({
+        page: page.toString(),
+        pageSize: pageSize.toString(),
+        ...(search && { search })
+      });
+
+      const response = await fetch(`/api/clients?${queryParams}`, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal
+      });
 
       if (!response.ok) {
         throw new Error('Failed to fetch clients');
@@ -90,7 +104,8 @@ const ClientList: React.FC = React.memo(() => {
         ...prev,
         clients: data.items,
         total: data.total,
-        loading: false
+        loading: false,
+        error: null
       }));
     } catch (error) {
       if (error.name === 'AbortError') return;
@@ -102,25 +117,38 @@ const ClientList: React.FC = React.memo(() => {
     }
   }, []);
 
-  // Handle pagination with optimistic updates
+  useEffect(() => {
+    fetchClients(state.page, state.pageSize, debouncedSearch);
+    return () => {
+      if (state.abortController) {
+        state.abortController.abort();
+      }
+    };
+  }, [state.page, state.pageSize, debouncedSearch, fetchClients]);
+
   const handlePageChange = useCallback(({ page, pageSize }) => {
     setState(prev => ({ ...prev, page, pageSize }));
-    fetchClients(page, pageSize, state.searchQuery);
-  }, [fetchClients, state.searchQuery]);
+  }, []);
 
-  // Handle search with debouncing
-  const handleSearch = useCallback((query: string) => {
-    setState(prev => ({ ...prev, searchQuery: query, page: 1 }));
-    fetchClients(1, state.pageSize, query);
-  }, [fetchClients, state.pageSize]);
+  const handleSearch = useCallback((value: string) => {
+    setState(prev => ({ ...prev, searchQuery: value, page: 1 }));
+  }, []);
 
-  // Handle client deletion with optimistic updates
-  const handleDelete = useCallback(async (client: Client) => {
+  const handleAddClient = useCallback(() => {
+    setState(prev => ({ ...prev, formOpen: true, selectedClient: undefined }));
+  }, []);
+
+  const handleEditClient = useCallback(async (client: Client) => {
+    setState(prev => ({ ...prev, formOpen: true, selectedClient: client }));
+  }, []);
+
+  const handleDeleteClient = useCallback(async (client: Client) => {
     if (!window.confirm(`Are you sure you want to delete ${client.name}?`)) {
       return;
     }
 
     setState(prev => ({ ...prev, deleting: true }));
+
     try {
       const response = await fetch(`/api/clients/${client.id}`, {
         method: 'DELETE',
@@ -133,6 +161,7 @@ const ClientList: React.FC = React.memo(() => {
         throw new Error('Failed to delete client');
       }
 
+      // Optimistic update
       setState(prev => ({
         ...prev,
         clients: prev.clients.filter(c => c.id !== client.id),
@@ -148,83 +177,51 @@ const ClientList: React.FC = React.memo(() => {
     }
   }, []);
 
-  // Handle form open/close with proper state cleanup
-  const handleFormOpen = useCallback((client?: Client) => {
-    setState(prev => ({
-      ...prev,
-      formOpen: true,
-      selectedClient: client,
-      error: null
-    }));
-  }, []);
-
   const handleFormClose = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      formOpen: false,
-      selectedClient: undefined,
-      error: null
-    }));
+    setState(prev => ({ ...prev, formOpen: false, selectedClient: undefined }));
   }, []);
 
-  // Handle form submission success
   const handleFormSuccess = useCallback(() => {
-    handleFormClose();
+    setState(prev => ({ ...prev, formOpen: false, selectedClient: undefined }));
     fetchClients(state.page, state.pageSize, state.searchQuery);
-  }, [fetchClients, handleFormClose, state.page, state.pageSize, state.searchQuery]);
+  }, [state.page, state.pageSize, state.searchQuery, fetchClients]);
 
-  // Set up initial data fetch with cleanup
-  useEffect(() => {
-    const controller = new AbortController();
-    setState(prev => ({ ...prev, abortController: controller }));
-    
-    fetchClients(state.page, state.pageSize, state.searchQuery, controller.signal);
-
-    return () => {
-      controller.abort();
-    };
-  }, [fetchClients, state.page, state.pageSize, state.searchQuery]);
-
-  // Check user permissions
   if (!user || user.role !== UserRole.SYSTEM_ADMIN) {
     return (
-      <Alert severity="error" sx={{ margin: 2 }}>
-        You do not have permission to access this page.
-      </Alert>
+      <Box sx={{ p: 3, textAlign: 'center' }}>
+        <Typography color="error">
+          Unauthorized access. System admin privileges required.
+        </Typography>
+      </Box>
     );
   }
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <Box sx={{ padding: theme.spacing(3) }}>
-        <Box sx={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: theme.spacing(3)
-        }}>
+      <Box sx={{ p: 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
           <Typography variant="h5" component="h1">
             Client Management
           </Typography>
-          
           <Button
             variant="contained"
             color="primary"
             startIcon={<AddIcon />}
-            onClick={() => handleFormOpen()}
+            onClick={handleAddClient}
             disabled={state.loading || state.deleting}
           >
             Add New Client
           </Button>
         </Box>
 
-        <Box sx={{ marginBottom: theme.spacing(3) }}>
+        <Box sx={{ mb: 3 }}>
           <SearchField
             value={state.searchQuery}
-            onSearch={handleSearch}
+            onChange={(e) => handleSearch(e.target.value)}
+            onClear={() => handleSearch('')}
             placeholder="Search clients..."
             isLoading={state.loading}
-            debounceMs={300}
+            fullWidth
           />
         </Box>
 
@@ -236,9 +233,9 @@ const ClientList: React.FC = React.memo(() => {
           loading={state.loading}
           error={state.error}
           onPageChange={handlePageChange}
-          onEdit={handleFormOpen}
-          onDelete={handleDelete}
-          onSettings={(client) => console.log('Settings:', client.id)}
+          onEdit={handleEditClient}
+          onDelete={handleDeleteClient}
+          onSettings={handleEditClient}
         />
 
         {state.formOpen && (
@@ -247,7 +244,7 @@ const ClientList: React.FC = React.memo(() => {
             onSuccess={handleFormSuccess}
             onCancel={handleFormClose}
             isSubmitting={state.loading}
-            csrfToken="your-csrf-token-here"
+            csrfToken={document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || ''}
           />
         )}
       </Box>
