@@ -116,49 +116,41 @@ const Modal = React.memo<ModalProps>(({
 
   // Handle backdrop click
   const handleBackdropClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (disableBackdropClick) {
-      event.stopPropagation();
-      return;
+    if (event.target === event.currentTarget && !disableBackdropClick) {
+      onClose();
     }
-    onClose();
   }, [disableBackdropClick, onClose]);
 
-  // Handle escape key press
-  const handleEscapeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (disableEscapeKeyDown) {
-      event.stopPropagation();
-      return;
+  // Handle escape key
+  const handleEscapeKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape' && !disableEscapeKeyDown) {
+      onClose();
     }
-    onClose();
   }, [disableEscapeKeyDown, onClose]);
+
+  // Set up keyboard event listeners
+  useEffect(() => {
+    if (open) {
+      document.addEventListener('keydown', handleEscapeKeyDown);
+      return () => {
+        document.removeEventListener('keydown', handleEscapeKeyDown);
+      };
+    }
+  }, [open, handleEscapeKeyDown]);
 
   // Focus trap management
   useEffect(() => {
     if (open) {
-      const handleTabKey = (e: KeyboardEvent) => {
-        if (e.key === 'Tab') {
-          const dialog = document.querySelector('[role="dialog"]');
-          const focusableElements = dialog?.querySelectorAll(
-            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-          );
-          
-          if (focusableElements) {
-            const firstElement = focusableElements[0] as HTMLElement;
-            const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
-
-            if (e.shiftKey && document.activeElement === firstElement) {
-              e.preventDefault();
-              lastElement.focus();
-            } else if (!e.shiftKey && document.activeElement === lastElement) {
-              e.preventDefault();
-              firstElement.focus();
-            }
-          }
+      const dialog = document.querySelector('[role="dialog"]');
+      if (dialog) {
+        const focusableElements = dialog.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        
+        if (focusableElements.length > 0) {
+          (focusableElements[0] as HTMLElement).focus();
         }
-      };
-
-      document.addEventListener('keydown', handleTabKey);
-      return () => document.removeEventListener('keydown', handleTabKey);
+      }
     }
   }, [open]);
 
@@ -170,9 +162,7 @@ const Modal = React.memo<ModalProps>(({
       aria-describedby={ariaDescribedby}
       aria-label={ariaLabel}
       maxWidth={false}
-      fullWidth={fullWidth}
       onClick={handleBackdropClick}
-      onKeyDown={handleEscapeKeyDown}
       TransitionProps={{
         timeout: {
           enter: ANIMATION_DURATION.enter,
@@ -183,7 +173,7 @@ const Modal = React.memo<ModalProps>(({
         zIndex: Z_INDEX.modal,
         '& .MuiDialog-paper': {
           width: fullWidth ? '100%' : MODAL_SIZES[size],
-          maxWidth: maxWidth ? MODAL_SIZES[size] : 'none',
+          maxWidth: maxWidth ? '100%' : undefined,
         },
       }}
     >
@@ -197,7 +187,6 @@ const Modal = React.memo<ModalProps>(({
               position: 'absolute',
               right: theme.spacing(1),
               top: theme.spacing(1),
-              color: theme.palette.grey[500],
             }}
           >
             <CloseIcon />
