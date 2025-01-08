@@ -1,7 +1,4 @@
-# Terraform AKS Module Variables
-# Version: hashicorp/terraform ~> 1.0
-
-# Resource Group Configuration
+# Basic cluster configuration variables
 variable "resource_group_name" {
   type        = string
   description = "Name of the Azure resource group where AKS cluster will be deployed"
@@ -12,10 +9,9 @@ variable "location" {
   description = "Azure region where AKS cluster will be deployed"
 }
 
-# Cluster Configuration
 variable "cluster_name" {
   type        = string
-  description = "Name of the Azure Kubernetes Service cluster"
+  description = "Name of the AKS cluster"
 }
 
 variable "kubernetes_version" {
@@ -27,110 +23,92 @@ variable "kubernetes_version" {
   }
 }
 
-# System Node Pool Configuration
+# Node pool configurations
 variable "system_node_pool_config" {
   type = object({
     name                = string
     vm_size            = string
+    enable_auto_scaling = bool
     node_count         = number
     min_count          = number
     max_count          = number
-    availability_zones = list(string)
     os_disk_size_gb    = number
     max_pods           = number
-    enable_auto_scaling = bool
     node_labels        = map(string)
     node_taints        = list(string)
   })
-  description = "Configuration for the system node pool"
+  description = "Configuration for the system node pool running critical system pods"
   default = {
     name                = "system"
     vm_size            = "Standard_D4s_v3"
+    enable_auto_scaling = true
     node_count         = 3
-    min_count          = 3
+    min_count          = 2
     max_count          = 5
-    availability_zones = ["1", "2", "3"]
     os_disk_size_gb    = 128
     max_pods           = 110
-    enable_auto_scaling = true
-    node_labels        = {
-      "nodepool-type" = "system"
-      "environment"   = "production"
-    }
+    node_labels        = { "nodepool-type" = "system" }
     node_taints        = ["CriticalAddonsOnly=true:NoSchedule"]
   }
 }
 
-# Application Node Pool Configuration
 variable "app_node_pool_config" {
   type = object({
     name                = string
     vm_size            = string
+    enable_auto_scaling = bool
     node_count         = number
     min_count          = number
     max_count          = number
-    availability_zones = list(string)
     os_disk_size_gb    = number
     max_pods           = number
-    enable_auto_scaling = bool
     node_labels        = map(string)
     node_taints        = list(string)
   })
-  description = "Configuration for the application node pool"
+  description = "Configuration for the application node pool running business workloads"
   default = {
     name                = "app"
     vm_size            = "Standard_D8s_v3"
+    enable_auto_scaling = true
     node_count         = 3
     min_count          = 3
     max_count          = 20
-    availability_zones = ["1", "2", "3"]
     os_disk_size_gb    = 256
     max_pods           = 110
-    enable_auto_scaling = true
-    node_labels        = {
-      "nodepool-type" = "app"
-      "environment"   = "production"
-    }
+    node_labels        = { "nodepool-type" = "app" }
     node_taints        = []
   }
 }
 
-# GPU Node Pool Configuration
 variable "gpu_node_pool_config" {
   type = object({
     name                = string
     vm_size            = string
+    enable_auto_scaling = bool
     node_count         = number
     min_count          = number
     max_count          = number
-    availability_zones = list(string)
     os_disk_size_gb    = number
     max_pods           = number
-    enable_auto_scaling = bool
     node_labels        = map(string)
     node_taints        = list(string)
   })
-  description = "Configuration for the GPU node pool for OCR workloads"
+  description = "Configuration for the GPU node pool running OCR and AI workloads"
   default = {
     name                = "gpu"
     vm_size            = "Standard_NC6s_v3"
+    enable_auto_scaling = true
     node_count         = 2
     min_count          = 2
     max_count          = 8
-    availability_zones = ["1", "2"]
     os_disk_size_gb    = 256
     max_pods           = 110
-    enable_auto_scaling = true
-    node_labels        = {
-      "nodepool-type" = "gpu"
-      "environment"   = "production"
-      "gpu"          = "nvidia"
-    }
+    node_labels        = { "nodepool-type" = "gpu", "accelerator" = "nvidia" }
     node_taints        = ["nvidia.com/gpu=present:NoSchedule"]
   }
 }
 
-# Network Profile Configuration
+# Network configuration
 variable "network_profile" {
   type = object({
     network_plugin     = string
@@ -153,49 +131,49 @@ variable "network_profile" {
   }
 }
 
-# Private Cluster Configuration
+# Private cluster configuration
 variable "private_cluster_config" {
   type = object({
-    enable_private_cluster = bool
-    private_dns_zone_id   = string
-    enable_private_endpoint = bool
-    subnet_id             = string
+    enable_private_cluster     = bool
+    private_dns_zone_id       = string
+    enable_private_endpoint   = bool
+    private_endpoint_subnet_id = string
   })
-  description = "Private cluster configuration settings"
+  description = "Private cluster configuration for enhanced security"
   default = {
-    enable_private_cluster = true
-    private_dns_zone_id   = null
-    enable_private_endpoint = true
-    subnet_id             = null
+    enable_private_cluster     = true
+    private_dns_zone_id       = null
+    enable_private_endpoint   = true
+    private_endpoint_subnet_id = null
   }
 }
 
-# Monitoring Configuration
+# Monitoring configuration
 variable "monitoring_config" {
   type = object({
     enable_log_analytics     = bool
     log_analytics_workspace_id = string
-    metrics_retention_in_days = number
-    enable_oms_agent         = bool
+    metrics_retention_days   = number
+    enable_oms_agent        = bool
     enable_container_insights = bool
   })
   description = "Monitoring configuration for the AKS cluster"
   default = {
-    enable_log_analytics     = true
+    enable_log_analytics      = true
     log_analytics_workspace_id = null
-    metrics_retention_in_days = 30
+    metrics_retention_days    = 30
     enable_oms_agent         = true
     enable_container_insights = true
   }
 }
 
-# Resource Tags
+# Resource tagging
 variable "tags" {
   type        = map(string)
-  description = "Resource tags for the AKS cluster and associated resources"
+  description = "Tags to be applied to all resources"
   default = {
-    Environment = "Production"
-    ManagedBy   = "Terraform"
-    Project     = "AI-Catalog-Search"
+    Environment = "production"
+    ManagedBy   = "terraform"
+    Project     = "ai-catalog-search"
   }
 }
