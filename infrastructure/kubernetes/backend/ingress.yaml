@@ -1,7 +1,6 @@
 # Kubernetes Ingress resource for backend FastAPI service
 # Version: networking.k8s.io/v1 (Kubernetes v1.25+)
 # Purpose: Configure external access with TLS termination and security controls
-
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
