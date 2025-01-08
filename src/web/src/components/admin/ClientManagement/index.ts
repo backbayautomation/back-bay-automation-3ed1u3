@@ -1,17 +1,28 @@
 /**
- * Barrel file for client management components.
- * Provides centralized access to all client management related components
- * for the admin portal with proper type exports.
+ * Barrel file for client management components providing centralized access
+ * to all client management related functionality in the admin portal.
+ * Implements type-safe exports for client list, form, and table components.
  * @version 1.0.0
  */
 
-// Export client list component with its dependencies
-export { default as ClientList } from './ClientList';
+// Internal component imports with type safety
+import ClientList from './ClientList';
+import ClientForm, { ClientFormProps } from './ClientForm';
+import ClientTable, { ClientTableProps } from './ClientTable';
 
-// Export client form component with its type definitions
-export { default as ClientForm } from './ClientForm';
-export type { ClientFormProps } from './ClientForm';
+// Export client management components and their types
+export {
+    // Main client list component
+    ClientList,
+    
+    // Client form component and its props interface
+    ClientForm,
+    type ClientFormProps,
+    
+    // Client table component and its props interface
+    ClientTable,
+    type ClientTableProps
+};
 
-// Export client table component with its type definitions
-export { default as ClientTable } from './ClientTable';
-export type { ClientTableProps } from './ClientTable';
+// Default export for convenient importing
+export default ClientList;
