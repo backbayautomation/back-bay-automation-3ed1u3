@@ -12,7 +12,15 @@ import type { AuthState } from '../types/auth';
 /**
  * Return type for useAuth hook with comprehensive authentication functionality
  */
-interface UseAuthReturn extends AuthState {
+interface UseAuthReturn {
+  // Authentication state
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  user: AuthState['user'];
+  tokens: AuthState['tokens'];
+  error: AuthState['error'];
+
+  // Authentication methods
   login: (credentials: { email: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshToken: () => Promise<void>;
@@ -20,21 +28,21 @@ interface UseAuthReturn extends AuthState {
 }
 
 /**
- * Custom hook providing secure authentication functionality with proper error handling
- * and type safety. Implements OAuth 2.0 + JWT authentication with token refresh.
+ * Custom hook providing secure access to authentication context and functionality
+ * with comprehensive error handling and type safety.
  * 
- * @throws {Error} When used outside of AuthProvider context
- * @returns {UseAuthReturn} Authentication state and methods with type safety
+ * @returns {UseAuthReturn} Strongly-typed authentication state and methods
+ * @throws {Error} If used outside of AuthProvider context
  */
 export const useAuth = (): UseAuthReturn => {
   // Get authentication context with type safety
   const context = useContext(AuthContext);
 
-  // Validate context existence with detailed error message
+  // Validate context existence with detailed error
   if (!context) {
     throw new Error(
-      'useAuth hook must be used within an AuthProvider component. ' +
-      'Please ensure your component is wrapped with AuthProvider.'
+      'useAuth must be used within an AuthProvider. ' +
+      'Ensure your component is wrapped in the AuthProvider component.'
     );
   }
 
@@ -62,37 +70,15 @@ export const useAuth = (): UseAuthReturn => {
     tokens,
     error,
 
-    // Authentication methods with proper error handling
-    login: async (credentials) => {
-      try {
-        await login(credentials);
-      } catch (error) {
-        // Let error propagate to be handled by error boundary
-        throw error;
-      }
-    },
-
-    logout: async () => {
-      try {
-        await logout();
-      } catch (error) {
-        // Let error propagate to be handled by error boundary
-        throw error;
-      }
-    },
-
-    refreshToken: async () => {
-      try {
-        await refreshToken();
-      } catch (error) {
-        // Let error propagate to be handled by error boundary
-        throw error;
-      }
-    },
-
-    // Error handling
+    // Authentication methods with proper typing
+    login,
+    logout,
+    refreshToken,
     clearError
   };
 };
 
+/**
+ * Default export of useAuth hook for convenient importing
+ */
 export default useAuth;
