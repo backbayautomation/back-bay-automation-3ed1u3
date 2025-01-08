@@ -1,0 +1,86 @@
+version: 2
+updates:
+  # Python backend dependencies configuration
+  - package-ecosystem: "pip"
+    directory: "/src/backend"
+    schedule:
+      interval: "daily"
+      time: "02:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "all"
+    versioning-strategy: "auto"
+    labels:
+      - "dependencies"
+      - "backend"
+      - "security"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "backend-team"
+    assignees:
+      - "security-team"
+
+  # Frontend NPM dependencies configuration
+  - package-ecosystem: "npm"
+    directory: "/src/web"
+    schedule:
+      interval: "daily"
+      time: "02:00"
+      timezone: "UTC"
+    allow:
+      - dependency-type: "all"
+    versioning-strategy: "auto"
+    labels:
+      - "dependencies"
+      - "frontend"
+      - "security"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "frontend-team"
+    assignees:
+      - "security-team"
+
+  # GitHub Actions workflow dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "ci"
+      - "security"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "devops-team"
+    assignees:
+      - "security-team"
+
+registries:
+  python-index:
+    type: python-index
+    url: https://pypi.org/simple
+    security:
+      require-ssl: true
+      verify-ssl: true
+  npm-registry:
+    type: npm-registry
+    url: https://registry.npmjs.org
+    security:
+      require-ssl: true
+      verify-ssl: true
+
+insecure-external-code-execution: deny
+vulnerability-alerts: true
+security-updates: true
