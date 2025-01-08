@@ -2,24 +2,24 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
+  LinearProgress,
   IconButton,
   Tooltip,
-  LinearProgress,
   Alert,
-  useTheme,
+  useTheme
 } from '@mui/material'; // v5.14.0
 import {
   Refresh as RefreshIcon,
   Cancel as CancelIcon,
   Replay as RetryIcon,
-  Error as ErrorIcon,
+  Error as ErrorIcon
 } from '@mui/icons-material'; // v5.14.0
 import { format } from 'date-fns'; // v2.30.0
 
-import DataTable from '../../common/Tables/DataTable';
+import { DataTable } from '../../common/Tables/DataTable';
 import { Document, ProcessingStatus } from '../../../types/document';
 import { useWebSocket } from '../../../hooks/useWebSocket';
-import documentService from '../../../services/documents';
+import { documentService } from '../../../services/documents';
 
 interface ProcessingQueueProps {
   refreshInterval?: number;
@@ -38,31 +38,34 @@ interface QueueState {
   progressMap: Map<string, number>;
 }
 
+const INITIAL_STATE: QueueState = {
+  documents: [],
+  loading: true,
+  error: null,
+  total: 0,
+  page: 1,
+  pageSize: 10,
+  progressMap: new Map()
+};
+
 const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
   refreshInterval = 30000,
   autoRefresh = true,
   onProcessingComplete,
-  onError,
+  onError
 }) => {
   const theme = useTheme();
-  const [state, setState] = useState<QueueState>({
-    documents: [],
-    loading: true,
-    error: null,
-    total: 0,
-    page: 1,
-    pageSize: 10,
-    progressMap: new Map(),
-  });
+  const [state, setState] = useState<QueueState>(INITIAL_STATE);
+  const [retryCount] = useState<Map<string, number>>(new Map());
 
-  // WebSocket connection for real-time updates
-  const { addListener, removeListener } = useWebSocket({
+  // WebSocket setup for real-time updates
+  const { isConnected, addListener, removeListener } = useWebSocket({
     baseUrl: `${process.env.VITE_WS_URL}/documents`,
     autoConnect: true,
-    monitoringEnabled: true,
+    monitoringEnabled: true
   });
 
-  // Fetch documents with pagination and error handling
+  // Fetch documents with cursor-based pagination
   const fetchDocuments = useCallback(async () => {
     try {
       setState(prev => ({ ...prev, loading: true, error: null }));
@@ -72,35 +75,38 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
         sortBy: 'created_at',
         order: 'desc',
         filters: {
-          status: ['pending', 'queued', 'processing'],
-        },
+          status: ['pending', 'queued', 'processing'].join(',')
+        }
       });
 
       setState(prev => ({
         ...prev,
         documents: response.items,
         total: response.total,
-        loading: false,
+        loading: false
       }));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch documents';
-      setState(prev => ({ ...prev, error: errorMessage, loading: false }));
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
+      setState(prev => ({
+        ...prev,
+        loading: false,
+        error: 'Failed to fetch documents'
+      }));
+      onError?.(error as Error);
     }
   }, [state.page, state.pageSize, onError]);
 
-  // Handle document processing updates via WebSocket
-  const handleProcessingUpdate = useCallback((update: { 
+  // Handle WebSocket document updates
+  const handleDocumentUpdate = useCallback((update: { 
     documentId: string; 
     status: ProcessingStatus; 
     progress: number;
-    error?: string;
+    error?: string 
   }) => {
     setState(prev => {
-      const newDocs = prev.documents.map(doc => {
+      const updatedDocs = prev.documents.map(doc => {
         if (doc.id === update.documentId) {
-          const updatedDoc = { 
-            ...doc, 
+          const updatedDoc = {
+            ...doc,
             status: update.status,
             error_message: update.error
           };
@@ -114,62 +120,40 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
         return doc;
       });
 
-      const newProgressMap = new Map(prev.progressMap);
-      if (update.progress) {
-        newProgressMap.set(update.documentId, update.progress);
-      }
+      const updatedProgress = new Map(prev.progressMap);
+      updatedProgress.set(update.documentId, update.progress);
 
       return {
         ...prev,
-        documents: newDocs,
-        progressMap: newProgressMap,
+        documents: updatedDocs,
+        progressMap: updatedProgress
       };
     });
   }, [onProcessingComplete]);
 
-  // Set up WebSocket listeners and auto-refresh
-  useEffect(() => {
-    addListener('document.processing', handleProcessingUpdate);
-
-    let refreshTimer: NodeJS.Timeout;
-    if (autoRefresh) {
-      refreshTimer = setInterval(fetchDocuments, refreshInterval);
-    }
-
-    return () => {
-      removeListener('document.processing', handleProcessingUpdate);
-      if (refreshTimer) {
-        clearInterval(refreshTimer);
-      }
-    };
-  }, [addListener, removeListener, handleProcessingUpdate, fetchDocuments, autoRefresh, refreshInterval]);
-
-  // Initial data fetch
-  useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
-
-  // Handle retry action
+  // Handle retry processing
   const handleRetry = useCallback(async (documentId: string) => {
     try {
-      await documentService.startDocumentProcessing(documentId);
+      setState(prev => ({ ...prev, error: null }));
+      await documentService.retryProcessing(documentId);
+      
+      const currentRetries = retryCount.get(documentId) || 0;
+      retryCount.set(documentId, currentRetries + 1);
+      
       fetchDocuments();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to retry processing';
-      setState(prev => ({ ...prev, error: errorMessage }));
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
+      onError?.(error as Error);
     }
-  }, [fetchDocuments, onError]);
+  }, [fetchDocuments, onError, retryCount]);
 
-  // Handle cancel action
+  // Handle cancel processing
   const handleCancel = useCallback(async (documentId: string) => {
     try {
+      setState(prev => ({ ...prev, error: null }));
       await documentService.cancelProcessing(documentId);
       fetchDocuments();
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to cancel processing';
-      setState(prev => ({ ...prev, error: errorMessage }));
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
+      onError?.(error as Error);
     }
   }, [fetchDocuments, onError]);
 
@@ -178,123 +162,139 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
     {
       id: 'filename',
       label: 'Document',
+      sortable: true,
       render: (doc: Document) => (
-        <Typography variant="body2" component="div">
+        <Typography variant="body2" noWrap>
           {doc.filename}
-          {doc.error_message && (
-            <Tooltip title={doc.error_message}>
-              <ErrorIcon
-                sx={{
-                  color: theme.palette.error.main,
-                  marginLeft: 1,
-                  fontSize: 16,
-                }}
-              />
-            </Tooltip>
-          )}
         </Typography>
-      ),
+      )
     },
     {
       id: 'status',
       label: 'Status',
+      sortable: true,
       render: (doc: Document) => (
-        <Box sx={{ minWidth: 200 }}>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
-          </Typography>
-          {(doc.status === 'processing' || doc.status === 'queued') && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {doc.status === 'processing' && (
             <LinearProgress
               variant="determinate"
               value={state.progressMap.get(doc.id) || 0}
-              sx={{ height: 4, borderRadius: 2 }}
+              sx={{ width: 100 }}
             />
           )}
+          <Typography variant="body2" color={
+            doc.status === 'failed' ? 'error' : 'textPrimary'
+          }>
+            {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+          </Typography>
         </Box>
-      ),
+      )
     },
     {
       id: 'created_at',
       label: 'Created',
+      sortable: true,
       render: (doc: Document) => (
         <Typography variant="body2">
           {format(new Date(doc.createdAt), 'MMM dd, yyyy HH:mm')}
         </Typography>
-      ),
+      )
     },
     {
       id: 'actions',
       label: 'Actions',
       render: (doc: Document) => (
-        <Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
           {doc.status === 'failed' && (
             <Tooltip title="Retry Processing">
               <IconButton
                 size="small"
                 onClick={() => handleRetry(doc.id)}
-                aria-label="retry processing"
+                disabled={retryCount.get(doc.id) >= 3}
               >
                 <RetryIcon />
               </IconButton>
             </Tooltip>
           )}
-          {(doc.status === 'processing' || doc.status === 'queued') && (
+          {doc.status === 'processing' && (
             <Tooltip title="Cancel Processing">
               <IconButton
                 size="small"
                 onClick={() => handleCancel(doc.id)}
-                aria-label="cancel processing"
               >
                 <CancelIcon />
               </IconButton>
             </Tooltip>
           )}
+          {doc.error_message && (
+            <Tooltip title={doc.error_message}>
+              <ErrorIcon color="error" />
+            </Tooltip>
+          )}
         </Box>
-      ),
-    },
-  ], [theme, state.progressMap, handleRetry, handleCancel]);
+      )
+    }
+  ], [state.progressMap, handleRetry, handleCancel, retryCount]);
+
+  // Set up auto-refresh and WebSocket listeners
+  useEffect(() => {
+    fetchDocuments();
+
+    if (autoRefresh) {
+      const interval = setInterval(fetchDocuments, refreshInterval);
+      return () => clearInterval(interval);
+    }
+  }, [fetchDocuments, autoRefresh, refreshInterval]);
+
+  useEffect(() => {
+    addListener('document.processing', handleDocumentUpdate);
+    return () => removeListener('document.processing', handleDocumentUpdate);
+  }, [addListener, removeListener, handleDocumentUpdate]);
 
   return (
     <Box sx={{ width: '100%' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h6" component="h2">
-          Processing Queue
-        </Typography>
-        <Tooltip title="Refresh Queue">
-          <IconButton
-            onClick={fetchDocuments}
-            disabled={state.loading}
-            aria-label="refresh queue"
-          >
-            <RefreshIcon />
-          </IconButton>
-        </Tooltip>
+      <Box sx={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        mb: 2 
+      }}>
+        <Typography variant="h6">Processing Queue</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {!isConnected && (
+            <Alert severity="warning" sx={{ py: 0 }}>
+              Real-time updates disconnected
+            </Alert>
+          )}
+          <Tooltip title="Refresh Queue">
+            <IconButton onClick={fetchDocuments} disabled={state.loading}>
+              <RefreshIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
       </Box>
-
-      {state.error && (
-        <Alert 
-          severity="error" 
-          sx={{ mb: 2 }}
-          onClose={() => setState(prev => ({ ...prev, error: null }))}
-        >
-          {state.error}
-        </Alert>
-      )}
 
       <DataTable
         data={state.documents}
         columns={columns}
+        loading={state.loading}
         page={state.page}
         pageSize={state.pageSize}
         total={state.total}
-        loading={state.loading}
         onPageChange={({ page, pageSize }) => {
           setState(prev => ({ ...prev, page, pageSize }));
         }}
-        enableVirtualization
         emptyMessage="No documents in processing queue"
+        enableVirtualization
+        virtualRowHeight={52}
         ariaLabel="Document processing queue"
       />
+
+      {state.error && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {state.error}
+        </Alert>
+      )}
     </Box>
   );
 };
