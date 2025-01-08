@@ -15,7 +15,7 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: standard
+  storageClassName: default
 
 ---
 # ConfigMap for Grafana main configuration
@@ -41,23 +41,27 @@ data:
     allow_embedding = true
     disable_gravatar = true
     strict_transport_security = true
-
+    strict_transport_security_max_age_seconds = 31536000
+    
     [auth]
     disable_login_form = false
     oauth_auto_login = false
     disable_signout_menu = false
-
+    
     [users]
     allow_sign_up = false
     auto_assign_org_role = Viewer
-
+    
     [dashboards]
     min_refresh_interval = 5s
-
+    
     [metrics]
     enabled = true
     basic_auth_username = metrics
-    disable_total_stats = false
+    
+    [log]
+    mode = console
+    level = info
 
 ---
 # ConfigMap for Grafana datasources
@@ -85,6 +89,8 @@ data:
           timeInterval: "15s"
           queryTimeout: "30s"
           httpMethod: "POST"
+        secureJsonData:
+          httpHeaderValue1: "Bearer ${PROMETHEUS_TOKEN}"
 
 ---
 # ConfigMap for Grafana dashboards
@@ -102,28 +108,19 @@ data:
     {
       "title": "System Metrics",
       "uid": "system-metrics",
-      "tags": ["system", "performance"],
-      "timezone": "browser",
-      "schemaVersion": 16,
-      "version": 1
+      "panels": []
     }
   api-performance.json: |
     {
       "title": "API Performance",
       "uid": "api-performance",
-      "tags": ["api", "performance"],
-      "timezone": "browser",
-      "schemaVersion": 16,
-      "version": 1
+      "panels": []
     }
-  security-metrics.json: |
+  security-monitoring.json: |
     {
-      "title": "Security Metrics",
-      "uid": "security-metrics",
-      "tags": ["security", "audit"],
-      "timezone": "browser",
-      "schemaVersion": 16,
-      "version": 1
+      "title": "Security Monitoring",
+      "uid": "security-monitoring",
+      "panels": []
     }
 
 ---
@@ -140,30 +137,6 @@ metadata:
 type: Opaque
 data:
   admin-password: ${GRAFANA_ADMIN_PASSWORD}
-
----
-# Service for Grafana
-apiVersion: v1
-kind: Service
-metadata:
-  name: grafana
-  namespace: monitoring
-  labels:
-    app: grafana
-    component: monitoring
-    part-of: catalog-search
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "3000"
-spec:
-  type: ClusterIP
-  ports:
-    - port: 3000
-      targetPort: http
-      protocol: TCP
-      name: http
-  selector:
-    app: grafana
 
 ---
 # Deployment for Grafana
@@ -200,6 +173,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: grafana
+          # grafana v10.1.0
           image: grafana/grafana:10.1.0
           imagePullPolicy: IfNotPresent
           ports:
@@ -267,3 +241,65 @@ spec:
         - name: grafana-datasources
           configMap:
             name: grafana-datasources
+
+---
+# Service for Grafana
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+    component: monitoring
+    part-of: catalog-search
+spec:
+  type: ClusterIP
+  ports:
+    - port: 3000
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: grafana
+
+---
+# Network Policy for Grafana
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-network-policy
+  namespace: monitoring
+  labels:
+    app: grafana
+    component: monitoring
+    part-of: catalog-search
+spec:
+  podSelector:
+    matchLabels:
+      app: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
