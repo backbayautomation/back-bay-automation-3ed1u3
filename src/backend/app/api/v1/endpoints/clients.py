@@ -8,10 +8,10 @@ Version: 1.0.0
 
 from typing import Optional, List
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Depends, Query, Path, BackgroundTasks  # version: ^0.100.0
-from sqlalchemy.ext.asyncio import AsyncSession  # version: ^1.4.0
-from sqlalchemy import select, func, desc, asc
-from fastapi_limiter import RateLimiter  # version: ^0.1.5
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from fastapi_limiter import RateLimiter
 
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientUpdate, Client as ClientSchema
@@ -23,7 +23,7 @@ from app.utils.logging import StructuredLogger
 router = APIRouter(prefix="/clients", tags=["clients"])
 
 # Initialize structured logger
-logger = StructuredLogger(__name__)
+logger = StructuredLogger("client_endpoints")
 
 # Rate limiting configuration
 rate_limiter = RateLimiter(times=100, hours=1)
@@ -31,7 +31,7 @@ rate_limiter = RateLimiter(times=100, hours=1)
 @router.get("/", response_model=List[ClientSchema])
 async def get_clients(
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_active_user),
+    current_user: User = Depends(get_current_active_user),
     name: Optional[str] = Query(None, description="Filter by client name"),
     sort_by: Optional[str] = Query("name", description="Sort field"),
     sort_order: Optional[str] = Query("asc", description="Sort order (asc/desc)"),
@@ -43,7 +43,7 @@ async def get_clients(
     
     Args:
         db: Database session
-        current_user: Authenticated user from token
+        current_user: Authenticated user
         name: Optional name filter
         sort_by: Field to sort by
         sort_order: Sort direction
@@ -51,33 +51,35 @@ async def get_clients(
         limit: Pagination limit
         
     Returns:
-        List[ClientSchema]: List of client objects
+        List[ClientSchema]: List of client records
         
     Raises:
         HTTPException: For authorization or database errors
     """
     try:
-        # Check user permissions
+        # Check permissions
         if not await check_permissions(current_user, ["system_admin", "client_admin"], current_user.org_id):
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to list clients"
+            )
 
         # Build base query
-        query = select(Client)
-
-        # Apply tenant isolation
-        if current_user.role != "system_admin":
-            query = query.filter(Client.org_id == current_user.org_id)
+        query = select(Client).where(Client.org_id == current_user.org_id)
 
         # Apply name filter if provided
         if name:
-            query = query.filter(Client.name.ilike(f"%{name}%"))
+            query = query.where(Client.name.ilike(f"%{name}%"))
 
         # Apply sorting
-        sort_column = getattr(Client, sort_by, Client.name)
-        if sort_order == "desc":
-            query = query.order_by(desc(sort_column))
+        if sort_order.lower() == "desc":
+            query = query.order_by(getattr(Client, sort_by).desc())
         else:
-            query = query.order_by(asc(sort_column))
+            query = query.order_by(getattr(Client, sort_by).asc())
+
+        # Get total count for pagination
+        count_query = select(func.count()).select_from(query.subquery())
+        total = await db.scalar(count_query)
 
         # Apply pagination
         query = query.offset(skip).limit(limit)
@@ -92,8 +94,9 @@ async def get_clients(
             {
                 "user_id": str(current_user.id),
                 "org_id": str(current_user.org_id),
-                "filters": {"name": name},
-                "results": len(clients)
+                "filter": {"name": name},
+                "pagination": {"skip": skip, "limit": limit},
+                "total_results": total
             }
         )
 
@@ -104,16 +107,20 @@ async def get_clients(
             "client_list_error",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "error": str(e)
             }
         )
-        raise HTTPException(status_code=500, detail="Error retrieving clients")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving clients"
+        )
 
 @router.get("/{client_id}", response_model=ClientSchema)
 async def get_client(
     client_id: UUID = Path(..., description="Client ID to retrieve"),
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user)
 ) -> ClientSchema:
     """
     Retrieve a specific client by ID with security checks.
@@ -121,35 +128,42 @@ async def get_client(
     Args:
         client_id: UUID of client to retrieve
         db: Database session
-        current_user: Authenticated user from token
+        current_user: Authenticated user
         
     Returns:
-        ClientSchema: Client object if found
+        ClientSchema: Client details
         
     Raises:
         HTTPException: For authorization or database errors
     """
     try:
-        # Check user permissions
+        # Check permissions
         if not await check_permissions(current_user, ["system_admin", "client_admin"], current_user.org_id):
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to view client"
+            )
 
-        # Query client with tenant isolation
-        query = select(Client).filter(Client.id == client_id)
-        if current_user.role != "system_admin":
-            query = query.filter(Client.org_id == current_user.org_id)
-
+        # Query client with org_id check
+        query = select(Client).where(
+            Client.id == client_id,
+            Client.org_id == current_user.org_id
+        )
         result = await db.execute(query)
         client = result.scalar_one_or_none()
 
         if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Client not found"
+            )
 
         # Log access
         logger.log_security_event(
             "client_accessed",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "client_id": str(client_id)
             }
         )
@@ -163,64 +177,77 @@ async def get_client(
             "client_access_error",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "client_id": str(client_id),
                 "error": str(e)
             }
         )
-        raise HTTPException(status_code=500, detail="Error retrieving client")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving client"
+        )
 
-@router.post("/", response_model=ClientSchema)
+@router.post("/", response_model=ClientSchema, status_code=status.HTTP_201_CREATED)
 async def create_client(
-    client: ClientCreate,
+    client_data: ClientCreate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_active_user),
-    background_tasks: BackgroundTasks = BackgroundTasks()
+    current_user: User = Depends(get_current_active_user),
+    background_tasks: BackgroundTasks
 ) -> ClientSchema:
     """
     Create a new client with security validation and audit logging.
     
     Args:
-        client: Client creation data
+        client_data: Client creation data
         db: Database session
-        current_user: Authenticated user from token
-        background_tasks: Background task queue
+        current_user: Authenticated user
+        background_tasks: Background task handler
         
     Returns:
-        ClientSchema: Created client object
+        ClientSchema: Created client details
         
     Raises:
-        HTTPException: For authorization or database errors
+        HTTPException: For authorization or validation errors
     """
     try:
-        # Check user permissions
+        # Check permissions
         if not await check_permissions(current_user, ["system_admin"], current_user.org_id):
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to create client"
+            )
 
-        # Create new client instance
-        db_client = Client(
-            org_id=client.org_id,
-            name=client.name,
-            config=client.config,
-            branding=client.branding
+        # Create new client
+        new_client = Client(
+            org_id=current_user.org_id,
+            name=client_data.name,
+            config=client_data.config,
+            branding=client_data.branding
         )
 
-        # Add to database
-        db.add(db_client)
+        db.add(new_client)
         await db.commit()
-        await db.refresh(db_client)
+        await db.refresh(new_client)
 
-        # Schedule background tasks
-        background_tasks.add_task(
-            logger.log_security_event,
+        # Log creation
+        logger.log_security_event(
             "client_created",
             {
                 "user_id": str(current_user.id),
-                "client_id": str(db_client.id),
-                "org_id": str(client.org_id)
+                "org_id": str(current_user.org_id),
+                "client_id": str(new_client.id),
+                "client_name": new_client.name
             }
         )
 
-        return ClientSchema.from_orm(db_client)
+        # Schedule any background tasks
+        background_tasks.add_task(
+            setup_client_resources,
+            new_client.id,
+            current_user.org_id
+        )
+
+        return ClientSchema.from_orm(new_client)
 
     except Exception as e:
         await db.rollback()
@@ -228,68 +255,82 @@ async def create_client(
             "client_creation_error",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "error": str(e)
             }
         )
-        raise HTTPException(status_code=500, detail="Error creating client")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error creating client"
+        )
 
 @router.put("/{client_id}", response_model=ClientSchema)
 async def update_client(
     client_id: UUID,
-    client_update: ClientUpdate,
+    client_data: ClientUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_active_user)
+    current_user: User = Depends(get_current_active_user)
 ) -> ClientSchema:
     """
     Update an existing client with validation and audit logging.
     
     Args:
         client_id: UUID of client to update
-        client_update: Client update data
+        client_data: Update data
         db: Database session
-        current_user: Authenticated user from token
+        current_user: Authenticated user
         
     Returns:
-        ClientSchema: Updated client object
+        ClientSchema: Updated client details
         
     Raises:
-        HTTPException: For authorization or database errors
+        HTTPException: For authorization or validation errors
     """
     try:
-        # Check user permissions
-        if not await check_permissions(current_user, ["system_admin", "client_admin"], current_user.org_id):
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        # Check permissions
+        if not await check_permissions(current_user, ["system_admin"], current_user.org_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to update client"
+            )
 
         # Query existing client
-        query = select(Client).filter(Client.id == client_id)
-        if current_user.role != "system_admin":
-            query = query.filter(Client.org_id == current_user.org_id)
-
+        query = select(Client).where(
+            Client.id == client_id,
+            Client.org_id == current_user.org_id
+        )
         result = await db.execute(query)
-        db_client = result.scalar_one_or_none()
+        client = result.scalar_one_or_none()
 
-        if not db_client:
-            raise HTTPException(status_code=404, detail="Client not found")
+        if not client:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Client not found"
+            )
 
         # Update fields
-        update_data = client_update.dict(exclude_unset=True)
-        for field, value in update_data.items():
-            setattr(db_client, field, value)
+        if client_data.name is not None:
+            client.name = client_data.name
+        if client_data.config is not None:
+            client.update_config(client_data.config)
+        if client_data.branding is not None:
+            client.update_branding(client_data.branding)
 
         await db.commit()
-        await db.refresh(db_client)
+        await db.refresh(client)
 
         # Log update
         logger.log_security_event(
             "client_updated",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "client_id": str(client_id),
-                "updated_fields": list(update_data.keys())
+                "updated_fields": client_data.dict(exclude_unset=True)
             }
         )
 
-        return ClientSchema.from_orm(db_client)
+        return ClientSchema.from_orm(client)
 
     except HTTPException:
         raise
@@ -299,60 +340,78 @@ async def update_client(
             "client_update_error",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "client_id": str(client_id),
                 "error": str(e)
             }
         )
-        raise HTTPException(status_code=500, detail="Error updating client")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating client"
+        )
 
-@router.delete("/{client_id}")
+@router.delete("/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_client(
     client_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user = Depends(get_current_active_user)
-) -> dict:
+    current_user: User = Depends(get_current_active_user),
+    background_tasks: BackgroundTasks
+) -> None:
     """
-    Delete a client with security validation and cascade handling.
+    Delete a client with cascade cleanup and audit logging.
     
     Args:
         client_id: UUID of client to delete
         db: Database session
-        current_user: Authenticated user from token
-        
-    Returns:
-        dict: Success message
+        current_user: Authenticated user
+        background_tasks: Background task handler
         
     Raises:
         HTTPException: For authorization or database errors
     """
     try:
-        # Check user permissions
+        # Check permissions
         if not await check_permissions(current_user, ["system_admin"], current_user.org_id):
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions to delete client"
+            )
 
-        # Query client
-        query = select(Client).filter(Client.id == client_id)
+        # Query existing client
+        query = select(Client).where(
+            Client.id == client_id,
+            Client.org_id == current_user.org_id
+        )
         result = await db.execute(query)
-        db_client = result.scalar_one_or_none()
+        client = result.scalar_one_or_none()
 
-        if not db_client:
-            raise HTTPException(status_code=404, detail="Client not found")
+        if not client:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Client not found"
+            )
 
-        # Delete client (cascade will handle related records)
-        await db.delete(db_client)
-        await db.commit()
-
-        # Log deletion
+        # Log deletion before removing
         logger.log_security_event(
             "client_deleted",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "client_id": str(client_id),
-                "org_id": str(db_client.org_id)
+                "client_name": client.name
             }
         )
 
-        return {"message": "Client deleted successfully"}
+        # Delete client
+        await db.delete(client)
+        await db.commit()
+
+        # Schedule cleanup tasks
+        background_tasks.add_task(
+            cleanup_client_resources,
+            client_id,
+            current_user.org_id
+        )
 
     except HTTPException:
         raise
@@ -362,8 +421,34 @@ async def delete_client(
             "client_deletion_error",
             {
                 "user_id": str(current_user.id),
+                "org_id": str(current_user.org_id),
                 "client_id": str(client_id),
                 "error": str(e)
             }
         )
-        raise HTTPException(status_code=500, detail="Error deleting client")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting client"
+        )
+
+async def setup_client_resources(client_id: UUID, org_id: UUID) -> None:
+    """Background task to set up required resources for new client."""
+    logger.log_security_event(
+        "client_setup_started",
+        {
+            "client_id": str(client_id),
+            "org_id": str(org_id)
+        }
+    )
+    # Add resource setup logic here
+
+async def cleanup_client_resources(client_id: UUID, org_id: UUID) -> None:
+    """Background task to clean up client resources after deletion."""
+    logger.log_security_event(
+        "client_cleanup_started",
+        {
+            "client_id": str(client_id),
+            "org_id": str(org_id)
+        }
+    )
+    # Add resource cleanup logic here
