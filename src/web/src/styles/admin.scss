@@ -1,0 +1,279 @@
+// =============================================================================
+// Admin Portal Stylesheet
+// Enhanced styles for admin interface with WCAG 2.1 AA compliance,
+// dark mode support, and responsive design patterns
+// Version: 1.0.0
+// =============================================================================
+
+@import './variables';
+@import './theme';
+@import './common';
+
+// =============================================================================
+// Admin Layout
+// =============================================================================
+
+.admin-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, auto) 1fr;
+  min-height: 100vh;
+  container-type: inline-size;
+  contain: layout style paint;
+  color-scheme: light dark;
+
+  @container (width < #{$breakpoint-tablet}) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-sidebar {
+  background-color: var(--background-secondary);
+  border-right: 1px solid var(--border-color, rgba($text-primary, 0.1));
+  padding: $spacing-md;
+  position: fixed;
+  height: 100vh;
+  width: 250px;
+  transition: transform 0.3s ease;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+
+  @container (width < #{$breakpoint-tablet}) {
+    position: fixed;
+    transform: translateX(-100%);
+    z-index: $z-index-fixed;
+    
+    &.is-open {
+      transform: translateX(0);
+    }
+  }
+}
+
+// =============================================================================
+// Dashboard Grid
+// =============================================================================
+
+.dashboard-grid {
+  display: grid;
+  gap: $spacing-lg;
+  padding: $spacing-lg;
+  
+  @container (width >= #{$breakpoint-tablet}) {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+}
+
+.metrics-card {
+  @extend .components-card;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-sm;
+
+  &__title {
+    color: var(--text-secondary);
+    font-size: $font-size-sm;
+    font-weight: $font-weight-medium;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  &__value {
+    font-size: $font-size-xxl;
+    font-weight: $font-weight-bold;
+    line-height: 1;
+  }
+
+  &__trend {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+    font-size: $font-size-sm;
+
+    &--positive { color: $success; }
+    &--negative { color: $error; }
+  }
+}
+
+// =============================================================================
+// Client Management
+// =============================================================================
+
+.client-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background-color: var(--surface-color);
+  border-radius: $border-radius-lg;
+  overflow: hidden;
+
+  th, td {
+    padding: $spacing-md;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, rgba($text-primary, 0.1));
+  }
+
+  th {
+    background-color: var(--background-secondary);
+    font-weight: $font-weight-medium;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+
+  @media (max-width: #{$breakpoint-tablet}) {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  @media print {
+    border: 1px solid #000;
+    break-inside: avoid;
+  }
+}
+
+.client-form {
+  display: grid;
+  gap: $spacing-lg;
+  max-width: 600px;
+  margin: $spacing-lg auto;
+
+  &__group {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+  }
+
+  &__label {
+    font-weight: $font-weight-medium;
+    color: var(--text-secondary);
+  }
+
+  &__input {
+    padding: $spacing-sm;
+    border: 1px solid var(--border-color, rgba($text-primary, 0.2));
+    border-radius: $border-radius-md;
+    background-color: var(--surface-color);
+    color: var(--text-primary);
+    font-family: $font-family-primary;
+    
+    &:focus-visible {
+      outline: 2px solid $primary;
+      outline-offset: 2px;
+    }
+  }
+}
+
+// =============================================================================
+// Processing Queue
+// =============================================================================
+
+.processing-queue {
+  @extend .components-card;
+  
+  &__item {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: $spacing-md;
+    padding: $spacing-md;
+    border-bottom: 1px solid var(--border-color, rgba($text-primary, 0.1));
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    @container (width < #{$breakpoint-tablet}) {
+      grid-template-columns: 1fr;
+      gap: $spacing-sm;
+    }
+  }
+
+  &__progress {
+    width: 100%;
+    height: 4px;
+    background-color: var(--background-secondary);
+    border-radius: $border-radius-pill;
+    overflow: hidden;
+
+    &-bar {
+      height: 100%;
+      background-color: $primary;
+      transition: width 0.3s ease;
+
+      @media (prefers-reduced-motion: reduce) {
+        transition: none;
+      }
+    }
+  }
+}
+
+// =============================================================================
+// Dark Mode Enhancements
+// =============================================================================
+
+@media (prefers-color-scheme: dark) {
+  .admin-sidebar {
+    --border-color: rgba(#{$dark-text-primary}, 0.1);
+  }
+
+  .client-table {
+    --border-color: rgba(#{$dark-text-primary}, 0.1);
+  }
+
+  .processing-queue {
+    --border-color: rgba(#{$dark-text-primary}, 0.1);
+  }
+}
+
+// =============================================================================
+// Print Styles
+// =============================================================================
+
+@media print {
+  .admin-sidebar,
+  .processing-queue__actions {
+    display: none;
+  }
+
+  .admin-layout {
+    display: block;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .metrics-card {
+    break-inside: avoid;
+  }
+}
+
+// =============================================================================
+// High Contrast Mode
+// =============================================================================
+
+@media (forced-colors: active) {
+  .admin-sidebar {
+    border-right: 1px solid CanvasText;
+  }
+
+  .client-table {
+    th, td {
+      border: 1px solid CanvasText;
+    }
+  }
+
+  .processing-queue__progress {
+    border: 1px solid CanvasText;
+    
+    &-bar {
+      background-color: Highlight;
+    }
+  }
+}
