@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Database migration script for AI-powered Product Catalog Search System.
-Provides comprehensive migration management with transaction safety,
-tenant isolation, and enhanced logging capabilities.
+Provides automated execution of Alembic migrations with comprehensive error handling,
+transaction management, tenant isolation, and enhanced logging capabilities.
 
 Version: 1.0.0
 """
@@ -11,60 +11,74 @@ import logging
 import argparse
 import sys
 from contextlib import contextmanager
-from typing import Optional
+from datetime import datetime
+import json
 
-import alembic  # version: 1.12.0
-from alembic import config as alembic_config
+# version: 1.12.0
+from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
-from ..app.core.config import get_database_settings, get_tenant_settings
-from ..app.db.base import Base, metadata
+# Internal imports
+from app.core.config import get_database_settings, get_settings
+from app.db.base import Base
 
-# Configure logging
-logger = logging.getLogger('migrations')
-
-# Constants
+# Global constants
 ALEMBIC_INI_PATH = 'alembic.ini'
 EXIT_SUCCESS = 0
 EXIT_FAILURE = 1
 EXIT_INVALID_ARGS = 2
 
+# Configure logger
+logger = logging.getLogger('migrations')
+
+class JsonFormatter(logging.Formatter):
+    """Custom JSON formatter for structured migration logging."""
+    
+    def format(self, record):
+        """Format log record as JSON with migration-specific fields."""
+        log_data = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'level': record.levelname,
+            'message': record.getMessage(),
+            'migration_id': getattr(record, 'migration_id', None),
+            'tenant_id': getattr(record, 'tenant_id', None),
+            'duration_ms': getattr(record, 'duration_ms', None)
+        }
+        return json.dumps(log_data)
+
 def setup_logging(debug_mode: bool) -> None:
     """
-    Configure enhanced logging for migration operations with structured output.
-
+    Configure enhanced logging for migration execution.
+    
     Args:
-        debug_mode (bool): Enable debug level logging if True
+        debug_mode (bool): Enable debug logging if True
     """
-    # Create JSON formatter for structured logging
-    formatter = logging.Formatter(
-        '{"timestamp": "%(asctime)s", "level": "%(levelname)s", '
-        '"message": "%(message)s", "module": "%(module)s"}'
-    )
-
-    # Configure console handler
+    # Clear any existing handlers
+    logger.handlers.clear()
+    
+    # Configure console handler with JSON formatting
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-
+    console_handler.setFormatter(JsonFormatter())
+    logger.addHandler(console_handler)
+    
     # Configure file handler for persistent logging
     file_handler = logging.FileHandler('migrations.log')
-    file_handler.setFormatter(formatter)
-
-    # Set up logger
-    logger.addHandler(console_handler)
+    file_handler.setFormatter(JsonFormatter())
     logger.addHandler(file_handler)
+    
+    # Set appropriate log level
     logger.setLevel(logging.DEBUG if debug_mode else logging.INFO)
-
-    # Configure alembic logging
+    
+    # Configure alembic logging integration
     logging.getLogger('alembic').setLevel(logging.INFO)
     logging.getLogger('alembic.runtime.migration').setLevel(logging.INFO)
 
 def parse_args() -> argparse.Namespace:
     """
     Parse and validate command line arguments for migration control.
-
+    
     Returns:
         argparse.Namespace: Validated command line arguments
     """
@@ -73,15 +87,15 @@ def parse_args() -> argparse.Namespace:
     )
     
     parser.add_argument(
-        '--revision', 
-        help='Target revision for migration (head for latest)',
+        '--revision',
+        help='Target revision (head for latest)',
         default='head'
     )
     
     parser.add_argument(
-        '--sql', 
+        '--sql',
         action='store_true',
-        help='Generate SQL statements without executing'
+        help='Generate SQL instead of executing migrations'
     )
     
     parser.add_argument(
@@ -92,13 +106,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--dry-run',
         action='store_true',
-        help='Validate migration without executing'
+        help='Validate migrations without executing'
     )
     
     parser.add_argument(
         '--tenant-check',
         action='store_true',
-        help='Validate tenant isolation before migration'
+        help='Validate tenant isolation'
     )
     
     parser.add_argument(
@@ -106,206 +120,175 @@ def parse_args() -> argparse.Namespace:
         action='store_true',
         help='Enable debug logging'
     )
-
-    args = parser.parse_args()
-
-    # Validate argument combinations
-    if args.sql and args.dry_run:
-        parser.error("Cannot specify both --sql and --dry-run")
-
-    return args
+    
+    return parser.parse_args()
 
 @contextmanager
-def migration_context(alembic_cfg: Config):
+def migration_transaction(alembic_cfg: Config):
     """
-    Context manager for safe migration execution with transaction handling.
-
-    Args:
-        alembic_cfg: Alembic configuration object
-    """
-    # Get database settings
-    db_settings = get_database_settings()
+    Context manager for safe migration transactions.
     
-    # Override alembic.ini settings with current configuration
-    alembic_cfg.set_main_option(
-        'sqlalchemy.url',
-        f"postgresql://{db_settings['username']}:{db_settings['password']}@"
-        f"{db_settings['host']}:{db_settings['port']}/{db_settings['database']}"
-    )
-
-    try:
-        yield alembic_cfg
-    except Exception as e:
-        logger.error(
-            "Migration failed",
-            extra={
-                'error_type': type(e).__name__,
-                'error_message': str(e)
-            }
-        )
-        raise
-    finally:
-        logger.info("Migration context cleaned up")
-
-def validate_tenant_isolation() -> bool:
+    Args:
+        alembic_cfg (Config): Alembic configuration object
     """
-    Validate tenant isolation and schema integrity before migration.
-
-    Returns:
-        bool: True if validation passes, False otherwise
-    """
+    # Get database connection
+    db_settings = get_database_settings()
+    engine = alembic_cfg.attributes['connection']
+    
     try:
-        tenant_settings = get_tenant_settings()
+        # Begin transaction
+        trans = engine.begin()
+        logger.info("Started migration transaction")
         
-        # Verify tenant schemas exist
-        for tenant in tenant_settings['tenants']:
-            if not metadata.schema.has_schema(tenant['schema']):
-                logger.error(
-                    f"Missing schema for tenant: {tenant['name']}",
-                    extra={'tenant_id': tenant['id']}
-                )
+        yield trans
+        
+        # Commit if no exceptions
+        trans.commit()
+        logger.info("Migration transaction committed successfully")
+        
+    except Exception as e:
+        # Rollback on any error
+        trans.rollback()
+        logger.error(f"Migration failed, rolling back: {str(e)}", exc_info=True)
+        raise
+    
+    finally:
+        engine.dispose()
+
+def validate_tenant_isolation(alembic_cfg: Config) -> bool:
+    """
+    Validate tenant isolation for multi-tenant migrations.
+    
+    Args:
+        alembic_cfg (Config): Alembic configuration object
+        
+    Returns:
+        bool: True if validation passes
+    """
+    try:
+        # Get migration context
+        context = MigrationContext.configure(alembic_cfg.attributes['connection'])
+        
+        # Verify tenant schema exists
+        result = context.connection.execute(
+            "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'tenant'"
+        ).fetchone()
+        
+        if not result:
+            logger.error("Tenant schema not found")
+            return False
+        
+        # Verify tenant isolation in migrations
+        script = ScriptDirectory.from_config(alembic_cfg)
+        for rev in script.walk_revisions():
+            if not hasattr(rev, 'tenant_safe'):
+                logger.warning(f"Migration {rev.revision} missing tenant safety check")
                 return False
-
-        # Validate foreign key constraints
-        for table in metadata.tables.values():
-            for fk in table.foreign_keys:
-                if fk.column.table.schema != table.schema:
-                    logger.error(
-                        "Cross-schema foreign key detected",
-                        extra={
-                            'table': table.name,
-                            'foreign_key': fk.target_fullname
-                        }
-                    )
-                    return False
-
+        
         logger.info("Tenant isolation validation passed")
         return True
-
+        
     except Exception as e:
-        logger.error(
-            "Tenant validation failed",
-            extra={
-                'error_type': type(e).__name__,
-                'error_message': str(e)
-            }
-        )
+        logger.error(f"Tenant validation failed: {str(e)}", exc_info=True)
         return False
 
 def run_migrations(args: argparse.Namespace) -> bool:
     """
     Execute database migrations with comprehensive validation and safety checks.
-
+    
     Args:
-        args: Parsed command line arguments
-
+        args (argparse.Namespace): Command line arguments
+        
     Returns:
-        bool: True if migration succeeds, False otherwise
+        bool: True if migrations completed successfully
     """
+    start_time = datetime.utcnow()
+    
     try:
-        # Load alembic configuration
+        # Load Alembic configuration
         alembic_cfg = Config(ALEMBIC_INI_PATH)
         
-        with migration_context(alembic_cfg) as cfg:
-            # Validate tenant isolation if requested
-            if args.tenant_check and not validate_tenant_isolation():
-                logger.error("Tenant isolation validation failed")
-                return False
-
-            # Initialize migration components
-            script = ScriptDirectory.from_config(cfg)
-            context = MigrationContext.configure(
-                cfg.attributes['connection'],
-                opts={'transaction_per_migration': True}
-            )
-
-            # Get current and target revisions
-            current_rev = context.get_current_revision()
-            target_rev = args.revision
-
-            logger.info(
-                "Starting migration",
-                extra={
-                    'current_revision': current_rev,
-                    'target_revision': target_rev,
-                    'sql_only': args.sql,
-                    'dry_run': args.dry_run
-                }
-            )
-
-            if args.dry_run:
-                # Validate migration without executing
-                script._upgrade_revs(target_rev, current_rev)
-                logger.info("Dry run validation successful")
-                return True
-
-            if args.sql:
-                # Generate SQL statements
-                upgrade_ops = script._upgrade_revs(target_rev, current_rev)
-                print(upgrade_ops.to_sql())
-                return True
-
-            # Execute migration
-            with context.begin_transaction():
-                context.run_migrations(
-                    tag=args.tag,
-                    rev=target_rev
-                )
-
-            logger.info(
-                "Migration completed successfully",
-                extra={
-                    'final_revision': context.get_current_revision(),
-                    'tag': args.tag
-                }
-            )
-            return True
-
-    except Exception as e:
-        logger.error(
-            "Migration execution failed",
-            extra={
-                'error_type': type(e).__name__,
-                'error_message': str(e)
-            }
+        # Override database URL from settings
+        db_settings = get_database_settings()
+        alembic_cfg.set_main_option(
+            'sqlalchemy.url',
+            f"postgresql://{db_settings['username']}:{db_settings['password']}@"
+            f"{db_settings['host']}:{db_settings['port']}/{db_settings['database']}"
         )
+        
+        # Validate tenant isolation if requested
+        if args.tenant_check and not validate_tenant_isolation(alembic_cfg):
+            logger.error("Tenant isolation validation failed")
+            return False
+        
+        # Execute migrations within transaction
+        with migration_transaction(alembic_cfg) as trans:
+            if args.sql:
+                # Generate SQL
+                command.upgrade(alembic_cfg, args.revision, sql=True)
+                logger.info("Generated SQL for migrations")
+            
+            elif args.dry_run:
+                # Validate without executing
+                command.upgrade(alembic_cfg, args.revision, check_only=True)
+                logger.info("Dry run validation successful")
+            
+            else:
+                # Execute migrations
+                command.upgrade(alembic_cfg, args.revision)
+                
+                if args.tag:
+                    command.tag(alembic_cfg, args.tag)
+                
+                duration = (datetime.utcnow() - start_time).total_seconds() * 1000
+                logger.info(
+                    "Migrations completed successfully",
+                    extra={
+                        'duration_ms': duration,
+                        'revision': args.revision,
+                        'tag': args.tag
+                    }
+                )
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Migration execution failed: {str(e)}", exc_info=True)
         return False
 
 def main() -> int:
     """
     Main entry point for migration script with comprehensive error handling.
-
+    
     Returns:
         int: Exit code indicating success or specific failure reason
     """
     try:
-        # Parse command line arguments
+        # Parse arguments
         args = parse_args()
-
-        # Configure logging
+        
+        # Setup logging
         setup_logging(args.debug)
-
+        
         logger.info(
-            "Starting migration script",
-            extra={'arguments': vars(args)}
+            "Starting database migrations",
+            extra={'revision': args.revision, 'tag': args.tag}
         )
-
+        
         # Execute migrations
         if run_migrations(args):
-            logger.info("Migration script completed successfully")
+            logger.info("Migration process completed successfully")
             return EXIT_SUCCESS
         else:
-            logger.error("Migration script failed")
+            logger.error("Migration process failed")
             return EXIT_FAILURE
-
+            
     except Exception as e:
-        logger.error(
-            "Unhandled exception in migration script",
-            extra={
-                'error_type': type(e).__name__,
-                'error_message': str(e)
-            }
-        )
+        logger.error(f"Unhandled error in migration script: {str(e)}", exc_info=True)
+        return EXIT_FAILURE
+    
+    except KeyboardInterrupt:
+        logger.warning("Migration interrupted by user")
         return EXIT_FAILURE
 
 if __name__ == '__main__':
