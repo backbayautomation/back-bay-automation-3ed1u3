@@ -1,7 +1,7 @@
 """
 Custom exception classes for the AI-powered Product Catalog Search System.
-Implements a comprehensive hierarchy of application-specific exceptions with enhanced
-security monitoring, detailed error context support, and integration with system monitoring tools.
+Implements a comprehensive hierarchy of application-specific exceptions with enhanced security monitoring,
+detailed error context support, and integration with system monitoring tools.
 
 External Dependencies:
     fastapi: ^0.103.0
@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 class BaseAppException(Exception):
     """
-    Base exception class for all application-specific exceptions with enhanced
-    error context support and monitoring integration.
+    Base exception class for all application-specific exceptions with enhanced error context 
+    support and monitoring integration.
     
     Attributes:
         message (str): Human-readable error message
@@ -110,38 +110,36 @@ class BaseAppException(Exception):
         }
         
         if context:
-            base_context.update(context)
+            base_context.update(self._sanitize_content(context))
             
         return base_context
 
     def to_dict(self) -> Dict:
         """
-        Convert exception to dictionary format for API responses.
+        Convert exception to dictionary format for serialization.
         
         Returns:
             Dictionary representation of the exception
         """
         return {
-            'error': {
-                'id': self.error_id,
-                'message': self.message,
-                'status_code': self.status_code,
-                'timestamp': self.timestamp.isoformat(),
-                'details': self.details
-            }
+            'error_id': self.error_id,
+            'message': self.message,
+            'status_code': self.status_code,
+            'details': self.details,
+            'timestamp': self.timestamp.isoformat(),
+            'type': self.__class__.__name__
         }
 
     def log_error(self) -> None:
         """Log error details to the monitoring system."""
         log_data = {
-            'error_id': self.error_id,
-            'message': self.message,
-            'status_code': self.status_code,
-            'details': self.details,
+            **self.to_dict(),
             'monitoring_context': self.monitoring_context
         }
-        logger.error(f"Application error occurred: {self.error_id}", extra=log_data)
-
+        logger.error(
+            f"Error occurred: {self.message}",
+            extra={'error_details': log_data}
+        )
 
 class AuthenticationError(BaseAppException):
     """
@@ -164,8 +162,8 @@ class AuthenticationError(BaseAppException):
         Initialize authentication error with security context.
         
         Args:
-            message: Human-readable error description
-            details: Additional error context
+            message: Error description
+            details: Additional error details
             auth_type: Type of authentication that failed
             security_context: Security-related context information
         """
@@ -210,15 +208,15 @@ class AuthenticationError(BaseAppException):
         """Track failed authentication attempt."""
         attempt = {
             'timestamp': self.timestamp.isoformat(),
-            'error_id': self.error_id,
-            'auth_type': self.auth_type
+            'auth_type': self.auth_type,
+            'context': self.security_context
         }
         self.failed_attempts.append(attempt)
 
     def _check_security_threshold(self) -> None:
         """Check if security threshold is exceeded and trigger alert if necessary."""
         THRESHOLD_WINDOW = 300  # 5 minutes in seconds
-        THRESHOLD_COUNT = 5     # Maximum failed attempts
+        MAX_ATTEMPTS = 5
         
         # Filter attempts within threshold window
         recent_attempts = [
@@ -226,20 +224,20 @@ class AuthenticationError(BaseAppException):
             if (datetime.now(timezone.utc) - datetime.fromisoformat(attempt['timestamp'])).total_seconds() < THRESHOLD_WINDOW
         ]
         
-        if len(recent_attempts) >= THRESHOLD_COUNT:
+        if len(recent_attempts) >= MAX_ATTEMPTS:
             self._trigger_security_alert()
 
     def _trigger_security_alert(self) -> None:
-        """Trigger security monitoring alert for excessive failed attempts."""
+        """Trigger security alert for excessive failed attempts."""
         alert_data = {
             'error_id': self.error_id,
             'auth_type': self.auth_type,
-            'failed_attempts': self.failed_attempts,
+            'failed_attempts': len(self.failed_attempts),
             'security_context': self.security_context
         }
         logger.warning(
-            f"Security alert: Multiple authentication failures detected: {self.error_id}",
-            extra=alert_data
+            "Security alert: Multiple failed authentication attempts detected",
+            extra={'alert_details': alert_data}
         )
 
     def get_security_context(self) -> Dict:
