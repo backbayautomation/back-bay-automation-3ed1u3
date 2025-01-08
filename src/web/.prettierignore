@@ -1,0 +1,35 @@
+build/
+dist/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Minified files
+*.min.js
+*.min.css
+
+# TypeScript definitions
+*.d.ts
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Image assets
+*.svg
+*.ico
+*.png
+*.jpg
+*.jpeg
+*.gif
+
+# Document assets
+*.pdf
+
+# Font files
+*.ttf
+*.woff
+*.woff2
+*.eot
