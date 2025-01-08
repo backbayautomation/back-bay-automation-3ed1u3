@@ -13,21 +13,29 @@ terraform {
     resource_group_name  = "tfstate"
     storage_account_name = "tfstate"
     container_name      = "tfstate"
-    key                 = "terraform.tfstate"
+    key                = "terraform.tfstate"
     use_msi            = true
     subscription_id    = "${var.subscription_id}"
     tenant_id         = "${var.tenant_id}"
   }
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
+  }
 }
 
-# Random string for unique resource naming
-resource "random_string" "unique" {
-  length  = 8
-  special = false
-  upper   = false
-}
-
-# Main resource group
+# Main resource group with lifecycle protection
 resource "azurerm_resource_group" "main" {
   name     = var.resource_group_name
   location = var.location
@@ -38,7 +46,7 @@ resource "azurerm_resource_group" "main" {
   }
 }
 
-# Networking module for VNet and subnet configuration
+# Networking module for VNet, subnets, and security configuration
 module "networking" {
   source = "./modules/networking"
 
@@ -69,7 +77,7 @@ module "aks" {
   depends_on = [module.networking]
 }
 
-# Database module for SQL and Cosmos DB
+# Database module for SQL and Cosmos DB deployment
 module "database" {
   source = "./modules/database"
 
@@ -77,13 +85,13 @@ module "database" {
   location           = var.location
   environment        = var.environment
   database_config    = var.database_config
-  subnet_ids         = module.networking.database_subnet_ids
+  subnet_id          = module.networking.db_subnet_id
   tags               = var.tags
 
   depends_on = [module.networking]
 }
 
-# Storage module for blob storage configuration
+# Storage module for blob storage and file shares
 module "storage" {
   source = "./modules/storage"
 
@@ -91,7 +99,7 @@ module "storage" {
   location           = var.location
   environment        = var.environment
   storage_config     = var.storage_config
-  subnet_ids         = module.networking.storage_subnet_ids
+  subnet_id          = module.networking.storage_subnet_id
   tags               = var.tags
 
   depends_on = [module.networking]
@@ -117,7 +125,7 @@ module "monitoring" {
   ]
 }
 
-# Outputs for dependent resources
+# Output definitions for resource access
 output "resource_group_name" {
   value = {
     name     = azurerm_resource_group.main.name
@@ -144,25 +152,5 @@ output "database_connection_details" {
     redis_connection_string  = module.database.redis_connection_string
   }
   description = "Secure database connection information"
-  sensitive   = true
-}
-
-output "storage_details" {
-  value = {
-    storage_account_name = module.storage.storage_account_name
-    primary_access_key  = module.storage.primary_access_key
-    containers         = module.storage.containers
-  }
-  description = "Storage account details and access information"
-  sensitive   = true
-}
-
-output "monitoring_details" {
-  value = {
-    workspace_id        = module.monitoring.workspace_id
-    workspace_key       = module.monitoring.workspace_key
-    app_insights_key   = module.monitoring.app_insights_key
-  }
-  description = "Monitoring workspace and instrumentation details"
   sensitive   = true
 }
