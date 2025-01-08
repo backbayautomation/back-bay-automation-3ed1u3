@@ -1,160 +1,122 @@
-// @mui/material version: 5.14.0
-// react version: 18.2.0
-
-import React, { useEffect, useCallback, useRef } from 'react';
-import { CircularProgress, Box } from '@mui/material';
-import { styled } from '@mui/material/styles';
+import React, { useEffect, useCallback } from 'react'; // v18.2.0
+import { CircularProgress } from '@mui/material'; // v5.14.0
 import PrimaryButton, { PrimaryButtonProps } from './PrimaryButton';
 import ContentLoader from '../Loaders/ContentLoader';
 
-// Styled wrapper for loading indicator positioning
-const LoadingWrapper = styled(Box)(({ theme }) => ({
-  position: 'absolute',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  transition: theme.transitions.create(['opacity']),
-  '@media (prefers-reduced-motion: reduce)': {
-    transition: 'none',
-  },
-}));
-
-// Props interface extending PrimaryButton props
+// Props interface extending PrimaryButtonProps with loading state capabilities
 export interface LoadingButtonProps extends PrimaryButtonProps {
+  /**
+   * Flag indicating if button is in loading state
+   */
   isLoading?: boolean;
+  /**
+   * Accessible text to announce loading state to screen readers
+   */
   loadingText?: string;
+  /**
+   * Optional timeout in milliseconds for loading state
+   */
   loadingTimeout?: number;
+  /**
+   * Position of loading indicator relative to button text
+   * @default 'start'
+   */
   loadingPosition?: 'start' | 'end' | 'center';
 }
 
-// Loading indicator sizes mapped to button sizes
-const LOADING_SIZES = {
-  small: 16,
-  medium: 20,
-  large: 24,
-} as const;
-
-// Loading indicator positions with spacing
-const POSITION_STYLES = {
-  start: { left: 16 },
-  end: { right: 16 },
-  center: { position: 'absolute', left: '50%', transform: 'translateX(-50%)' },
-} as const;
-
+/**
+ * LoadingButton component that extends PrimaryButton with loading state capabilities
+ * while maintaining WCAG compliance and preventing multiple submissions.
+ */
 const LoadingButton = React.memo<LoadingButtonProps>(({
   children,
   isLoading = false,
   loadingText = 'Loading...',
   loadingTimeout,
-  loadingPosition = 'center',
-  size = 'medium',
+  loadingPosition = 'start',
   disabled,
   onClick,
   ...props
 }) => {
-  const loadingTimeoutRef = useRef<NodeJS.Timeout>();
-  const startTimeRef = useRef<number>();
-
-  // Handle loading timeout
+  // Track loading state duration for potential timeout
   useEffect(() => {
     if (isLoading && loadingTimeout) {
-      startTimeRef.current = Date.now();
-      loadingTimeoutRef.current = setTimeout(() => {
-        console.warn(`Loading state exceeded timeout of ${loadingTimeout}ms`);
+      const timer = setTimeout(() => {
+        // Reset loading state after timeout
+        onClick?.(undefined as unknown as React.MouseEvent<HTMLButtonElement>);
       }, loadingTimeout);
+
+      return () => clearTimeout(timer);
     }
+  }, [isLoading, loadingTimeout, onClick]);
 
-    return () => {
-      if (loadingTimeoutRef.current) {
-        clearTimeout(loadingTimeoutRef.current);
-      }
-    };
-  }, [isLoading, loadingTimeout]);
-
-  // Track loading duration for analytics
-  useEffect(() => {
-    if (!isLoading && startTimeRef.current) {
-      const duration = Date.now() - startTimeRef.current;
-      // Analytics tracking could be added here
-      startTimeRef.current = undefined;
-    }
-  }, [isLoading]);
-
-  // Prevent multiple clicks during loading
+  // Prevent interaction during loading state
   const handleClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     if (!isLoading && onClick) {
       onClick(event);
     }
   }, [isLoading, onClick]);
 
-  // Calculate loading indicator size based on button size
-  const loadingSize = LOADING_SIZES[size];
-
-  // Determine if reduced motion is preferred
+  // Check for reduced motion preference
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Loading indicator component with proper size and color
+  const LoadingIndicator = (
+    <CircularProgress
+      size={20}
+      color="inherit"
+      sx={{
+        animation: prefersReducedMotion ? 'none' : undefined,
+        position: 'absolute',
+        ...(loadingPosition === 'start' && { left: '16px' }),
+        ...(loadingPosition === 'end' && { right: '16px' }),
+        ...(loadingPosition === 'center' && {
+          left: '50%',
+          transform: 'translateX(-50%)',
+        }),
+      }}
+    />
+  );
 
   return (
     <PrimaryButton
       {...props}
-      size={size}
-      disabled={disabled || isLoading}
       onClick={handleClick}
+      disabled={disabled || isLoading}
+      aria-busy={isLoading}
+      aria-live="polite"
       sx={{
         position: 'relative',
         ...props.sx,
         ...(isLoading && {
+          pointerEvents: 'none',
           '& .MuiButton-startIcon, & .MuiButton-endIcon': {
-            opacity: 0,
+            visibility: 'hidden',
           },
+          ...(loadingPosition === 'start' && { paddingLeft: '44px' }),
+          ...(loadingPosition === 'end' && { paddingRight: '44px' }),
+          ...(loadingPosition === 'center' && {
+            '& > *:not(.MuiCircularProgress-root)': {
+              visibility: 'hidden',
+            },
+          }),
         }),
       }}
-      aria-busy={isLoading}
-      aria-live="polite"
-      aria-label={isLoading ? loadingText : undefined}
     >
-      {isLoading && (
-        <LoadingWrapper
-          sx={{
-            ...POSITION_STYLES[loadingPosition],
-            opacity: isLoading ? 1 : 0,
-          }}
-        >
-          {prefersReducedMotion ? (
-            <ContentLoader
-              width={loadingSize}
-              height={loadingSize}
-              variant="circular"
-              animation="none"
-              ariaLabel={loadingText}
-            />
-          ) : (
-            <CircularProgress
-              size={loadingSize}
-              color="inherit"
-              aria-hidden="true"
-              sx={{
-                color: 'inherit',
-                position: 'absolute',
-              }}
-            />
-          )}
-        </LoadingWrapper>
-      )}
-      <Box
-        sx={{
-          opacity: isLoading ? 0 : 1,
-          transition: (theme) =>
-            theme.transitions.create(['opacity'], {
-              duration: prefersReducedMotion ? 0 : theme.transitions.duration.short,
-            }),
-        }}
-      >
-        {children}
-      </Box>
+      {isLoading && LoadingIndicator}
+      {isLoading ? (
+        <span aria-hidden="true">
+          {loadingText}
+        </span>
+      ) : children}
+      <span className="sr-only">
+        {isLoading ? loadingText : children}
+      </span>
     </PrimaryButton>
   );
 });
 
+// Display name for debugging
 LoadingButton.displayName = 'LoadingButton';
 
 export default LoadingButton;
