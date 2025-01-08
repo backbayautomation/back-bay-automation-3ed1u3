@@ -1,0 +1,64 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+  namespace: product-search
+  labels:
+    app: backend
+    component: api
+    environment: production
+  annotations:
+    monitoring.kubernetes.io/enable: "true"
+    scaling.kubernetes.io/behavior: "stable"
+    kubernetes.io/description: "HPA configuration for backend service with multi-metric scaling"
+    kubernetes.io/version: "v1.25+"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75
+    
+    # Memory-based scaling
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    
+    # GPU utilization scaling
+    - type: Resource
+      resource:
+        name: nvidia.com/gpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  behavior:
+    # Scale up behavior - aggressive but controlled
+    scaleUp:
+      stabilizationWindowSeconds: 60  # 1-minute window to prevent thrashing
+      policies:
+      - type: Pods
+        value: 2  # Add up to 2 pods at a time
+        periodSeconds: 60
+      selectPolicy: Max  # Use the most aggressive policy
+
+    # Scale down behavior - conservative
+    scaleDown:
+      stabilizationWindowSeconds: 300  # 5-minute window for stability
+      policies:
+      - type: Pods
+        value: 1  # Remove only 1 pod at a time
+        periodSeconds: 60
+      selectPolicy: Min  # Use the most conservative policy
