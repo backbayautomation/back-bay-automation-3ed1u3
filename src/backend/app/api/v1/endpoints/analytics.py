@@ -1,5 +1,5 @@
 """
-FastAPI endpoint module implementing secure, scalable analytics and metrics API routes
+Analytics endpoint module implementing secure, scalable analytics API routes
 with enhanced caching, monitoring, and role-based access control.
 
 Version: 1.0.0
@@ -8,6 +8,7 @@ Version: 1.0.0
 from datetime import datetime, timedelta
 from typing import Dict, Optional
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Security, status
 from fastapi_limiter import RateLimiter
 from fastapi_cache import Cache
@@ -16,7 +17,6 @@ from prometheus_fastapi_instrumentator import MonitoringService
 
 from app.services.analytics_service import AnalyticsService
 from app.services.cache_service import CacheService
-from app.constants import UserRole, ErrorCode
 from app.utils.metrics import MetricsCollector
 from app.utils.logging import StructuredLogger
 
@@ -29,11 +29,19 @@ logger = StructuredLogger(__name__)
 # Constants
 CACHE_TTL = timedelta(minutes=5)
 RATE_LIMIT = "100/minute"
-MAX_DATE_RANGE = timedelta(days=90)
+
+# Response models
+class AnalyticsDashboard:
+    """Comprehensive analytics dashboard data model."""
+    organization: Dict
+    clients: Dict
+    documents: Dict
+    performance: Dict
+    generated_at: str
 
 @router.get('/{org_id}', 
-    response_model=Dict,
-    summary="Get organization analytics dashboard data",
+    response_model=AnalyticsDashboard,
+    summary="Get organization analytics",
     description="Retrieve comprehensive analytics metrics for an organization with caching and security")
 @Security(scopes=['analytics:read'])
 @RateLimiter(RATE_LIMIT)
@@ -46,158 +54,124 @@ async def get_organization_analytics(
     cache_service: CacheService = Depends(),
     monitoring_service: MonitoringService = Depends(),
     analytics_service: AnalyticsService = Depends()
-) -> Dict:
+) -> AnalyticsDashboard:
     """
     Get comprehensive analytics metrics for an organization with security validation,
     caching, and monitoring.
 
     Args:
-        org_id: Organization identifier
-        start_date: Start date for analytics period
-        end_date: End date for analytics period
+        org_id: Organization ID
+        start_date: Start date for metrics
+        end_date: End date for metrics
         security_service: Security validation service
-        cache_service: Caching service
-        monitoring_service: Monitoring and metrics service
-        analytics_service: Analytics processing service
+        cache_service: Response caching service
+        monitoring_service: Request monitoring service
+        analytics_service: Core analytics service
 
     Returns:
-        Dict containing comprehensive analytics dashboard data
+        AnalyticsDashboard: Comprehensive analytics dashboard data
 
     Raises:
-        HTTPException: For validation, authorization, or processing errors
+        HTTPException: For invalid requests or unauthorized access
     """
     try:
+        # Log analytics request
+        logger.log_security_event(
+            "analytics_request",
+            {
+                "org_id": str(org_id),
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat()
+            }
+        )
+
         # Validate user permissions
-        user = await security_service.get_current_user()
-        if not security_service.has_permission(user, org_id, [UserRole.SYSTEM_ADMIN, UserRole.CLIENT_ADMIN]):
+        if not await security_service.validate_organization_access(org_id, required_scope='analytics:read'):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=ErrorCode.FORBIDDEN.value
+                detail="Insufficient permissions to access organization analytics"
             )
 
         # Validate date range
-        if end_date < start_date:
+        if start_date >= end_date:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="End date must be after start date"
+                detail="Start date must be before end date"
             )
 
-        if end_date - start_date > MAX_DATE_RANGE:
+        if (end_date - start_date).days > 365:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Date range cannot exceed {MAX_DATE_RANGE.days} days"
+                detail="Date range cannot exceed 365 days"
             )
 
         # Check cache for existing analytics
         cache_key = f"analytics:{org_id}:{start_date.isoformat()}:{end_date.isoformat()}"
-        cached_result = await cache_service.get(cache_key)
-        if cached_result:
-            logger.debug("Returning cached analytics", 
-                extra={'org_id': str(org_id), 'cache_hit': True})
-            monitoring_service.increment_counter(
-                'analytics_cache_hits',
-                labels={'org_id': str(org_id)}
-            )
-            return cached_result
+        cached_data = await cache_service.get(cache_key)
+        
+        if cached_data:
+            logger.debug(f"Returning cached analytics for organization {org_id}")
+            monitoring_service.record_cache_hit("analytics_request")
+            return cached_data
 
-        # Get analytics metrics
+        # Get fresh analytics data
         analytics_data = await analytics_service.get_organization_metrics(
             org_id=org_id,
             start_date=start_date,
-            end_date=end_date,
-            filters={
-                'user_id': str(user.id),
-                'client_id': str(user.client_id) if user.client_id else None
-            }
+            end_date=end_date
         )
 
-        # Cache the results
+        # Cache the response
         await cache_service.set(
             key=cache_key,
             value=analytics_data,
-            ttl=CACHE_TTL.seconds
+            ttl=CACHE_TTL.total_seconds()
         )
 
-        # Track successful analytics retrieval
-        monitoring_service.record_request_metric(
-            'analytics_retrieval_success',
-            labels={
-                'org_id': str(org_id),
-                'user_id': str(user.id)
-            }
-        )
-
+        # Record metrics
+        monitoring_service.record_operation_success("analytics_request")
+        
         return analytics_data
 
     except HTTPException:
         raise
-
     except Exception as e:
-        logger.error("Analytics retrieval failed",
-            extra={
-                'org_id': str(org_id),
-                'error': str(e)
-            }
-        )
-        monitoring_service.increment_counter(
-            'analytics_retrieval_error',
-            labels={
-                'org_id': str(org_id),
-                'error_type': type(e).__name__
-            }
-        )
+        # Log error and record metric
+        logger.error(f"Error retrieving analytics: {str(e)}", exc_info=True)
+        monitoring_service.record_operation_failure("analytics_request")
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=ErrorCode.PROCESSING_ERROR.value
+            detail="Error retrieving analytics data"
         )
 
 @router.get('/health',
-    response_model=Dict,
-    summary="Get analytics service health metrics",
-    description="Retrieve health and performance metrics for the analytics service")
-@Security(scopes=['analytics:read'])
-@Cache(ttl=timedelta(minutes=1))
-async def get_analytics_health(
-    security_service: SecurityService = Depends(),
+    summary="Analytics service health check",
+    description="Check health status of analytics service and dependencies")
+async def health_check(
     monitoring_service: MonitoringService = Depends()
 ) -> Dict:
     """
-    Get health and performance metrics for the analytics service.
+    Health check endpoint for analytics service monitoring.
 
     Args:
-        security_service: Security validation service
-        monitoring_service: Monitoring and metrics service
+        monitoring_service: Request monitoring service
 
     Returns:
-        Dict containing service health metrics
-
-    Raises:
-        HTTPException: For authorization or processing errors
+        Dict: Health status information
     """
     try:
-        # Validate admin access
-        user = await security_service.get_current_user()
-        if not security_service.has_permission(user, None, [UserRole.SYSTEM_ADMIN]):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=ErrorCode.FORBIDDEN.value
-            )
-
-        # Get service metrics
-        metrics = monitoring_service.get_service_metrics()
+        # Get service health metrics
+        metrics = await monitoring_service.get_health_metrics()
         
         return {
-            'status': 'healthy',
-            'timestamp': datetime.utcnow().isoformat(),
-            'metrics': metrics
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "metrics": metrics
         }
-
-    except HTTPException:
-        raise
-
     except Exception as e:
-        logger.error("Health check failed", extra={'error': str(e)})
+        logger.error(f"Health check failed: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=ErrorCode.PROCESSING_ERROR.value
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Analytics service health check failed"
         )
