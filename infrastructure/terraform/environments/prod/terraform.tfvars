@@ -1,7 +1,3 @@
-# Production environment Terraform variable definitions for AI-powered Product Catalog Search System
-# Version: 1.0.0
-# terraform ~> 1.0
-
 # AKS Cluster Configuration
 aks_config = {
   cluster_name         = "aks-catalog-search-prod"
