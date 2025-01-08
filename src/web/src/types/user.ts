@@ -1,6 +1,6 @@
 /**
  * TypeScript type definitions and interfaces for user-related data structures.
- * Supports multi-tenant authentication, role-based access control, and user management operations.
+ * Implements multi-tenant authentication, role-based access control, and user management.
  * @version 1.0.0
  */
 
@@ -17,26 +17,26 @@ export enum UserRole {
     CLIENT_ADMIN = 'CLIENT_ADMIN',
     /** Standard user access with limited permissions */
     REGULAR_USER = 'REGULAR_USER',
-    /** Programmatic access for service-to-service communication */
+    /** Programmatic access for service integrations */
     API_SERVICE = 'API_SERVICE'
 }
 
 /**
- * Main user interface extending BaseEntity with comprehensive user properties.
- * Supports multi-tenant data model with organization and client relationships.
+ * Core user interface extending BaseEntity with user-specific fields.
+ * Supports multi-tenant data model and role-based access control.
  */
 export interface User extends BaseEntity {
     /** Organization ID for multi-tenant isolation */
     orgId: string;
     /** Optional client ID for client-specific users */
     clientId: string | null;
-    /** User's email address used for authentication */
+    /** User's email address for authentication */
     email: string;
-    /** User's full name for display purposes */
+    /** User's full name for display */
     fullName: string;
-    /** User's assigned role determining access permissions */
+    /** User's assigned role determining access levels */
     role: UserRole;
-    /** Flag indicating if the user account is active */
+    /** Flag indicating if user account is active */
     isActive: boolean;
     /** Flag indicating if multi-factor authentication is enabled */
     mfaEnabled: boolean;
@@ -45,13 +45,13 @@ export interface User extends BaseEntity {
 }
 
 /**
- * Interface defining required fields for user creation operations.
- * Enforces mandatory fields and proper typing for new user registration.
+ * Interface defining required fields for user creation.
+ * Enforces data validation and security requirements.
  */
 export interface UserCreateInput {
     /** User's email address (must be unique) */
     email: string;
-    /** User's initial password (will be hashed) */
+    /** User's initial password (must meet security requirements) */
     password: string;
     /** User's full name */
     fullName: string;
@@ -59,23 +59,23 @@ export interface UserCreateInput {
     role: UserRole;
     /** Optional client ID for client-specific users */
     clientId: string | null;
-    /** Whether to enable MFA during creation */
+    /** Flag to enable/disable MFA during creation */
     mfaEnabled: boolean;
 }
 
 /**
- * Interface defining optional fields for user update operations.
- * Supports partial updates with undefined fields being ignored.
+ * Interface for partial user updates with optional fields.
+ * Supports granular updates without requiring all fields.
  */
 export interface UserUpdateInput {
-    /** Updated email address */
+    /** Updated email address (optional) */
     email?: string;
-    /** Updated full name */
+    /** Updated full name (optional) */
     fullName?: string;
-    /** Updated user role */
+    /** Updated user role (optional) */
     role?: UserRole;
-    /** Updated active status */
+    /** Updated active status (optional) */
     isActive?: boolean;
-    /** Updated MFA status */
+    /** Updated MFA status (optional) */
     mfaEnabled?: boolean;
 }
