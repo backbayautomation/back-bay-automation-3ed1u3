@@ -2,16 +2,23 @@ import { lazy } from 'react';
 import type { RouteObject } from 'react-router-dom';
 import { Analytics } from '@azure/application-insights';
 import { ErrorBoundary } from 'react-error-boundary';
-
 import AdminLayout from '../layouts/AdminLayout';
 import ClientLayout from '../layouts/ClientLayout';
 import AuthLayout from '../layouts/AuthLayout';
 
-// Route metadata interface for enhanced tracking and SEO
+// Constants for route configuration
+const ANALYTICS_CATEGORY = 'navigation';
+const ROUTE_LOAD_TIMEOUT = 3000;
+const CACHE_MAX_AGE = 3600; // 1 hour in seconds
+
+// Interface for enhanced route metadata
 interface RouteMeta {
   title: string;
   analyticsId: string;
-  cacheStrategy: 'no-cache' | 'cache-first' | 'network-first';
+  cacheStrategy: {
+    maxAge: number;
+    revalidate?: boolean;
+  };
 }
 
 // Enhanced route configuration interface
@@ -22,182 +29,208 @@ interface RouteConfig extends RouteObject {
   errorBoundary?: React.ComponentType;
 }
 
-// Lazy-loaded components with retry logic
-const withRetry = (factory: () => Promise<any>, maxRetries = 3) => {
-  return async () => {
-    let retries = 0;
-    while (retries < maxRetries) {
-      try {
-        return await factory();
-      } catch (error) {
-        retries++;
-        if (retries === maxRetries) throw error;
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000));
-      }
-    }
-  };
-};
+// Lazy-loaded page components with error boundaries
+const Dashboard = lazy(() => import('../pages/admin/Dashboard'));
+const ClientManagement = lazy(() => import('../pages/admin/ClientManagement'));
+const DocumentProcessing = lazy(() => import('../pages/admin/DocumentProcessing'));
+const AnalyticsDashboard = lazy(() => import('../pages/admin/Analytics'));
+const Settings = lazy(() => import('../pages/admin/Settings'));
 
-// Authentication routes
+const ClientHome = lazy(() => import('../pages/client/Home'));
+const Chat = lazy(() => import('../pages/client/Chat'));
+const Documents = lazy(() => import('../pages/client/Documents'));
+const ClientSettings = lazy(() => import('../pages/client/Settings'));
+
+const Login = lazy(() => import('../pages/auth/Login'));
+const Register = lazy(() => import('../pages/auth/Register'));
+const ForgotPassword = lazy(() => import('../pages/auth/ForgotPassword'));
+
+// Authentication routes configuration
 const AUTH_ROUTES: RouteConfig[] = [
   {
     path: '/login',
-    element: <AuthLayout redirectTo="/client" />,
-    Component: lazy(() => withRetry(() => import('../pages/auth/Login'))),
+    element: <AuthLayout redirectTo="/dashboard">
+      <Login />
+    </AuthLayout>,
     auth: false,
     roles: [],
     meta: {
-      title: 'Login - AI Catalog Search',
-      analyticsId: 'auth_login',
-      cacheStrategy: 'no-cache'
+      title: 'Login',
+      analyticsId: 'auth_login_view',
+      cacheStrategy: { maxAge: 0 }
     }
   },
   {
-    path: '/mfa',
-    element: <AuthLayout redirectTo="/client" />,
-    Component: lazy(() => withRetry(() => import('../pages/auth/MFA'))),
-    auth: true,
+    path: '/register',
+    element: <AuthLayout redirectTo="/dashboard">
+      <Register />
+    </AuthLayout>,
+    auth: false,
     roles: [],
     meta: {
-      title: 'Two-Factor Authentication',
-      analyticsId: 'auth_mfa',
-      cacheStrategy: 'no-cache'
+      title: 'Register',
+      analyticsId: 'auth_register_view',
+      cacheStrategy: { maxAge: 0 }
+    }
+  },
+  {
+    path: '/forgot-password',
+    element: <AuthLayout redirectTo="/login">
+      <ForgotPassword />
+    </AuthLayout>,
+    auth: false,
+    roles: [],
+    meta: {
+      title: 'Forgot Password',
+      analyticsId: 'auth_forgot_password_view',
+      cacheStrategy: { maxAge: 0 }
     }
   }
 ];
 
-// Admin portal routes
+// Admin portal routes configuration
 const ADMIN_ROUTES: RouteConfig[] = [
   {
     path: '/admin',
-    element: <AdminLayout />,
+    element: <AdminLayout>
+      <Dashboard />
+    </AdminLayout>,
     auth: true,
     roles: ['SYSTEM_ADMIN'],
     meta: {
       title: 'Admin Dashboard',
-      analyticsId: 'admin_dashboard',
-      cacheStrategy: 'network-first'
-    },
-    children: [
-      {
-        path: 'dashboard',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Dashboard'))),
-        meta: {
-          title: 'Admin Dashboard',
-          analyticsId: 'admin_dashboard_view',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'clients',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Clients'))),
-        meta: {
-          title: 'Client Management',
-          analyticsId: 'admin_clients',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'documents',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Documents'))),
-        meta: {
-          title: 'Document Management',
-          analyticsId: 'admin_documents',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'analytics',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Analytics'))),
-        meta: {
-          title: 'System Analytics',
-          analyticsId: 'admin_analytics',
-          cacheStrategy: 'network-first'
-        }
-      }
-    ]
-  }
-];
-
-// Client portal routes
-const CLIENT_ROUTES: RouteConfig[] = [
-  {
-    path: '/client',
-    element: <ClientLayout />,
-    auth: true,
-    roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
-    meta: {
-      title: 'Product Search',
-      analyticsId: 'client_portal',
-      cacheStrategy: 'network-first'
-    },
-    children: [
-      {
-        path: '',
-        Component: lazy(() => withRetry(() => import('../pages/client/Home'))),
-        meta: {
-          title: 'Home - Product Search',
-          analyticsId: 'client_home',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'chat',
-        Component: lazy(() => withRetry(() => import('../pages/client/Chat'))),
-        meta: {
-          title: 'Chat - Product Search',
-          analyticsId: 'client_chat',
-          cacheStrategy: 'no-cache'
-        }
-      },
-      {
-        path: 'documents',
-        Component: lazy(() => withRetry(() => import('../pages/client/Documents'))),
-        meta: {
-          title: 'Documents - Product Search',
-          analyticsId: 'client_documents',
-          cacheStrategy: 'network-first'
-        }
-      }
-    ]
-  }
-];
-
-// Error routes
-const ERROR_ROUTES: RouteConfig[] = [
-  {
-    path: '/error',
-    Component: lazy(() => withRetry(() => import('../pages/error/ErrorPage'))),
-    auth: false,
-    roles: [],
-    meta: {
-      title: 'Error',
-      analyticsId: 'error_page',
-      cacheStrategy: 'no-cache'
+      analyticsId: 'admin_dashboard_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
     }
   },
   {
-    path: '*',
-    Component: lazy(() => withRetry(() => import('../pages/error/NotFound'))),
-    auth: false,
-    roles: [],
+    path: '/admin/clients',
+    element: <AdminLayout>
+      <ClientManagement />
+    </AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
     meta: {
-      title: '404 - Not Found',
-      analyticsId: 'error_404',
-      cacheStrategy: 'no-cache'
+      title: 'Client Management',
+      analyticsId: 'admin_clients_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
+    }
+  },
+  {
+    path: '/admin/documents',
+    element: <AdminLayout>
+      <DocumentProcessing />
+    </AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Document Processing',
+      analyticsId: 'admin_documents_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
+    }
+  },
+  {
+    path: '/admin/analytics',
+    element: <AdminLayout>
+      <AnalyticsDashboard />
+    </AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Analytics',
+      analyticsId: 'admin_analytics_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE, revalidate: true }
+    }
+  },
+  {
+    path: '/admin/settings',
+    element: <AdminLayout>
+      <Settings />
+    </AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Admin Settings',
+      analyticsId: 'admin_settings_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
     }
   }
 ];
 
-// Route validation and access control
-const validateRouteAccess = (route: RouteConfig, user: any): boolean => {
-  if (!route.auth) return true;
-  if (!user) return false;
-  if (route.roles.length === 0) return true;
-  return route.roles.some(role => user.role === role);
-};
+// Client portal routes configuration
+const CLIENT_ROUTES: RouteConfig[] = [
+  {
+    path: '/client',
+    element: <ClientLayout>
+      <ClientHome />
+    </ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
+    meta: {
+      title: 'Client Home',
+      analyticsId: 'client_home_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
+    }
+  },
+  {
+    path: '/client/chat',
+    element: <ClientLayout>
+      <Chat />
+    </ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
+    meta: {
+      title: 'Chat',
+      analyticsId: 'client_chat_view',
+      cacheStrategy: { maxAge: 0 }
+    }
+  },
+  {
+    path: '/client/documents',
+    element: <ClientLayout>
+      <Documents />
+    </ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
+    meta: {
+      title: 'Documents',
+      analyticsId: 'client_documents_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
+    }
+  },
+  {
+    path: '/client/settings',
+    element: <ClientLayout>
+      <ClientSettings />
+    </ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN'],
+    meta: {
+      title: 'Client Settings',
+      analyticsId: 'client_settings_view',
+      cacheStrategy: { maxAge: CACHE_MAX_AGE }
+    }
+  }
+];
 
-// Generate final route configuration with error boundaries and analytics
+// Error routes configuration
+const ERROR_ROUTES: RouteConfig[] = [
+  {
+    path: '*',
+    element: <ErrorBoundary FallbackComponent={() => <div>Page Not Found</div>}>
+      <div>404 - Not Found</div>
+    </ErrorBoundary>,
+    auth: false,
+    roles: [],
+    meta: {
+      title: 'Not Found',
+      analyticsId: 'error_404_view',
+      cacheStrategy: { maxAge: 0 }
+    }
+  }
+];
+
+// Function to generate final route configuration with analytics and error handling
 const generateRouteConfig = (): RouteObject[] => {
   const allRoutes = [...AUTH_ROUTES, ...ADMIN_ROUTES, ...CLIENT_ROUTES, ...ERROR_ROUTES];
 
@@ -205,35 +238,30 @@ const generateRouteConfig = (): RouteObject[] => {
     ...route,
     element: (
       <ErrorBoundary
-        FallbackComponent={route.errorBoundary || ErrorPage}
+        FallbackComponent={route.errorBoundary || (() => <div>Error loading page</div>)}
         onError={(error) => {
-          Analytics.trackException({
-            error,
-            severityLevel: 3,
+          Analytics.trackEvent({
+            name: 'route_error',
             properties: {
-              path: route.path,
-              analyticsId: route.meta.analyticsId
+              route: route.path,
+              error: error.message,
+              category: ANALYTICS_CATEGORY
             }
           });
         }}
       >
-        {route.element}
+        <React.Suspense
+          fallback={<div>Loading...</div>}
+          options={{
+            timeout: ROUTE_LOAD_TIMEOUT
+          }}
+        >
+          {route.element}
+        </React.Suspense>
       </ErrorBoundary>
-    ),
-    loader: async () => {
-      Analytics.trackPageView({
-        name: route.meta.title,
-        properties: {
-          path: route.path,
-          analyticsId: route.meta.analyticsId
-        }
-      });
-      return null;
-    }
+    )
   }));
 };
 
-// Export final route configuration
-export const routes = generateRouteConfig();
-
-export default routes;
+// Export the final route configuration
+export default generateRouteConfig();
