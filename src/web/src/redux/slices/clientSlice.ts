@@ -4,19 +4,11 @@
  * @version 1.0.0
  */
 
-import { createSlice, createAsyncThunk, createSelector, PayloadAction } from '@reduxjs/toolkit'; // ^1.9.5
-import { Client, ClientId, ClientStatus } from '../../types/client';
-import type { RootState } from '../store';
-import type { PaginationParams } from '../../types/common';
+import { createSlice, createAsyncThunk, createSelector, PayloadAction } from '@reduxjs/toolkit';
+import type { Client, ClientId, ClientStatus } from '../../types/client';
+import type { PaginationParams, ApiResponse } from '../../types/common';
 
-// Enhanced error interface for detailed error tracking
-interface ClientError {
-  message: string;
-  code: string;
-  details?: any;
-}
-
-// Enhanced interface for client slice state
+// State interface with enhanced tracking and error handling
 interface ClientState {
   clients: Client[];
   selectedClient: Client | null;
@@ -26,7 +18,11 @@ interface ClientState {
     updateClient: boolean;
     deleteClient: boolean;
   };
-  error: ClientError | null;
+  error: {
+    message: string;
+    code: string;
+    details?: any;
+  } | null;
   totalClients: number;
   lastUpdated: Date | null;
   searchQuery: string;
@@ -38,7 +34,7 @@ interface ClientState {
   pendingOperations: Record<ClientId, boolean>;
 }
 
-// Initial state with comprehensive tracking fields
+// Initial state with type safety
 const initialState: ClientState = {
   clients: [],
   selectedClient: null,
@@ -60,68 +56,72 @@ const initialState: ClientState = {
   pendingOperations: {},
 };
 
-// Enhanced async thunk for fetching clients with pagination and search
+// Async thunk for fetching clients with enhanced error handling
 export const fetchClients = createAsyncThunk<
-  { clients: Client[]; total: number },
+  ApiResponse<{ clients: Client[]; total: number }>,
   PaginationParams,
-  { rejectValue: ClientError }
+  { rejectValue: { message: string; code: string } }
 >(
   'clients/fetchClients',
-  async (params, { rejectWithValue, signal }) => {
+  async (params, { rejectWithValue }) => {
     try {
-      // API call would go here
-      const response = await fetch(`/api/clients?page=${params.page}&limit=${params.pageSize}`, {
-        signal,
-      });
+      const response = await fetch(`/api/clients?page=${params.page}&limit=${params.pageSize}${
+        params.sortBy ? `&sortBy=${params.sortBy}&sortOrder=${params.sortOrder}` : ''
+      }`);
       
       if (!response.ok) {
-        throw new Error('Failed to fetch clients');
+        const error = await response.json();
+        return rejectWithValue({
+          message: error.message || 'Failed to fetch clients',
+          code: error.code || 'FETCH_ERROR'
+        });
       }
 
-      const data = await response.json();
-      return { clients: data.items, total: data.total };
-    } catch (error: any) {
+      return await response.json();
+    } catch (error) {
       return rejectWithValue({
-        message: error.message || 'Failed to fetch clients',
-        code: 'FETCH_ERROR',
-        details: error,
+        message: 'Network error occurred',
+        code: 'NETWORK_ERROR'
       });
     }
   }
 );
 
-// Enhanced async thunk for updating client with optimistic updates
+// Async thunk for updating client with optimistic updates
 export const updateClient = createAsyncThunk<
   Client,
-  Partial<Client> & { id: ClientId },
-  { state: RootState; rejectValue: ClientError }
+  { id: ClientId; updates: Partial<Client> },
+  { rejectValue: { message: string; code: string } }
 >(
   'clients/updateClient',
-  async (clientData, { getState, rejectWithValue }) => {
+  async ({ id, updates }, { rejectWithValue, getState }) => {
     try {
-      // API call would go here
-      const response = await fetch(`/api/clients/${clientData.id}`, {
+      const response = await fetch(`/api/clients/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify(clientData),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update client');
+        const error = await response.json();
+        return rejectWithValue({
+          message: error.message || 'Failed to update client',
+          code: error.code || 'UPDATE_ERROR'
+        });
       }
 
       return await response.json();
-    } catch (error: any) {
+    } catch (error) {
       return rejectWithValue({
-        message: error.message || 'Failed to update client',
-        code: 'UPDATE_ERROR',
-        details: error,
+        message: 'Network error occurred',
+        code: 'NETWORK_ERROR'
       });
     }
   }
 );
 
 // Client slice with comprehensive state management
-export const clientSlice = createSlice({
+const clientSlice = createSlice({
   name: 'clients',
   initialState,
   reducers: {
@@ -131,7 +131,7 @@ export const clientSlice = createSlice({
     },
     setSearchQuery: (state, action: PayloadAction<string>) => {
       state.searchQuery = action.payload;
-      state.pagination.page = 1; // Reset pagination on new search
+      state.pagination.page = 1; // Reset pagination when search changes
     },
     clearError: (state) => {
       state.error = null;
@@ -147,16 +147,16 @@ export const clientSlice = createSlice({
       })
       .addCase(fetchClients.fulfilled, (state, action) => {
         state.loading.fetchClients = false;
-        state.clients = action.payload.clients;
-        state.totalClients = action.payload.total;
+        state.clients = action.payload.data.clients;
+        state.totalClients = action.payload.data.total;
         state.lastUpdated = new Date();
-        state.error = null;
+        state.pagination.total = action.payload.data.total;
       })
       .addCase(fetchClients.rejected, (state, action) => {
         state.loading.fetchClients = false;
-        state.error = action.payload || {
-          message: 'An unknown error occurred',
-          code: 'UNKNOWN_ERROR',
+        state.error = {
+          message: action.payload?.message || 'Unknown error occurred',
+          code: action.payload?.code || 'UNKNOWN_ERROR'
         };
       })
       // Update client reducers with optimistic updates
@@ -176,46 +176,32 @@ export const clientSlice = createSlice({
       })
       .addCase(updateClient.rejected, (state, action) => {
         state.loading.updateClient = false;
-        state.error = action.payload || {
-          message: 'An unknown error occurred',
-          code: 'UNKNOWN_ERROR',
+        state.error = {
+          message: action.payload?.message || 'Failed to update client',
+          code: action.payload?.code || 'UPDATE_ERROR'
         };
         delete state.pendingOperations[action.meta.arg.id];
       });
-  },
+  }
 });
 
-// Export actions
-export const {
-  setSelectedClient,
-  setSearchQuery,
-  clearError,
-  resetClientState,
-} = clientSlice.actions;
+// Memoized selectors for optimized state derivation
+export const selectAllClients = (state: { clients: ClientState }) => state.clients.clients;
+export const selectSelectedClient = (state: { clients: ClientState }) => state.clients.selectedClient;
+export const selectClientLoadingStates = (state: { clients: ClientState }) => state.clients.loading;
+export const selectClientError = (state: { clients: ClientState }) => state.clients.error;
+export const selectClientPagination = (state: { clients: ClientState }) => state.clients.pagination;
 
-// Memoized selectors for optimized state access
-export const selectClients = (state: RootState) => state.clients.clients;
-export const selectSelectedClient = (state: RootState) => state.clients.selectedClient;
-export const selectClientLoadingStates = (state: RootState) => state.clients.loading;
-export const selectClientError = (state: RootState) => state.clients.error;
-export const selectClientPagination = (state: RootState) => state.clients.pagination;
-
-// Memoized selector for filtered and derived client data
-export const selectFilteredClients = createSelector(
-  [selectClients, (state: RootState) => state.clients.searchQuery],
-  (clients, searchQuery) => {
-    if (!searchQuery) return clients;
-    return clients.filter(client =>
-      client.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }
+export const selectActiveClients = createSelector(
+  selectAllClients,
+  (clients) => clients.filter(client => client.status === ClientStatus.ACTIVE)
 );
 
-// Memoized selector for active clients count
-export const selectActiveClientsCount = createSelector(
-  [selectClients],
-  (clients) => clients.filter(client => client.status === ClientStatus.ACTIVE).length
+export const selectClientById = createSelector(
+  [selectAllClients, (_, clientId: ClientId) => clientId],
+  (clients, clientId) => clients.find(client => client.id === clientId)
 );
 
-// Export reducer
+// Export actions and reducer
+export const { setSelectedClient, setSearchQuery, clearError, resetClientState } = clientSlice.actions;
 export default clientSlice.reducer;
