@@ -1,0 +1,82 @@
+# ServiceMonitor configurations for AI-powered Product Catalog Search System
+# prometheus-operator version: v0.68.0
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-metrics
+  namespace: monitoring
+  labels:
+    app: backend
+    component: monitoring
+    part-of: catalog-search
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: ["__name__"]
+          regex: process_.*|http_.*|api_.*
+          action: keep
+  namespaceSelector:
+    matchNames:
+      - default
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: frontend-metrics
+  namespace: monitoring
+  labels:
+    app: frontend
+    component: monitoring
+    part-of: catalog-search
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      honorLabels: true
+  namespaceSelector:
+    matchNames:
+      - default
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-service-metrics
+  namespace: monitoring
+  labels:
+    app: ai-service
+    component: monitoring
+    part-of: catalog-search
+spec:
+  selector:
+    matchLabels:
+      app: ai-service
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: ["__name__"]
+          regex: ai_.*|gpu_.*|model_.*
+          action: keep
+  namespaceSelector:
+    matchNames:
+      - default
