@@ -1,0 +1,78 @@
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+
+# Test and coverage
+.coverage*
+htmlcov/
+tests/
+
+# Version control
+.git/
+
+# Environment and secrets
+.env*
+*.key
+*.pem
+*.crt
+
+# Development tools and configurations
+.vscode/
+.idea/
+docker-compose*.yml
+scripts/
+
+# Documentation
+*.md
+
+# Data and logs
+data/
+logs/
+*.log
+tmp/
+
+# IDE specific
+.idea/
+.vscode/
+
+# Local development artifacts
+.coverage
+.coverage.*
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+tmp/
+*.tmp
+*.temp
+
+# Docker specific
+Dockerfile*
+docker-compose*.yml
+.docker/
+
+# Certificate files
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local development environment
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# Debug files
+*.debug
+debug/
+
+# System files
+.DS_Store
+Thumbs.db
