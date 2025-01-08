@@ -5,21 +5,22 @@ multi-tenant isolation, role-based access control, and detailed audit logging.
 Version: 1.0.0
 """
 
-from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status  # version: ^0.100.0
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc, asc
+from redis import Redis  # version: 4.5.0
+from slowapi import Limiter  # version: 0.1.8
+from slowapi.util import get_remote_address
 
 from ....models.user import User, UserRole
 from ....schemas.user import UserCreate, UserUpdate, User as UserSchema
-from ....core.security import get_password_hash, verify_password
 from ....utils.logging import StructuredLogger
+from ....core.security import verify_password, get_password_hash
 from ....db.session import get_db
-from ....core.auth import get_current_user, check_user_permissions
-from ....utils.pagination import PaginatedResponse, paginate_query
+from ....core.auth import get_current_user, check_permissions
 
 # Initialize router with prefix and tags
 router = APIRouter(prefix="/users", tags=["users"])
@@ -27,7 +28,12 @@ router = APIRouter(prefix="/users", tags=["users"])
 # Initialize structured logger
 logger = StructuredLogger(__name__)
 
-@router.get("/", response_model=PaginatedResponse[UserSchema])
+# Initialize rate limiter
+redis_client = Redis(host="localhost", port=6379, db=0)
+limiter = Limiter(key_func=get_remote_address, storage_uri="redis://localhost:6379")
+
+@router.get("/", response_model=List[UserSchema])
+@limiter.limit("100/minute")
 async def get_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -36,15 +42,15 @@ async def get_users(
     sort_by: str = Query("created_at", regex="^(email|full_name|role|created_at)$"),
     descending: bool = Query(True),
     org_id: Optional[UUID] = None,
-    client_id: Optional[UUID] = None
-) -> PaginatedResponse[UserSchema]:
+    client_id: Optional[UUID] = None,
+) -> List[UserSchema]:
     """
     Retrieve paginated list of users with filtering and sorting capabilities.
     Implements multi-tenant isolation and role-based access control.
     """
     try:
-        # Check user permissions
-        if not check_user_permissions(current_user, ["SYSTEM_ADMIN", "CLIENT_ADMIN"]):
+        # Check permissions
+        if not check_permissions(current_user, ["SYSTEM_ADMIN", "CLIENT_ADMIN"]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions to list users"
@@ -67,26 +73,25 @@ async def get_users(
         sort_column = getattr(User, sort_by)
         query = query.order_by(desc(sort_column) if descending else asc(sort_column))
 
-        # Get paginated results
-        paginated_users = paginate_query(query, skip, limit)
+        # Apply pagination
+        users = query.offset(skip).limit(limit).all()
 
-        # Log successful retrieval
+        # Log access
         logger.log_security_event(
-            "user_list_accessed",
+            "user_list_access",
             {
                 "user_id": str(current_user.id),
                 "org_id": str(current_user.org_id),
-                "filters": {"org_id": org_id, "client_id": client_id},
-                "count": paginated_users.total
+                "client_id": str(current_user.client_id) if current_user.client_id else None,
+                "results_count": len(users)
             }
         )
 
-        return paginated_users
+        return users
 
     except Exception as e:
-        # Log error
         logger.log_security_event(
-            "error_user_list_access",
+            "user_list_error",
             {
                 "user_id": str(current_user.id),
                 "error": str(e)
@@ -94,22 +99,23 @@ async def get_users(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve users"
+            detail="Error retrieving users"
         )
 
 @router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
+@limiter.limit("50/hour")
 async def create_user(
     user_create: UserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-) -> User:
+) -> UserSchema:
     """
     Create new user with role-based access control and multi-tenant isolation.
     Implements comprehensive security controls and audit logging.
     """
     try:
-        # Check user permissions
-        if not check_user_permissions(current_user, ["SYSTEM_ADMIN", "CLIENT_ADMIN"]):
+        # Check permissions
+        if not check_permissions(current_user, ["SYSTEM_ADMIN", "CLIENT_ADMIN"]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions to create users"
@@ -128,64 +134,48 @@ async def create_user(
                     detail="Cannot create user for different client"
                 )
 
-        # Check if email already exists
+        # Check email uniqueness
         if db.query(User).filter(User.email == user_create.email).first():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
 
-        # Create new user instance
-        new_user = User(
+        # Create user instance
+        user = User(
             email=user_create.email,
-            org_id=user_create.org_id,
-            client_id=user_create.client_id,
-            role=user_create.role,
             full_name=user_create.full_name,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            role=user_create.role,
+            org_id=user_create.org_id,
+            client_id=user_create.client_id
         )
-
-        # Set password with secure hashing
-        new_user.hashed_password = get_password_hash(user_create.password)
+        user.set_password(user_create.password)
 
         # Save to database
-        db.add(new_user)
+        db.add(user)
         db.commit()
-        db.refresh(new_user)
+        db.refresh(user)
 
         # Log user creation
         logger.log_security_event(
             "user_created",
             {
                 "created_by": str(current_user.id),
-                "new_user_id": str(new_user.id),
-                "org_id": str(new_user.org_id),
-                "client_id": str(new_user.client_id) if new_user.client_id else None,
-                "role": new_user.role
+                "new_user_id": str(user.id),
+                "org_id": str(user.org_id),
+                "client_id": str(user.client_id) if user.client_id else None,
+                "role": user.role
             }
         )
 
-        return new_user
+        return user
 
-    except IntegrityError as e:
-        db.rollback()
-        logger.log_security_event(
-            "error_user_create",
-            {
-                "created_by": str(current_user.id),
-                "error": "Database integrity error",
-                "details": str(e)
-            }
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Database integrity error"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         logger.log_security_event(
-            "error_user_create",
+            "user_creation_error",
             {
                 "created_by": str(current_user.id),
                 "error": str(e)
@@ -193,5 +183,5 @@ async def create_user(
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user"
+            detail="Error creating user"
         )
