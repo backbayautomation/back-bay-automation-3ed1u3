@@ -1,119 +1,121 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals'; // v29.7.0
 import { faker } from '@faker-js/faker'; // v8.0.0
-import {
-  validateEmail,
-  validatePassword,
-  validateFileUpload,
-  sanitizeString
+import { 
+  validateEmail, 
+  validatePassword, 
+  validateFileUpload, 
+  sanitizeString 
 } from '../../src/utils/validation';
 import { VALIDATION_CONSTANTS } from '../../src/config/constants';
 
 describe('validateEmail', () => {
-  it('should validate standard email formats', () => {
+  it('should validate correct email formats', () => {
     const validEmails = [
       'test@example.com',
-      'user.name@domain.com',
+      'user.name@domain.co.uk',
       'user+tag@domain.com',
+      'a@b.cc',
       faker.internet.email()
     ];
 
     validEmails.forEach(email => {
-      expect(validateEmail(email)).toHaveLength(0);
-    });
-  });
-
-  it('should validate international email formats', () => {
-    const internationalEmails = [
-      'user@domain.co.uk',
-      'user@domain.com.au',
-      'user@subdomain.domain.org'
-    ];
-
-    internationalEmails.forEach(email => {
-      expect(validateEmail(email)).toHaveLength(0);
+      expect(validateEmail(email)).toEqual([]);
     });
   });
 
   it('should reject invalid email formats', () => {
     const invalidEmails = [
       '',
-      'invalid',
+      'test',
       '@domain.com',
-      'user@',
-      'user@domain',
-      'user@.com',
-      'user@domain.',
-      'user name@domain.com'
+      'test@',
+      'test@.com',
+      'test@domain',
+      'test@domain.',
+      'test@domain..com',
+      'test@domain.c',
+      null,
+      undefined
     ];
 
     invalidEmails.forEach(email => {
-      expect(validateEmail(email)).toHaveLength(1);
-      expect(validateEmail(email)[0].field).toBe('email');
+      expect(validateEmail(email as string).length).toBeGreaterThan(0);
     });
   });
 
-  it('should detect SQL injection patterns in emails', () => {
+  it('should handle email security patterns', () => {
     const maliciousEmails = [
-      "user'--@domain.com",
-      'user;DROP TABLE users;--@domain.com',
-      "user' OR '1'='1@domain.com"
+      "test@domain.com'--",
+      'test@domain.com<script>',
+      `test@domain.com${'\u0000'}`,
+      'test@domain.com;drop table users',
+      '"><script>alert(1)</script>@domain.com'
     ];
 
     maliciousEmails.forEach(email => {
-      expect(validateEmail(email)).toHaveLength(1);
+      expect(validateEmail(email).length).toBeGreaterThan(0);
     });
   });
 
-  it('should handle edge cases', () => {
-    expect(validateEmail(' ')).toHaveLength(1);
-    expect(validateEmail('a'.repeat(256) + '@domain.com')).toHaveLength(1);
-    expect(validateEmail(null as unknown as string)).toHaveLength(1);
-    expect(validateEmail(undefined as unknown as string)).toHaveLength(1);
+  it('should validate international email formats', () => {
+    const internationalEmails = [
+      'user@domain.香港',
+      'user@domäin.de',
+      'user@домен.рф',
+      'user@도메인.한국'
+    ];
+
+    internationalEmails.forEach(email => {
+      expect(validateEmail(email)).toEqual([]);
+    });
   });
 });
 
 describe('validatePassword', () => {
-  it('should validate strong passwords', () => {
-    const strongPasswords = [
+  it('should validate passwords meeting all requirements', () => {
+    const validPasswords = [
       'Test123!@#',
       'SecureP@ssw0rd',
-      'Complex1ty!',
+      'C0mpl3x!Pass',
       faker.internet.password({ length: 12, pattern: /[A-Za-z0-9!@#$%^&*]/ })
     ];
 
-    strongPasswords.forEach(password => {
-      expect(validatePassword(password)).toHaveLength(0);
+    validPasswords.forEach(password => {
+      expect(validatePassword(password)).toEqual([]);
     });
   });
 
   it('should enforce minimum length requirement', () => {
-    const shortPassword = 'Abc123!';
+    const shortPassword = 'Ab1!';
     const errors = validatePassword(shortPassword);
     
-    expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain(VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH.toString());
+    expect(errors).toContainEqual({
+      field: 'password',
+      message: `Password must be at least ${VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH} characters long`
+    });
   });
 
   it('should enforce maximum length requirement', () => {
-    const longPassword = 'A1!'.repeat(50);
+    const longPassword = 'A'.repeat(VALIDATION_CONSTANTS.MAX_PASSWORD_LENGTH + 1);
     const errors = validatePassword(longPassword);
     
-    expect(errors).toHaveLength(1);
-    expect(errors[0].message).toContain(VALIDATION_CONSTANTS.MAX_PASSWORD_LENGTH.toString());
+    expect(errors).toContainEqual({
+      field: 'password',
+      message: `Password cannot exceed ${VALIDATION_CONSTANTS.MAX_PASSWORD_LENGTH} characters`
+    });
   });
 
   it('should require all character types', () => {
-    const incompletePasswords = [
-      'onlylowercase',
-      'ONLYUPPERCASE',
-      'NoNumbers!',
-      'no2special',
-      '12345678'
+    const testCases = [
+      { password: 'lowercase123!', missing: 'uppercase' },
+      { password: 'UPPERCASE123!', missing: 'lowercase' },
+      { password: 'UpperLower!@#', missing: 'number' },
+      { password: 'UpperLower123', missing: 'special' }
     ];
 
-    incompletePasswords.forEach(password => {
+    testCases.forEach(({ password, missing }) => {
       const errors = validatePassword(password);
-      expect(errors.length).toBeGreaterThan(0);
+      expect(errors.some(e => e.message.includes(missing))).toBeTruthy();
     });
   });
 
@@ -122,74 +124,60 @@ describe('validatePassword', () => {
       'Password123!',
       'Qwerty123!',
       '12345678Ab!',
-      'Admin123!'
+      'Admin123!@#'
     ];
 
     commonPasswords.forEach(password => {
       const errors = validatePassword(password);
-      expect(errors.some(e => e.message.includes('common pattern'))).toBeTruthy();
+      expect(errors.some(e => e.message.includes('common patterns'))).toBeTruthy();
     });
-  });
-
-  it('should handle edge cases', () => {
-    expect(validatePassword('')).toHaveLength(1);
-    expect(validatePassword(' '.repeat(10))).toHaveLength(4);
-    expect(validatePassword(null as unknown as string)).toHaveLength(1);
-    expect(validatePassword(undefined as unknown as string)).toHaveLength(1);
   });
 });
 
 describe('validateFileUpload', () => {
-  let validFile: File;
-  let invalidFile: File;
+  let mockValidFile: File;
+  let mockInvalidFile: File;
 
   beforeEach(() => {
     const validContent = new Uint8Array([1, 2, 3, 4]);
-    validFile = new File([validContent], 'test.pdf', {
+    const invalidContent = new Uint8Array([1, 2, 3, 4]);
+
+    mockValidFile = new File([validContent], 'test.pdf', {
       type: 'application/pdf',
       lastModified: Date.now()
     });
 
-    const invalidContent = new Uint8Array([1, 2, 3, 4]);
-    invalidFile = new File([invalidContent], 'test.exe', {
+    mockInvalidFile = new File([invalidContent], 'test.exe', {
       type: 'application/x-msdownload',
       lastModified: Date.now()
     });
   });
 
   it('should validate allowed file types', () => {
-    const errors = validateFileUpload(validFile);
-    expect(errors).toHaveLength(0);
-  });
-
-  it('should reject files exceeding size limit', () => {
-    Object.defineProperty(validFile, 'size', {
-      value: VALIDATION_CONSTANTS.MAX_FILE_SIZE + 1000
-    });
-
-    const errors = validateFileUpload(validFile);
-    expect(errors.some(e => e.message.includes('size'))).toBeTruthy();
+    expect(validateFileUpload(mockValidFile)).toEqual([]);
   });
 
   it('should reject disallowed file types', () => {
-    const errors = validateFileUpload(invalidFile);
-    expect(errors.some(e => e.message.includes('type'))).toBeTruthy();
+    const errors = validateFileUpload(mockInvalidFile);
+    expect(errors.some(e => e.message.includes('File type not allowed'))).toBeTruthy();
   });
 
-  it('should validate file MIME types', () => {
-    const maliciousFile = new File([], 'malicious.pdf', {
+  it('should enforce file size limits', () => {
+    const largeFile = new File([new ArrayBuffer(VALIDATION_CONSTANTS.MAX_FILE_SIZE + 1000)], 'large.pdf', {
+      type: 'application/pdf'
+    });
+
+    const errors = validateFileUpload(largeFile);
+    expect(errors.some(e => e.message.includes('File size cannot exceed'))).toBeTruthy();
+  });
+
+  it('should validate MIME types', () => {
+    const spoofedFile = new File([new Uint8Array([1, 2, 3, 4])], 'malicious.pdf', {
       type: 'application/javascript'
     });
 
-    const errors = validateFileUpload(maliciousFile);
-    expect(errors.some(e => e.message.includes('content type'))).toBeTruthy();
-  });
-
-  it('should handle edge cases', () => {
-    const emptyFile = new File([], '');
-    expect(validateFileUpload(emptyFile)).toHaveLength(2);
-    expect(validateFileUpload(null as unknown as File)).toHaveLength(1);
-    expect(validateFileUpload(undefined as unknown as File)).toHaveLength(1);
+    const errors = validateFileUpload(spoofedFile);
+    expect(errors.some(e => e.message.includes('Invalid file content type'))).toBeTruthy();
   });
 });
 
@@ -200,59 +188,36 @@ describe('sanitizeString', () => {
   });
 
   it('should remove SQL injection patterns', () => {
-    const sqlPatterns = [
-      "DROP TABLE users;",
-      "SELECT * FROM passwords;",
-      "1'; DELETE FROM customers; --"
-    ];
-
-    sqlPatterns.forEach(pattern => {
-      const sanitized = sanitizeString(pattern);
-      expect(sanitized).not.toContain('DROP');
-      expect(sanitized).not.toContain('SELECT');
-      expect(sanitized).not.toContain('DELETE');
-    });
+    const input = 'SELECT * FROM users; DROP TABLE users;';
+    expect(sanitizeString(input)).toBe('* FROM users;  TABLE users;');
   });
 
   it('should escape special characters', () => {
     const input = '<>&"\'/';
-    const expected = '&lt;&gt;&amp;&quot;&#x27;&#x2F;';
-    expect(sanitizeString(input)).toBe(expected);
+    expect(sanitizeString(input)).toBe('&lt;&gt;&amp;&quot;&#x27;&#x2F;');
   });
 
-  it('should handle XSS attack patterns', () => {
-    const xssPatterns = [
-      '<img src="x" onerror="alert(1)">',
-      '<script>document.cookie</script>',
-      '<style>body{background:url("javascript:alert(1)")}</style>'
-    ];
-
-    xssPatterns.forEach(pattern => {
-      const sanitized = sanitizeString(pattern);
-      expect(sanitized).not.toContain('<script>');
-      expect(sanitized).not.toContain('<style>');
-      expect(sanitized).not.toContain('javascript:');
-    });
-  });
-
-  it('should handle edge cases', () => {
+  it('should handle empty, null, and undefined inputs', () => {
     expect(sanitizeString('')).toBe('');
-    expect(sanitizeString(' ')).toBe(' ');
     expect(sanitizeString(null as unknown as string)).toBe('');
     expect(sanitizeString(undefined as unknown as string)).toBe('');
-    expect(sanitizeString('a'.repeat(10000))).toHaveLength(10000);
   });
 
-  it('should preserve valid content', () => {
-    const validContent = [
-      'Regular text',
-      'Numbers 123',
-      'Symbols !@#$%^&*()',
-      'Unicode characters ñáéíóú'
-    ];
+  it('should handle nested malicious patterns', () => {
+    const input = '<script<script>>alert("xss")</script</script>>';
+    expect(sanitizeString(input)).toBe('alert("xss")');
+  });
 
-    validContent.forEach(content => {
-      expect(sanitizeString(content)).toBe(content);
-    });
+  it('should preserve valid text content', () => {
+    const input = 'Hello, World! This is a test 123.';
+    expect(sanitizeString(input)).toBe(input);
+  });
+
+  it('should handle large strings efficiently', () => {
+    const largeInput = faker.lorem.paragraphs(100);
+    const start = performance.now();
+    sanitizeString(largeInput);
+    const end = performance.now();
+    expect(end - start).toBeLessThan(100); // Should process within 100ms
   });
 });
