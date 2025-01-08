@@ -1,0 +1,232 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      approval_comment:
+        description: 'Approval comment for production deployment'
+        required: true
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+  deployments: write
+  environments: write
+
+env:
+  ENVIRONMENT: production
+  AZURE_CREDENTIALS: ${{ secrets.AZURE_PROD_CREDENTIALS }}
+  ACR_NAME: ${{ secrets.PROD_ACR_NAME }}
+  PRIMARY_CLUSTER_NAME: ${{ secrets.PROD_PRIMARY_AKS_CLUSTER_NAME }}
+  SECONDARY_CLUSTER_NAME: ${{ secrets.PROD_SECONDARY_AKS_CLUSTER_NAME }}
+  PRIMARY_RESOURCE_GROUP: ${{ secrets.PROD_PRIMARY_RESOURCE_GROUP }}
+  SECONDARY_RESOURCE_GROUP: ${{ secrets.PROD_SECONDARY_RESOURCE_GROUP }}
+  TERRAFORM_VERSION: '1.5.0'
+
+jobs:
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://prod.example.com
+    timeout-minutes: 120
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ env.AZURE_CREDENTIALS }}
+
+      - name: Initialize Terraform
+        working-directory: infrastructure/terraform/environments/prod
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ env.PRIMARY_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.PROD_TERRAFORM_STORAGE }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=prod.tfstate"
+
+      - name: Plan Infrastructure Changes
+        working-directory: infrastructure/terraform/environments/prod
+        run: |
+          terraform plan \
+            -var-file="terraform.tfvars" \
+            -out=tfplan
+
+      - name: Manual Approval Gate
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ secrets.PROD_APPROVERS }}
+          minimum-approvals: 2
+          timeout-minutes: 30
+
+      - name: Apply Infrastructure Changes
+        working-directory: infrastructure/terraform/environments/prod
+        run: terraform apply -auto-approve tfplan
+
+      - name: Verify Infrastructure Health
+        run: |
+          az aks get-credentials --resource-group ${{ env.PRIMARY_RESOURCE_GROUP }} --name ${{ env.PRIMARY_CLUSTER_NAME }}
+          az aks get-credentials --resource-group ${{ env.SECONDARY_RESOURCE_GROUP }} --name ${{ env.SECONDARY_CLUSTER_NAME }}
+          kubectl get nodes --context ${{ env.PRIMARY_CLUSTER_NAME }}
+          kubectl get nodes --context ${{ env.SECONDARY_CLUSTER_NAME }}
+
+  build-and-push-images:
+    name: Build and Push Images
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: src/backend
+          file: src/backend/Dockerfile
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:cache
+          cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:cache,mode=max
+          build-args: |
+            NODE_ENV=production
+            API_URL=https://api.example.com
+
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: src/web
+          file: src/web/Dockerfile
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:cache
+          cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:cache,mode=max
+
+      - name: Run Trivy Container Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+
+  deploy-to-primary-region:
+    name: Deploy to Primary Region
+    needs: build-and-push-images
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Get AKS Credentials
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.PRIMARY_RESOURCE_GROUP }}
+          cluster-name: ${{ env.PRIMARY_CLUSTER_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Deploy with Rolling Update
+        run: |
+          kubectl apply -f infrastructure/kubernetes/backend/deployment.yaml
+          kubectl apply -f infrastructure/kubernetes/frontend/deployment.yaml
+          kubectl rollout status deployment/backend -n production
+          kubectl rollout status deployment/frontend -n production
+
+      - name: Run Integration Tests
+        run: |
+          kubectl apply -f infrastructure/kubernetes/tests/integration-tests.yaml
+          kubectl wait --for=condition=complete job/integration-tests -n production --timeout=600s
+
+      - name: Verify Deployment Health
+        run: |
+          kubectl get pods -n production
+          kubectl get services -n production
+          kubectl get ingress -n production
+
+  deploy-to-secondary-region:
+    name: Deploy to Secondary Region
+    needs: deploy-to-primary-region
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Get AKS Credentials
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.SECONDARY_RESOURCE_GROUP }}
+          cluster-name: ${{ env.SECONDARY_CLUSTER_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Deploy with Rolling Update
+        run: |
+          kubectl apply -f infrastructure/kubernetes/backend/deployment.yaml
+          kubectl apply -f infrastructure/kubernetes/frontend/deployment.yaml
+          kubectl rollout status deployment/backend -n production
+          kubectl rollout status deployment/frontend -n production
+
+      - name: Verify Cross-Region Replication
+        run: |
+          kubectl get pods -n production
+          kubectl get services -n production
+          kubectl get ingress -n production
+
+      - name: Test Failover Scenarios
+        run: |
+          kubectl apply -f infrastructure/kubernetes/tests/failover-tests.yaml
+          kubectl wait --for=condition=complete job/failover-tests -n production --timeout=600s
+
+      - name: Update Deployment Status
+        if: always()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ github.token }}
+          environment-url: https://prod.example.com
+          state: ${{ job.status }}
+          deployment-id: ${{ github.event.deployment.id }}
