@@ -109,7 +109,7 @@ export const ChatIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Chat"
     role="img"
-    titleAccess="Chat Interface"
+    titleAccess="Open Chat Interface"
   />
 );
 
