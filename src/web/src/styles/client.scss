@@ -1,0 +1,274 @@
+// =============================================================================
+// Client Portal Stylesheet
+// Implements enhanced client portal styles with accessibility, RTL support,
+// and responsive design optimizations
+// Version: 1.0.0
+// =============================================================================
+
+@import './variables';
+@import './theme';
+@import './common';
+
+// =============================================================================
+// Chat Interface
+// =============================================================================
+
+.chat-interface {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: $spacing-md;
+  height: 100vh;
+  padding: $spacing-md;
+  container-type: inline-size;
+  touch-action: manipulation;
+  background-color: var(--background-color);
+
+  @container (max-width: #{$breakpoint-tablet}) {
+    grid-template-columns: 1fr;
+    height: calc(100vh - var(--header-height, 60px));
+  }
+
+  @media (max-width: $breakpoint-mobile) {
+    padding: $spacing-sm;
+    gap: $spacing-sm;
+  }
+}
+
+.chat-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  background-color: var(--background-secondary);
+  border-radius: $border-radius-lg;
+  padding: $spacing-md;
+  overflow-y: auto;
+  
+  @container (max-width: #{$breakpoint-tablet}) {
+    display: none;
+    
+    &.active {
+      display: flex;
+      position: fixed;
+      inset: 0;
+      z-index: $z-index-modal;
+    }
+  }
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  padding-bottom: $spacing-xl;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  direction: inherit;
+
+  @media (prefers-reduced-motion: reduce) {
+    scroll-behavior: auto;
+  }
+}
+
+.message {
+  --message-max-width: min(80%, 600px);
+  
+  &-user, &-system {
+    display: flex;
+    gap: $spacing-sm;
+    max-width: var(--message-max-width);
+    padding: $spacing-md;
+    border-radius: $border-radius-lg;
+    animation: messageAppear $animation-duration-base $animation-timing-entrance;
+  }
+
+  &-user {
+    align-self: flex-end;
+    background-color: $primary;
+    color: white;
+    margin-left: auto;
+  }
+
+  &-system {
+    align-self: flex-start;
+    background-color: var(--background-secondary);
+    margin-right: auto;
+  }
+}
+
+// =============================================================================
+// Document Context View
+// =============================================================================
+
+.document-context {
+  background-color: var(--background-secondary);
+  border-radius: $border-radius-lg;
+  padding: $spacing-md;
+  
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: $spacing-md;
+  }
+
+  &__list {
+    display: grid;
+    gap: $spacing-md;
+  }
+
+  &__item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: $spacing-sm;
+    padding: $spacing-md;
+    background-color: var(--background-color);
+    border-radius: $border-radius-md;
+    transition: transform $animation-duration-base $animation-timing-base;
+
+    &:hover {
+      transform: translateY(-2px);
+    }
+  }
+
+  &__relevance {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+    color: var(--text-secondary);
+    
+    &-bar {
+      width: 100px;
+      height: 4px;
+      background-color: var(--background-secondary);
+      border-radius: $border-radius-pill;
+      overflow: hidden;
+      
+      &-fill {
+        height: 100%;
+        background-color: $primary;
+        transform-origin: left;
+        transition: transform $animation-duration-base $animation-timing-base;
+      }
+    }
+  }
+}
+
+// =============================================================================
+// Print Optimizations
+// =============================================================================
+
+@media print {
+  .chat-interface {
+    display: block;
+    height: auto;
+    padding: 0;
+  }
+
+  .chat-sidebar,
+  .message-input {
+    display: none;
+  }
+
+  .chat-messages {
+    padding: 0;
+    overflow: visible;
+  }
+
+  .message {
+    page-break-inside: avoid;
+    border: 1px solid #000;
+    margin-bottom: $spacing-md;
+    
+    &-user, &-system {
+      max-width: none;
+      animation: none;
+    }
+  }
+
+  .document-context {
+    page-break-inside: avoid;
+    border: 1px solid #000;
+    
+    &__item {
+      break-inside: avoid;
+    }
+  }
+}
+
+// =============================================================================
+// RTL Support
+// =============================================================================
+
+[dir="rtl"] {
+  .message {
+    &-user {
+      margin-left: 0;
+      margin-right: auto;
+    }
+
+    &-system {
+      margin-right: 0;
+      margin-left: auto;
+    }
+  }
+
+  .document-context__relevance-bar-fill {
+    transform-origin: right;
+  }
+}
+
+// =============================================================================
+// Animations
+// =============================================================================
+
+@keyframes messageAppear {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// =============================================================================
+// High Contrast Mode
+// =============================================================================
+
+@media (forced-colors: active) {
+  .message {
+    &-user, &-system {
+      border: 1px solid CanvasText;
+    }
+  }
+
+  .document-context__relevance-bar {
+    border: 1px solid CanvasText;
+    
+    &-fill {
+      background-color: CanvasText;
+    }
+  }
+}
+
+// =============================================================================
+// Touch Optimizations
+// =============================================================================
+
+@media (hover: none) {
+  .document-context__item {
+    &:hover {
+      transform: none;
+    }
+  }
+
+  .message-input {
+    --touch-target-size: 44px;
+    
+    button {
+      min-height: var(--touch-target-size);
+      min-width: var(--touch-target-size);
+    }
+  }
+}
