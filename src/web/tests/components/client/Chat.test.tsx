@@ -1,291 +1,310 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { Provider } from 'react-redux';
-import { configureStore } from '@reduxjs/toolkit';
-import { axe, toHaveNoViolations } from 'jest-axe';
-import { vi } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'; // ^14.0.0
+import userEvent from '@testing-library/user-event'; // ^14.0.0
+import { Provider } from 'react-redux'; // ^8.1.0
+import { configureStore } from '@reduxjs/toolkit'; // ^1.9.5
+import { vi } from 'vitest'; // ^0.34.0
+import { axe } from '@axe-core/react'; // ^4.7.0
 
 import ChatInterface from '../../../src/components/client/Chat/ChatInterface';
 import ChatBubble from '../../../src/components/client/Chat/ChatBubble';
 import MessageList from '../../../src/components/client/Chat/MessageList';
-import { Message, MessageRole } from '../../../src/types/chat';
-import chatReducer, { addMessage } from '../../../src/redux/slices/chatSlice';
+import { Message, MessageRole, WebSocketStatus } from '../../../src/types/chat';
 
-// Add jest-axe matchers
-expect.extend(toHaveNoViolations);
-
-// Mock WebSocket
-class MockWebSocket {
-  private listeners: Record<string, Function[]> = {};
-  public readyState: number = WebSocket.CONNECTING;
-
-  constructor(url: string) {
-    setTimeout(() => {
-      this.readyState = WebSocket.OPEN;
-      this.emit('open');
-    }, 100);
-  }
-
-  send(data: string) {
-    // Simulate message echo for testing
-    setTimeout(() => {
-      this.emit('message', { data });
-    }, 50);
-  }
-
-  close() {
-    this.readyState = WebSocket.CLOSED;
-    this.emit('close');
-  }
-
-  addEventListener(event: string, callback: Function) {
-    if (!this.listeners[event]) {
-      this.listeners[event] = [];
-    }
-    this.listeners[event].push(callback);
-  }
-
-  removeEventListener(event: string, callback: Function) {
-    if (this.listeners[event]) {
-      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
-    }
-  }
-
-  private emit(event: string, data?: any) {
-    if (this.listeners[event]) {
-      this.listeners[event].forEach(callback => callback(data));
-    }
-  }
-}
-
-// Mock store setup helper
+// Mock Redux store setup
 const createTestStore = (initialState = {}) => {
-  return configureStore({
-    reducer: {
-      chat: chatReducer
-    },
-    preloadedState: initialState
-  });
+    return configureStore({
+        reducer: {
+            chat: (state = initialState, action) => state
+        }
+    });
 };
 
-// Enhanced render helper with store and utilities
-const renderWithRedux = (
-  component: React.ReactElement,
-  { initialState = {}, store = createTestStore(initialState) } = {}
-) => {
-  const user = userEvent.setup();
-  return {
-    user,
-    store,
-    ...render(
-      <Provider store={store}>
-        {component}
-      </Provider>
-    )
-  };
-};
+// Enhanced WebSocket mock
+class MockWebSocket {
+    private listeners: Record<string, Function[]> = {};
+    public readyState: number = WebSocket.CONNECTING;
+
+    constructor(url: string) {
+        setTimeout(() => {
+            this.readyState = WebSocket.OPEN;
+            this.emit('open', {});
+        }, 100);
+    }
+
+    send(data: string) {
+        const parsedData = JSON.parse(data);
+        this.emit('message', { data: JSON.stringify(parsedData) });
+    }
+
+    addEventListener(event: string, callback: Function) {
+        if (!this.listeners[event]) {
+            this.listeners[event] = [];
+        }
+        this.listeners[event].push(callback);
+    }
+
+    removeEventListener(event: string, callback: Function) {
+        if (this.listeners[event]) {
+            this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+        }
+    }
+
+    close() {
+        this.readyState = WebSocket.CLOSED;
+        this.emit('close', {});
+    }
+
+    private emit(event: string, data: any) {
+        if (this.listeners[event]) {
+            this.listeners[event].forEach(callback => callback(data));
+        }
+    }
+}
 
 // Mock messages for testing
 const mockMessages: Message[] = [
-  {
-    id: '1' as UUID,
-    content: 'Hello, how can I help you?',
-    role: MessageRole.ASSISTANT,
-    timestamp: new Date(),
-    sessionId: '123' as UUID,
-    metadata: {
-      hasMarkdown: false,
-      hasCodeBlock: false,
-      codeLanguage: null,
-      renderOptions: {
-        enableLatex: false,
-        enableDiagrams: false,
-        syntaxHighlighting: false
-      }
+    {
+        id: '1',
+        content: 'Hello, how can I help you?',
+        role: MessageRole.ASSISTANT,
+        timestamp: new Date(),
+        sessionId: 'test-session',
+        metadata: {
+            hasMarkdown: false,
+            hasCodeBlock: false,
+            codeLanguage: null,
+            renderOptions: {
+                enableLatex: false,
+                enableDiagrams: false,
+                syntaxHighlighting: false
+            }
+        }
+    },
+    {
+        id: '2',
+        content: 'I need information about product A123',
+        role: MessageRole.USER,
+        timestamp: new Date(),
+        sessionId: 'test-session',
+        metadata: {
+            hasMarkdown: false,
+            hasCodeBlock: false,
+            codeLanguage: null,
+            renderOptions: {
+                enableLatex: false,
+                enableDiagrams: false,
+                syntaxHighlighting: false
+            }
+        }
     }
-  },
-  {
-    id: '2' as UUID,
-    content: 'I need information about product A123',
-    role: MessageRole.USER,
-    timestamp: new Date(),
-    sessionId: '123' as UUID,
-    metadata: {
-      hasMarkdown: false,
-      hasCodeBlock: false,
-      codeLanguage: null,
-      renderOptions: {
-        enableLatex: false,
-        enableDiagrams: false,
-        syntaxHighlighting: false
-      }
-    }
-  }
 ];
 
+// Test utilities
+const renderWithRedux = (
+    component: React.ReactElement,
+    { initialState = {}, store = createTestStore(initialState) } = {}
+) => {
+    return {
+        ...render(
+            <Provider store={store}>
+                {component}
+            </Provider>
+        ),
+        store
+    };
+};
+
 describe('ChatInterface Component', () => {
-  beforeAll(() => {
-    global.WebSocket = MockWebSocket as any;
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('renders chat interface with proper ARIA roles and labels', async () => {
-    const { container } = renderWithRedux(
-      <ChatInterface sessionId="123" aria-label="Product chat" />
-    );
-
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
-
-    expect(screen.getByRole('region')).toHaveAttribute('aria-label', 'Product chat');
-    expect(screen.getByRole('log')).toBeInTheDocument();
-    expect(screen.getByRole('textbox')).toBeInTheDocument();
-  });
-
-  it('handles WebSocket connection states correctly', async () => {
-    const { store } = renderWithRedux(
-      <ChatInterface sessionId="123" />
-    );
-
-    await waitFor(() => {
-      expect(store.getState().chat.wsStatus).toBe('connected');
+    beforeEach(() => {
+        vi.clearAllMocks();
+        global.WebSocket = MockWebSocket as any;
     });
 
-    // Simulate disconnection
-    global.WebSocket.prototype.close();
+    it('renders chat interface with proper ARIA roles and labels', async () => {
+        const { container } = renderWithRedux(
+            <ChatInterface 
+                sessionId="test-session"
+                aria-label="Test chat interface"
+            />
+        );
 
-    await waitFor(() => {
-      expect(store.getState().chat.wsStatus).toBe('disconnected');
+        expect(screen.getByRole('region')).toHaveAttribute('aria-label', 'Test chat interface');
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
     });
-  });
 
-  it('sends and receives messages correctly', async () => {
-    const { user, store } = renderWithRedux(
-      <ChatInterface sessionId="123" />
-    );
-
-    const input = screen.getByRole('textbox');
-    await user.type(input, 'Test message');
-    await user.keyboard('{Enter}');
-
-    await waitFor(() => {
-      const messages = store.getState().chat.currentSession?.messages || [];
-      expect(messages).toHaveLength(1);
-      expect(messages[0].content).toBe('Test message');
-    });
-  });
-
-  it('handles error states gracefully', async () => {
-    const onError = vi.fn();
-    renderWithRedux(
-      <ChatInterface 
-        sessionId="123" 
-        onError={onError}
-      />
-    );
-
-    // Simulate WebSocket error
-    const ws = new MockWebSocket('');
-    ws.emit('error', new Error('Connection failed'));
-
-    await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'connection',
-        message: 'Connection lost. Retrying...'
-      }));
-    });
-  });
-});
-
-describe('MessageList Component', () => {
-  it('implements virtualization for large message lists', async () => {
-    const manyMessages = Array.from({ length: 100 }, (_, i) => ({
-      ...mockMessages[0],
-      id: `msg${i}` as UUID,
-      content: `Message ${i}`
-    }));
-
-    const { container } = renderWithRedux(
-      <MessageList 
-        isLoading={false}
-        onScrollTop={() => {}}
-        hasMoreMessages={false}
-      />,
-      {
-        initialState: {
-          chat: {
-            currentSession: {
-              messages: manyMessages
+    it('handles WebSocket connection states correctly', async () => {
+        const { store } = renderWithRedux(
+            <ChatInterface sessionId="test-session" />,
+            {
+                initialState: {
+                    chat: {
+                        currentSession: null,
+                        wsStatus: WebSocketStatus.CONNECTING
+                    }
+                }
             }
-          }
-        }
-      }
-    );
+        );
 
-    const virtualItems = container.querySelectorAll('[data-testid^="chat-bubble"]');
-    expect(virtualItems.length).toBeLessThan(manyMessages.length);
-  });
+        await waitFor(() => {
+            expect(screen.getByText(/Connection lost/i)).toBeInTheDocument();
+        });
 
-  it('maintains scroll position during updates', async () => {
-    const { store } = renderWithRedux(
-      <MessageList 
-        isLoading={false}
-        onScrollTop={() => {}}
-        hasMoreMessages={false}
-      />
-    );
+        store.dispatch({ 
+            type: 'chat/updateWebSocketStatus', 
+            payload: WebSocketStatus.CONNECTED 
+        });
 
-    const messageList = screen.getByRole('log');
-    const initialScrollTop = messageList.scrollTop;
-
-    store.dispatch(addMessage(mockMessages[0]));
-
-    await waitFor(() => {
-      expect(messageList.scrollTop).not.toBe(initialScrollTop);
+        await waitFor(() => {
+            expect(screen.queryByText(/Connection lost/i)).not.toBeInTheDocument();
+        });
     });
-  });
+
+    it('processes messages with loading and error states', async () => {
+        const { store } = renderWithRedux(
+            <ChatInterface sessionId="test-session" />,
+            {
+                initialState: {
+                    chat: {
+                        currentSession: { messages: mockMessages },
+                        wsStatus: WebSocketStatus.CONNECTED
+                    }
+                }
+            }
+        );
+
+        const input = screen.getByRole('textbox');
+        await userEvent.type(input, 'Test message');
+        await userEvent.keyboard('{Enter}');
+
+        expect(screen.getByRole('progressbar')).toBeInTheDocument();
+
+        // Simulate error state
+        store.dispatch({
+            type: 'chat/messageError',
+            payload: { message: 'Failed to send message' }
+        });
+
+        await waitFor(() => {
+            expect(screen.getByText(/Failed to send message/i)).toBeInTheDocument();
+        });
+    });
 });
 
 describe('ChatBubble Component', () => {
-  it('renders messages with proper styling and animations', () => {
-    const { container } = render(
-      <ChatBubble message={mockMessages[0]} />
-    );
+    it('renders messages with proper styling and animations', () => {
+        const message = mockMessages[0];
+        render(<ChatBubble message={message} />);
 
-    expect(container.firstChild).toHaveStyle({
-      opacity: 1,
-      transform: 'none'
+        const bubble = screen.getByRole('article');
+        expect(bubble).toHaveAttribute('aria-label', `${message.role} message`);
+        expect(bubble).toHaveStyle({ transition: expect.stringContaining('box-shadow') });
     });
-  });
 
-  it('processes markdown with syntax highlighting', async () => {
-    const messageWithCode = {
-      ...mockMessages[0],
-      content: '```javascript\nconst x = 42;\n```',
-      metadata: {
-        ...mockMessages[0].metadata,
-        hasCodeBlock: true
-      }
-    };
+    it('processes markdown with syntax highlighting', async () => {
+        const markdownMessage: Message = {
+            ...mockMessages[0],
+            content: '```javascript\nconst test = "code";\n```',
+            metadata: {
+                ...mockMessages[0].metadata,
+                hasMarkdown: true,
+                hasCodeBlock: true,
+                codeLanguage: 'javascript'
+            }
+        };
 
-    render(<ChatBubble message={messageWithCode} />);
-
-    await waitFor(() => {
-      expect(screen.getByRole('code')).toBeInTheDocument();
+        render(<ChatBubble message={markdownMessage} />);
+        await waitFor(() => {
+            expect(screen.getByText('const test = "code";')).toBeInTheDocument();
+            expect(screen.getByRole('article')).toContainElement(
+                screen.getByRole('code')
+            );
+        });
     });
-  });
+});
 
-  it('maintains accessibility in all states', async () => {
-    const { container } = render(
-      <ChatBubble message={mockMessages[0]} isLoading={true} />
-    );
+describe('MessageList Component', () => {
+    it('implements virtualization for large message lists', async () => {
+        const largeMessageList = Array.from({ length: 100 }, (_, i) => ({
+            ...mockMessages[0],
+            id: `msg-${i}`,
+            content: `Message ${i}`
+        }));
 
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
-    expect(container.firstChild).toHaveAttribute('aria-busy', 'true');
-  });
+        renderWithRedux(
+            <MessageList
+                isLoading={false}
+                onScrollTop={vi.fn()}
+                hasMoreMessages={true}
+            />,
+            {
+                initialState: {
+                    chat: {
+                        currentSession: { messages: largeMessageList }
+                    }
+                }
+            }
+        );
+
+        const messageContainer = screen.getByRole('log');
+        expect(messageContainer.children.length).toBeLessThan(largeMessageList.length);
+    });
+
+    it('maintains scroll position during updates', async () => {
+        const { store } = renderWithRedux(
+            <MessageList
+                isLoading={false}
+                onScrollTop={vi.fn()}
+                hasMoreMessages={true}
+            />,
+            {
+                initialState: {
+                    chat: {
+                        currentSession: { messages: mockMessages }
+                    }
+                }
+            }
+        );
+
+        const messageContainer = screen.getByRole('log');
+        messageContainer.scrollTop = 100;
+        const scrollPosition = messageContainer.scrollTop;
+
+        store.dispatch({
+            type: 'chat/addMessage',
+            payload: {
+                ...mockMessages[0],
+                id: 'new-message'
+            }
+        });
+
+        await waitFor(() => {
+            expect(messageContainer.scrollTop).toBe(scrollPosition);
+        });
+    });
+
+    it('supports keyboard navigation', async () => {
+        renderWithRedux(
+            <MessageList
+                isLoading={false}
+                onScrollTop={vi.fn()}
+                hasMoreMessages={false}
+            />,
+            {
+                initialState: {
+                    chat: {
+                        currentSession: { messages: mockMessages }
+                    }
+                }
+            }
+        );
+
+        const messageContainer = screen.getByRole('log');
+        fireEvent.keyDown(messageContainer, { key: 'End' });
+
+        await waitFor(() => {
+            expect(messageContainer.scrollTop).toBe(messageContainer.scrollHeight - messageContainer.clientHeight);
+        });
+    });
 });
