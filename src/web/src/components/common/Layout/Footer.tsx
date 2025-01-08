@@ -10,25 +10,22 @@ const FOOTER_HEIGHT = {
   mobile: '64px'
 };
 
-/**
- * Props interface for Footer component
- */
+// Props interface with TypeScript strict typing
 interface FooterProps {
-  /** Optional CSS class for external styling */
   className?: string;
-  /** Optional test ID for testing purposes */
   testId?: string;
 }
 
 /**
- * Enterprise-grade footer component with responsive design and accessibility features
+ * Enterprise-grade footer component with accessibility features and responsive design
+ * Implements WCAG 2.1 AA compliance and theme integration
  */
 const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
   // Theme and responsive hooks
   const { theme, isDarkMode } = useTheme();
   const isMobile = useMediaQuery(`(max-width:${MOBILE_BREAKPOINT}px)`);
 
-  // Dynamic styles based on theme and device
+  // Dynamic styles based on theme and viewport
   const footerStyles = {
     position: 'fixed',
     bottom: 0,
@@ -39,20 +36,26 @@ const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
     alignItems: 'center',
     justifyContent: 'center',
     padding: theme.spacing(isMobile ? 1.5 : 2),
-    backgroundColor: theme.palette.background.paper,
     borderTop: `1px solid ${theme.palette.divider}`,
+    backgroundColor: theme.palette.background.paper,
     zIndex: theme.zIndex.appBar - 1,
     transition: theme.transitions.create(['background-color', 'border-color'], {
-      duration: theme.transitions.duration.short,
+      duration: theme.transitions.duration.standard,
     }),
-    '&:focus-visible': {
-      outline: 'none',
-      boxShadow: theme.shadows[2],
+    '&:focus-within': {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: '-2px',
     },
   };
 
-  // Typography variant based on device size
-  const typographyVariant = isMobile ? 'caption' : 'body2';
+  const textStyles = {
+    color: isDarkMode ? theme.palette.text.primary : theme.palette.text.secondary,
+    textAlign: 'center' as const,
+    userSelect: 'none' as const,
+    transition: theme.transitions.create('color', {
+      duration: theme.transitions.duration.standard,
+    }),
+  };
 
   return (
     <Box
@@ -62,21 +65,11 @@ const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
       data-testid={testId}
       role="contentinfo"
       aria-label="Footer"
-      tabIndex={0}
     >
       <Typography
-        variant={typographyVariant}
-        color="text.secondary"
-        align="center"
-        sx={{
-          userSelect: 'none',
-          color: isDarkMode ? 'text.primary' : 'text.secondary',
-          transition: theme.transitions.create('color'),
-          '&::selection': {
-            backgroundColor: theme.palette.primary.main,
-            color: theme.palette.primary.contrastText,
-          },
-        }}
+        variant={isMobile ? 'caption' : 'body2'}
+        sx={textStyles}
+        component="p"
       >
         {COPYRIGHT_TEXT}
       </Typography>
@@ -84,7 +77,7 @@ const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
   );
 });
 
-// Display name for debugging
+// Display name for debugging and dev tools
 Footer.displayName = 'Footer';
 
 export default Footer;
