@@ -21,15 +21,15 @@ export type DocumentType = 'pdf' | 'docx' | 'xlsx' | 'txt';
  * Document processing states with detailed status tracking
  */
 export type ProcessingStatus = 
-    | 'pending'    // Initial state after upload
-    | 'queued'     // In processing queue
-    | 'processing' // Currently being processed
+    | 'pending'    // Initial state when document is uploaded
+    | 'queued'     // Document is in processing queue
+    | 'processing' // Active OCR/text extraction
     | 'completed'  // Successfully processed
-    | 'failed'     // Processing failed
-    | 'cancelled'; // Processing cancelled by user
+    | 'failed'     // Processing error occurred
+    | 'cancelled'; // Processing manually cancelled
 
 /**
- * Available document sorting fields
+ * Available document sorting fields for list operations
  */
 export type DocumentSortField = 
     | 'filename'
@@ -111,19 +111,12 @@ export type DocumentListApiResponse = ApiResponse<DocumentListResponse>;
  * Type guard to check if a value is a valid DocumentType
  */
 export function isDocumentType(value: string): value is DocumentType {
-    return ['pdf', 'docx', 'xlsx', 'txt'].includes(value as DocumentType);
+    return ['pdf', 'docx', 'xlsx', 'txt'].includes(value);
 }
 
 /**
  * Type guard to check if a value is a valid ProcessingStatus
  */
 export function isProcessingStatus(value: string): value is ProcessingStatus {
-    return [
-        'pending',
-        'queued',
-        'processing',
-        'completed',
-        'failed',
-        'cancelled'
-    ].includes(value as ProcessingStatus);
+    return ['pending', 'queued', 'processing', 'completed', 'failed', 'cancelled'].includes(value);
 }
