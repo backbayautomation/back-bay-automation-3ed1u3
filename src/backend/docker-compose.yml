@@ -1,0 +1,135 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/catalog_search
+      - REDIS_URL=redis://cache:6379/0
+      - CELERY_BROKER_URL=redis://cache:6379/1
+      - CELERY_RESULT_BACKEND=redis://cache:6379/2
+      - LOG_LEVEL=DEBUG
+      - CORS_ORIGINS=http://localhost:3000
+      - MAX_WORKERS=4
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app:delegated
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery Worker Service
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: celery -A app.worker.celery worker --loglevel=info
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/catalog_search
+      - REDIS_URL=redis://cache:6379/0
+      - CELERY_BROKER_URL=redis://cache:6379/1
+      - CELERY_RESULT_BACKEND=redis://cache:6379/2
+    volumes:
+      - ./:/app:delegated
+    depends_on:
+      - api
+      - cache
+      - db
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Redis Cache Service
+  cache:
+    image: redis:7.2-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+
+  # PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=catalog_search
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+
+volumes:
+  postgres_data:
+    name: catalog_search_postgres_data
+  redis_data:
+    name: catalog_search_redis_data
+
+networks:
+  default:
+    name: backend_network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: backend_net
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.0.0/16
+    internal: true
+    attachable: true
+    enable_ipv6: false
