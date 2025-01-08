@@ -1,0 +1,146 @@
+// =============================================================================
+// Design System Variables
+// Implements WCAG 2.1 AA compliant color system with dark mode support
+// and responsive typography scaling
+// =============================================================================
+
+// Colors
+// Primary and secondary colors with semantic variations
+// All color combinations meet WCAG 2.1 AA contrast requirements
+// -----------------------------------------------------------------------------
+$primary: #0066CC;
+$primary-light: #3385D6;
+$primary-dark: #004C99;
+$secondary: #4CAF50;
+$error: #DC3545;
+$warning: #FFC107;
+$info: #17A2B8;
+$success: #28A745;
+
+// Text Colors
+$text-primary: #212529;
+$text-secondary: #6C757D;
+$text-disabled: #A0A0A0;
+
+// Background Colors
+$background-color: #FFFFFF;
+$background-secondary: #F8F9FA;
+
+// Dark Mode Colors
+$dark-background-color: #121212;
+$dark-background-secondary: #1E1E1E;
+$dark-text-primary: #E0E0E0;
+$dark-text-secondary: #A0A0A0;
+
+// Interactive States
+$focus-ring-color: rgba(0, 102, 204, 0.25);
+$overlay-color: rgba(0, 0, 0, 0.5);
+
+// Typography
+// Font families and scale following modular typography system
+// -----------------------------------------------------------------------------
+$font-family-primary: 'Roboto', sans-serif;
+$font-family-secondary: 'Open Sans', sans-serif;
+$font-family-code: 'Fira Mono', monospace;
+
+// Font Sizes
+$font-size-base: 16px;
+$font-size-sm: 12px;
+$font-size-md: 14px;
+$font-size-lg: 20px;
+$font-size-xl: 24px;
+$font-size-xxl: 32px;
+
+// Font Weights
+$font-weight-regular: 400;
+$font-weight-medium: 500;
+$font-weight-bold: 700;
+
+// Line Heights
+$line-height-base: 1.5;
+$line-height-heading: 1.2;
+
+// Letter Spacing
+$letter-spacing-base: 0.15px;
+$letter-spacing-heading: -0.5px;
+
+// Spacing
+// Base 8px spacing system for consistent vertical rhythm
+// -----------------------------------------------------------------------------
+$spacing-base: 8px;
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+$spacing-xxl: 48px;
+$spacing-section: 64px;
+$spacing-container: 16px;
+
+// Breakpoints
+// Responsive breakpoints for mobile-first design
+// -----------------------------------------------------------------------------
+$breakpoint-mobile: 320px;
+$breakpoint-tablet: 768px;
+$breakpoint-desktop: 1024px;
+$breakpoint-large: 1440px;
+$breakpoint-xlarge: 1920px;
+
+// Grid System
+// 12-column grid system with responsive gutters
+// -----------------------------------------------------------------------------
+$grid-columns: 12;
+$grid-gutter: 24px;
+$container-max-width: 1200px;
+$container-padding: 16px;
+
+// Z-index
+// Standardized z-index scale for consistent layering
+// -----------------------------------------------------------------------------
+$z-index-dropdown: 1000;
+$z-index-sticky: 1020;
+$z-index-fixed: 1030;
+$z-index-modal: 1040;
+$z-index-popover: 1050;
+$z-index-tooltip: 1060;
+
+// Animation
+// Standard animation timings and easing functions
+// -----------------------------------------------------------------------------
+$animation-duration-base: 200ms;
+$animation-duration-slow: 300ms;
+$animation-timing-base: cubic-bezier(0.4, 0, 0.2, 1);
+$animation-timing-entrance: cubic-bezier(0, 0, 0.2, 1);
+$animation-timing-exit: cubic-bezier(0.4, 0, 1, 1);
+
+// Elevation
+// Shadow system for consistent depth perception
+// -----------------------------------------------------------------------------
+$shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+$shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+$shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+$shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.15);
+
+// Border Radius
+// Consistent border radius scale
+// -----------------------------------------------------------------------------
+$border-radius-sm: 4px;
+$border-radius-md: 8px;
+$border-radius-lg: 12px;
+$border-radius-xl: 16px;
+$border-radius-pill: 9999px;
+
+// Export maps for theme configuration
+// -----------------------------------------------------------------------------
+:export {
+  colorPrimary: $primary;
+  colorSecondary: $secondary;
+  textPrimary: $text-primary;
+  backgroundPrimary: $background-color;
+  darkBackgroundPrimary: $dark-background-color;
+  fontFamilyPrimary: $font-family-primary;
+  fontSizeBase: $font-size-base;
+  spacingBase: $spacing-base;
+  breakpointMobile: $breakpoint-mobile;
+  breakpointDesktop: $breakpoint-desktop;
+}
