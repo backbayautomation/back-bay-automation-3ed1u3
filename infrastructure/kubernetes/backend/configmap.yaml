@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: catalog-search
+  labels:
+    app: catalog-search
+    component: backend
+    environment: production
+
+data:
+  # Application Settings
+  PROJECT_NAME: "AI-Powered Product Catalog Search"
+  API_V1_PREFIX: "/api/v1"
+  ENVIRONMENT: "production"
+  DEBUG: "false"
+  LOG_LEVEL: "INFO"
+
+  # Service Endpoints
+  CORS_ORIGINS: "https://app.catalog-search.com,https://admin.catalog-search.com"
+  DATABASE_HOST: "azure-sql-server"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "catalog_search"
+  VECTOR_SEARCH_HOST: "cosmos-db-service"
+  VECTOR_SEARCH_PORT: "10255"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+
+  # Celery Configuration
+  CELERY_BROKER_URL: "redis://redis-service:6379/1"
+  CELERY_RESULT_BACKEND: "redis://redis-service:6379/2"
+
+  # Processing Parameters
+  DOCUMENT_CHUNK_SIZE: "1024"
+  VECTOR_DIMENSION: "1536"
+  SIMILARITY_THRESHOLD: "0.8"
+  MAX_QUERY_RESULTS: "5"
+  OCR_BATCH_SIZE: "32"
+  OCR_DPI: "300"
+  OCR_LANGUAGE: "eng"
+  PROCESSING_TIMEOUT: "300"
+
+  # Document Handling
+  MAX_DOCUMENT_SIZE: "10485760"
+  ALLOWED_DOCUMENT_TYPES: "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
