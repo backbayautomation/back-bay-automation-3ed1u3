@@ -1,0 +1,37 @@
+# Kubernetes version: v1.25+
+# Purpose: Defines namespace-level resource quotas for AI-powered Product Catalog Search System
+# Ensures fair resource allocation and multi-tenant isolation
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: product-search-quota
+  namespace: product-search
+  labels:
+    app: ai-catalog-search
+    environment: ${ENV}
+  annotations:
+    description: "Production-grade resource quotas for AI Catalog Search System"
+    monitoring.kubernetes.io/quota-enabled: "true"
+    monitoring.kubernetes.io/resource-tracking: "true"
+    monitoring.kubernetes.io/utilization-alerts: "true"
+    monitoring.kubernetes.io/compliance-checking: "true"
+
+spec:
+  hard:
+    # Compute Resource Quotas
+    requests.cpu: "32"              # Total CPU requests across all pods
+    limits.cpu: "64"                # Total CPU limits across all pods
+    requests.memory: "64Gi"         # Total memory requests across all pods
+    limits.memory: "128Gi"          # Total memory limits across all pods
+    requests.nvidia.com/gpu: "4"    # Total GPU requests for AI processing
+
+    # Object Count Quotas
+    pods: "50"                      # Maximum number of pods
+    services: "20"                  # Maximum number of services
+    configmaps: "30"               # Maximum number of ConfigMaps
+    secrets: "30"                  # Maximum number of Secrets
+    persistentvolumeclaims: "20"   # Maximum number of PVCs
+
+    # Storage Quotas
+    requests.storage: "500Gi"      # Total storage capacity across all PVCs
