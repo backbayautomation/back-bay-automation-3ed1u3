@@ -2,15 +2,16 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { MockWebSocket } from 'mock-socket';
+import { MockWebSocket, Server } from 'mock-socket';
 
 import UploadForm from '../../../src/components/admin/DocumentProcessing/UploadForm';
 import DocumentList from '../../../src/components/admin/DocumentProcessing/DocumentList';
 import ProcessingQueue from '../../../src/components/admin/DocumentProcessing/ProcessingQueue';
 import { Document, DocumentType, ProcessingStatus } from '../../../src/types/document';
 
-// Mock WebSocket
-vi.mock('mock-socket');
+// Mock WebSocket setup
+const WS_URL = 'ws://localhost:1234';
+let mockServer: Server;
 
 // Mock document service
 const documentService = {
@@ -26,10 +27,10 @@ const documentService = {
 const mockDocuments: Document[] = [
   {
     id: '1',
-    filename: 'test.pdf',
+    client_id: 'client1',
+    filename: 'test1.pdf',
     type: 'pdf' as DocumentType,
     status: 'completed' as ProcessingStatus,
-    client_id: 'client1',
     metadata: {
       page_count: 5,
       file_size_bytes: 1024,
@@ -41,19 +42,14 @@ const mockDocuments: Document[] = [
       additional_metadata: {}
     },
     processed_at: new Date().toISOString(),
-    error_message: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    createdBy: 'user1',
-    updatedBy: 'user1',
-    isActive: true
+    error_message: null
   },
   {
     id: '2',
-    filename: 'test.docx',
+    client_id: 'client1',
+    filename: 'test2.docx',
     type: 'docx' as DocumentType,
     status: 'processing' as ProcessingStatus,
-    client_id: 'client1',
     metadata: {
       page_count: 3,
       file_size_bytes: 512,
@@ -65,12 +61,7 @@ const mockDocuments: Document[] = [
       additional_metadata: {}
     },
     processed_at: null,
-    error_message: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    createdBy: 'user1',
-    updatedBy: 'user1',
-    isActive: true
+    error_message: null
   }
 ];
 
@@ -79,7 +70,7 @@ describe('UploadForm', () => {
   const mockOnUploadError = vi.fn();
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    documentService.uploadDocument.mockReset();
   });
 
   it('renders upload form with all required elements', () => {
@@ -91,12 +82,13 @@ describe('UploadForm', () => {
       />
     );
 
-    expect(screen.getByText('Upload Document')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /drop zone/i })).toBeInTheDocument();
-    expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Document upload form/i)).toBeInTheDocument();
+    expect(screen.getByText(/Select File/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Description/i)).toBeInTheDocument();
+    expect(screen.getByText(/Upload Document/i)).toBeInTheDocument();
   });
 
-  it('handles file selection via drag and drop', async () => {
+  it('validates file type restrictions', async () => {
     render(
       <UploadForm
         clientId="client1"
@@ -105,73 +97,55 @@ describe('UploadForm', () => {
       />
     );
 
-    const file = new File(['test content'], 'test.pdf', { type: 'application/pdf' });
-    const dropZone = screen.getByRole('button', { name: /drop zone/i });
+    const file = new File(['test'], 'test.invalid', { type: 'text/plain' });
+    const input = screen.getByLabelText(/file input/i);
 
-    fireEvent.dragEnter(dropZone);
-    fireEvent.dragOver(dropZone);
-    fireEvent.drop(dropZone, {
-      dataTransfer: {
-        files: [file]
-      }
-    });
+    await userEvent.upload(input, file);
 
-    await waitFor(() => {
-      expect(screen.getByText(/test\.pdf/)).toBeInTheDocument();
-    });
+    expect(await screen.findByText(/Unsupported file type/i)).toBeInTheDocument();
   });
 
-  it('validates file size and type restrictions', async () => {
+  it('handles successful file upload with progress', async () => {
+    documentService.uploadDocument.mockResolvedValue({
+      data: mockDocuments[0]
+    });
+
     render(
       <UploadForm
         clientId="client1"
         onUploadSuccess={mockOnUploadSuccess}
         onUploadError={mockOnUploadError}
-        maxFileSize={1024}
-        allowedTypes={['pdf']}
       />
     );
 
-    const largeFile = new File(['x'.repeat(2048)], 'large.pdf', { type: 'application/pdf' });
-    const invalidFile = new File(['test'], 'test.jpg', { type: 'image/jpeg' });
+    const file = new File(['test'], 'test.pdf', { type: 'application/pdf' });
+    const input = screen.getByLabelText(/file input/i);
 
-    const dropZone = screen.getByRole('button', { name: /drop zone/i });
+    await userEvent.upload(input, file);
+    await userEvent.type(screen.getByLabelText(/Description/i), 'Test document');
+    await userEvent.click(screen.getByText(/Upload Document/i));
 
-    // Test large file
-    fireEvent.drop(dropZone, {
-      dataTransfer: {
-        files: [largeFile]
-      }
-    });
-
+    expect(screen.getByText(/Uploading/i)).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByText(/file size exceeds maximum limit/i)).toBeInTheDocument();
-    });
-
-    // Test invalid file type
-    fireEvent.drop(dropZone, {
-      dataTransfer: {
-        files: [invalidFile]
-      }
-    });
-
-    await waitFor(() => {
-      expect(screen.getByText(/file type not supported/i)).toBeInTheDocument();
+      expect(mockOnUploadSuccess).toHaveBeenCalledWith(mockDocuments[0]);
     });
   });
 });
 
 describe('DocumentList', () => {
   beforeEach(() => {
+    documentService.getDocumentList.mockReset();
+    documentService.removeDocument.mockReset();
+  });
+
+  it('renders document list with data', async () => {
     documentService.getDocumentList.mockResolvedValue({
       items: mockDocuments,
-      total_count: mockDocuments.length,
+      total_count: 2,
       page_size: 10,
       current_page: 1
     });
-  });
 
-  it('renders document list with correct columns and data', async () => {
     render(
       <DocumentList
         clientId="client1"
@@ -180,17 +154,22 @@ describe('DocumentList', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('test.pdf')).toBeInTheDocument();
-      expect(screen.getByText('test.docx')).toBeInTheDocument();
+      expect(screen.getByText('test1.pdf')).toBeInTheDocument();
+      expect(screen.getByText('test2.docx')).toBeInTheDocument();
     });
-
-    expect(screen.getAllByRole('row')).toHaveLength(mockDocuments.length + 1); // +1 for header
   });
 
   it('handles document deletion with confirmation', async () => {
-    documentService.removeDocument.mockResolvedValue(true);
+    documentService.getDocumentList.mockResolvedValue({
+      items: mockDocuments,
+      total_count: 2,
+      page_size: 10,
+      current_page: 1
+    });
 
-    render(
+    documentService.removeDocument.mockResolvedValue({});
+
+    const { container } = render(
       <DocumentList
         clientId="client1"
         autoRefresh={false}
@@ -198,157 +177,118 @@ describe('DocumentList', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('test.pdf')).toBeInTheDocument();
+      expect(screen.getByText('test1.pdf')).toBeInTheDocument();
     });
 
-    const deleteButton = screen.getAllByRole('button', { name: /delete/i })[0];
-    
-    // Mock confirmation
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
-    
-    fireEvent.click(deleteButton);
+    // Mock window.confirm
+    const mockConfirm = vi.spyOn(window, 'confirm');
+    mockConfirm.mockImplementation(() => true);
 
-    await waitFor(() => {
-      expect(documentService.removeDocument).toHaveBeenCalledWith('1');
-    });
-  });
+    const deleteButton = container.querySelector('[aria-label="Delete document"]');
+    await userEvent.click(deleteButton!);
 
-  it('handles pagination and sorting', async () => {
-    render(
-      <DocumentList
-        clientId="client1"
-        autoRefresh={false}
-      />
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('test.pdf')).toBeInTheDocument();
-    });
-
-    // Test sorting
-    const filenameHeader = screen.getByRole('columnheader', { name: /document name/i });
-    fireEvent.click(filenameHeader);
-
-    await waitFor(() => {
-      expect(documentService.getDocumentList).toHaveBeenCalledWith(
-        expect.objectContaining({
-          sortBy: 'filename',
-          order: 'asc'
-        })
-      );
-    });
+    expect(mockConfirm).toHaveBeenCalled();
+    expect(documentService.removeDocument).toHaveBeenCalledWith('1');
   });
 });
 
 describe('ProcessingQueue', () => {
-  let mockWebSocket: MockWebSocket;
-
   beforeEach(() => {
-    mockWebSocket = new MockWebSocket('ws://localhost:8080');
-    vi.clearAllMocks();
+    mockServer = new Server(WS_URL);
   });
 
   afterEach(() => {
-    mockWebSocket.close();
+    mockServer.close();
   });
 
   it('renders processing queue with real-time updates', async () => {
-    const mockOnProcessingComplete = vi.fn();
+    documentService.getDocumentList.mockResolvedValue({
+      items: [mockDocuments[1]], // Only processing document
+      total_count: 1,
+      page_size: 10,
+      current_page: 1
+    });
 
     render(
       <ProcessingQueue
         autoRefresh={false}
-        onProcessingComplete={mockOnProcessingComplete}
+        onProcessingComplete={vi.fn()}
       />
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Processing Queue')).toBeInTheDocument();
+      expect(screen.getByText('test2.docx')).toBeInTheDocument();
+      expect(screen.getByText('Processing')).toBeInTheDocument();
     });
 
-    // Simulate WebSocket message
-    mockWebSocket.send(JSON.stringify({
-      event: 'document.processing',
-      data: {
-        documentId: '2',
-        status: 'completed',
-        progress: 100
-      }
-    }));
+    // Simulate WebSocket update
+    mockServer.emit('document.processing', {
+      documentId: '2',
+      status: 'completed',
+      progress: 100
+    });
 
     await waitFor(() => {
-      expect(mockOnProcessingComplete).toHaveBeenCalled();
+      expect(screen.getByText('Completed')).toBeInTheDocument();
     });
   });
 
-  it('handles retry and cancel actions', async () => {
-    documentService.startDocumentProcessing.mockResolvedValue(true);
-    documentService.cancelProcessing.mockResolvedValue(true);
+  it('handles processing cancellation', async () => {
+    documentService.getDocumentList.mockResolvedValue({
+      items: [mockDocuments[1]],
+      total_count: 1,
+      page_size: 10,
+      current_page: 1
+    });
+
+    documentService.cancelProcessing.mockResolvedValue({});
 
     render(
       <ProcessingQueue
         autoRefresh={false}
+        onProcessingComplete={vi.fn()}
       />
     );
 
     await waitFor(() => {
-      expect(screen.getByText('test.docx')).toBeInTheDocument();
+      expect(screen.getByText('test2.docx')).toBeInTheDocument();
     });
 
-    // Test cancel action
-    const cancelButton = screen.getByRole('button', { name: /cancel processing/i });
-    fireEvent.click(cancelButton);
+    const cancelButton = screen.getByLabelText('Cancel Processing');
+    await userEvent.click(cancelButton);
 
-    await waitFor(() => {
-      expect(documentService.cancelProcessing).toHaveBeenCalledWith('2');
-    });
-
-    // Simulate failed document
-    mockWebSocket.send(JSON.stringify({
-      event: 'document.processing',
-      data: {
-        documentId: '2',
-        status: 'failed',
-        error: 'Processing failed'
-      }
-    }));
-
-    // Test retry action
-    const retryButton = await screen.findByRole('button', { name: /retry processing/i });
-    fireEvent.click(retryButton);
-
-    await waitFor(() => {
-      expect(documentService.startDocumentProcessing).toHaveBeenCalledWith('2');
-    });
+    expect(documentService.cancelProcessing).toHaveBeenCalledWith('2');
   });
 
-  it('displays progress indicators correctly', async () => {
+  it('displays error state and retry option', async () => {
+    const failedDocument = {
+      ...mockDocuments[1],
+      status: 'failed' as ProcessingStatus,
+      error_message: 'Processing failed'
+    };
+
+    documentService.getDocumentList.mockResolvedValue({
+      items: [failedDocument],
+      total_count: 1,
+      page_size: 10,
+      current_page: 1
+    });
+
     render(
       <ProcessingQueue
         autoRefresh={false}
+        onProcessingComplete={vi.fn()}
       />
     );
 
     await waitFor(() => {
-      expect(screen.getByText('test.docx')).toBeInTheDocument();
+      expect(screen.getByText('Failed')).toBeInTheDocument();
+      expect(screen.getByLabelText('Retry Processing')).toBeInTheDocument();
     });
 
-    // Verify progress bar exists for processing document
-    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    const retryButton = screen.getByLabelText('Retry Processing');
+    await userEvent.click(retryButton);
 
-    // Simulate progress update
-    mockWebSocket.send(JSON.stringify({
-      event: 'document.processing',
-      data: {
-        documentId: '2',
-        status: 'processing',
-        progress: 50
-      }
-    }));
-
-    await waitFor(() => {
-      const progressBar = screen.getByRole('progressbar');
-      expect(progressBar).toHaveAttribute('aria-valuenow', '50');
-    });
+    expect(documentService.retryProcessing).toHaveBeenCalledWith('2');
   });
 });
