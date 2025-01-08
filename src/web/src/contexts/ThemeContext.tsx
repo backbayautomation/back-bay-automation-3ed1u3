@@ -1,11 +1,9 @@
-import { createContext, useContext, useEffect, useMemo, useCallback, ReactNode } from 'react'; // v18.2.0
+import { createContext, useContext, useEffect, useCallback, useMemo, ReactNode } from 'react'; // v18.2.0
 import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles'; // v5.14.0
 import { lightTheme, darkTheme } from '../config/theme';
 import useLocalStorage from '../hooks/useLocalStorage';
 
-/**
- * Interface defining the theme context value with enhanced accessibility features
- */
+// Theme context type definition with enhanced accessibility features
 interface ThemeContextType {
   theme: typeof lightTheme | typeof darkTheme;
   isDarkMode: boolean;
@@ -13,107 +11,105 @@ interface ThemeContextType {
   systemPreference: 'light' | 'dark' | 'no-preference';
 }
 
-/**
- * Create theme context with type safety and null check
- */
+// Create context with strict type checking
 const ThemeContext = createContext<ThemeContextType | null>(null);
 
-/**
- * Props interface for ThemeProvider component
- */
+// Storage key for theme preference
+const THEME_STORAGE_KEY = 'theme_preference';
+
+// Media query for system color scheme preference
+const DARK_MODE_MEDIA_QUERY = '(prefers-color-scheme: dark)';
+
 interface ThemeProviderProps {
   children: ReactNode;
 }
 
 /**
- * Enhanced ThemeProvider component with accessibility features and system preference detection
+ * Enhanced theme provider component with accessibility features and system preference detection
  */
 export const ThemeProvider = ({ children }: ThemeProviderProps) => {
   // Initialize theme state with localStorage persistence
   const [isDarkMode, setIsDarkMode, , isLoading] = useLocalStorage<boolean>(
-    'theme-mode',
+    THEME_STORAGE_KEY,
     false,
     {
-      syncTabs: true // Enable cross-tab synchronization
+      encrypt: false, // No need to encrypt theme preference
+      expiresIn: 365 * 24 * 60 * 60 * 1000, // 1 year expiration
     }
   );
 
   // Track system color scheme preference
   const [systemPreference, setSystemPreference] = useState<'light' | 'dark' | 'no-preference'>('no-preference');
 
-  // Initialize system preference detection
-  useEffect(() => {
-    // Create media query for dark mode preference
-    const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const lightModeQuery = window.matchMedia('(prefers-color-scheme: light)');
+  // Memoized theme toggle handler with smooth transition
+  const toggleTheme = useCallback(() => {
+    setIsDarkMode((prev) => !prev);
+    // Apply transition class for smooth theme switching
+    document.documentElement.classList.add('theme-transition');
+    setTimeout(() => {
+      document.documentElement.classList.remove('theme-transition');
+    }, 300);
+  }, [setIsDarkMode]);
 
-    const handleSystemPreference = () => {
-      if (darkModeQuery.matches) {
-        setSystemPreference('dark');
-      } else if (lightModeQuery.matches) {
-        setSystemPreference('light');
-      } else {
-        setSystemPreference('no-preference');
+  // Set up system preference detection
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(DARK_MODE_MEDIA_QUERY);
+
+    const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      setSystemPreference(e.matches ? 'dark' : 'light');
+      // Only auto-switch theme if user hasn't explicitly set a preference
+      if (!localStorage.getItem(THEME_STORAGE_KEY)) {
+        setIsDarkMode(e.matches);
       }
     };
 
-    // Set initial preference
-    handleSystemPreference();
+    // Initial check
+    handleChange(mediaQuery);
 
     // Listen for system preference changes
-    darkModeQuery.addEventListener('change', handleSystemPreference);
-    lightModeQuery.addEventListener('change', handleSystemPreference);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleChange);
+    } else {
+      // Fallback for older browsers
+      mediaQuery.addListener(handleChange);
+    }
 
     return () => {
-      darkModeQuery.removeEventListener('change', handleSystemPreference);
-      lightModeQuery.removeEventListener('change', handleSystemPreference);
+      if (mediaQuery.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleChange);
+      } else {
+        // Fallback cleanup
+        mediaQuery.removeListener(handleChange);
+      }
     };
-  }, []);
-
-  // Sync theme with system preference if no stored preference
-  useEffect(() => {
-    if (isLoading) return;
-
-    const storedPreference = localStorage.getItem('theme-mode');
-    if (!storedPreference && systemPreference !== 'no-preference') {
-      setIsDarkMode(systemPreference === 'dark');
-    }
-  }, [systemPreference, isLoading, setIsDarkMode]);
-
-  // Memoized theme toggle handler with smooth transition
-  const toggleTheme = useCallback(() => {
-    // Add transition class for smooth theme switching
-    document.documentElement.classList.add('theme-transition');
-    setIsDarkMode(prev => !prev);
-    
-    // Remove transition class after animation completes
-    const timeout = setTimeout(() => {
-      document.documentElement.classList.remove('theme-transition');
-    }, 300);
-
-    return () => clearTimeout(timeout);
   }, [setIsDarkMode]);
 
-  // Memoized theme object to prevent unnecessary re-renders
-  const theme = useMemo(() => isDarkMode ? darkTheme : lightTheme, [isDarkMode]);
-
-  // Memoized context value
-  const contextValue = useMemo<ThemeContextType>(() => ({
-    theme,
-    isDarkMode,
-    toggleTheme,
-    systemPreference
-  }), [theme, isDarkMode, toggleTheme, systemPreference]);
-
-  // Apply theme-specific body classes for global styles
+  // Update document level attributes for accessibility
   useEffect(() => {
-    document.body.classList.toggle('dark-mode', isDarkMode);
-    document.body.classList.toggle('light-mode', !isDarkMode);
+    document.documentElement.setAttribute('data-theme', isDarkMode ? 'dark' : 'light');
+    // Set color-scheme CSS property for native elements
+    document.documentElement.style.setProperty('color-scheme', isDarkMode ? 'dark' : 'light');
   }, [isDarkMode]);
 
+  // Memoized theme context value
+  const themeContextValue = useMemo<ThemeContextType>(
+    () => ({
+      theme: isDarkMode ? darkTheme : lightTheme,
+      isDarkMode,
+      toggleTheme,
+      systemPreference,
+    }),
+    [isDarkMode, toggleTheme, systemPreference]
+  );
+
+  // Show loading state or error fallback if theme fails to load
+  if (isLoading) {
+    return null; // Or a loading spinner if needed
+  }
+
   return (
-    <ThemeContext.Provider value={contextValue}>
-      <MuiThemeProvider theme={theme}>
+    <ThemeContext.Provider value={themeContextValue}>
+      <MuiThemeProvider theme={themeContextValue.theme}>
         {children}
       </MuiThemeProvider>
     </ThemeContext.Provider>
@@ -122,7 +118,7 @@ export const ThemeProvider = ({ children }: ThemeProviderProps) => {
 
 /**
  * Custom hook to access theme context with type safety
- * @throws {Error} If used outside of ThemeProvider
+ * @throws {Error} When used outside of ThemeProvider
  */
 export const useTheme = (): ThemeContextType => {
   const context = useContext(ThemeContext);
@@ -134,4 +130,15 @@ export const useTheme = (): ThemeContextType => {
   return context;
 };
 
-export default ThemeProvider;
+// Add theme transition styles to head
+const style = document.createElement('style');
+style.textContent = `
+  .theme-transition,
+  .theme-transition *,
+  .theme-transition *:before,
+  .theme-transition *:after {
+    transition: all 300ms !important;
+    transition-delay: 0 !important;
+  }
+`;
+document.head.appendChild(style);
