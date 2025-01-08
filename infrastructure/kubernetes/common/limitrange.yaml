@@ -1,0 +1,34 @@
+# Kubernetes LimitRange configuration v1.25+
+# Defines container-level resource constraints and defaults for the product-search namespace
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: product-search-limits
+  namespace: product-search
+  labels:
+    app: ai-catalog-search
+    environment: ${ENV}
+spec:
+  limits:
+    # Container-level resource constraints
+    - type: Container
+      # Default resource limits if not specified
+      default:
+        cpu: "500m"      # 0.5 CPU cores
+        memory: "512Mi"  # 512 MiB memory
+      
+      # Default resource requests if not specified
+      defaultRequest:
+        cpu: "250m"      # 0.25 CPU cores
+        memory: "256Mi"  # 256 MiB memory
+      
+      # Maximum allowed resource limits
+      max:
+        cpu: "4"         # 4 CPU cores
+        memory: "8Gi"    # 8 GiB memory
+        nvidia.com/gpu: "1"  # Maximum 1 GPU per container
+      
+      # Minimum required resources
+      min:
+        cpu: "100m"      # 0.1 CPU cores
+        memory: "128Mi"  # 128 MiB memory
