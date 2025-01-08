@@ -33,8 +33,8 @@ export interface EmptyStateImages {
  * Application logo with theme variants
  */
 export const appLogo: ImageMetadata = {
-  light: `${IMAGE_BASE_PATH}/logo/app-logo-light.svg`,
-  dark: `${IMAGE_BASE_PATH}/logo/app-logo-dark.svg`,
+  light: `${IMAGE_BASE_PATH}/logo/logo-light.svg`,
+  dark: `${IMAGE_BASE_PATH}/logo/logo-dark.svg`,
   alt: 'AI-Powered Product Catalog Search System'
 };
 
@@ -42,16 +42,16 @@ export const appLogo: ImageMetadata = {
  * Theme-aware background images for authentication pages
  */
 export const loginBackground: Omit<ImageMetadata, 'alt'> = {
-  light: `${IMAGE_BASE_PATH}/backgrounds/login-bg-light.webp`,
-  dark: `${IMAGE_BASE_PATH}/backgrounds/login-bg-dark.webp`
+  light: `${IMAGE_BASE_PATH}/backgrounds/login-light.webp`,
+  dark: `${IMAGE_BASE_PATH}/backgrounds/login-dark.webp`
 };
 
 /**
  * Default user avatar placeholder with theme support
  */
 export const defaultAvatar: ImageMetadata = {
-  light: `${IMAGE_BASE_PATH}/avatars/default-avatar-light.svg`,
-  dark: `${IMAGE_BASE_PATH}/avatars/default-avatar-dark.svg`,
+  light: `${IMAGE_BASE_PATH}/avatars/default-light.svg`,
+  dark: `${IMAGE_BASE_PATH}/avatars/default-dark.svg`,
   alt: 'Default User Avatar'
 };
 
@@ -67,6 +67,7 @@ export const emptyState: EmptyStateImages = {
 
 /**
  * Common UI icons used throughout the application
+ * All icons are SVG format for optimal scaling and theme support
  */
 export const icons: Record<string, string> = {
   search: `${IMAGE_BASE_PATH}/icons/search.svg`,
