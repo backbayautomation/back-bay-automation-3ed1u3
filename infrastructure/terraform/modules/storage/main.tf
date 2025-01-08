@@ -20,17 +20,28 @@ resource "random_string" "suffix" {
 }
 
 # Azure Storage Account for document storage
-resource "azurerm_storage_account" "main" {
-  name                          = "docstore${random_string.suffix.result}"
-  resource_group_name           = var.resource_group_name
-  location                      = var.location
-  account_tier                  = var.storage_account_config.account_tier
-  account_replication_type      = var.storage_account_config.account_replication_type
-  enable_https_traffic_only     = var.storage_account_config.enable_https_traffic_only
-  min_tls_version              = var.storage_account_config.min_tls_version
-  allow_nested_items_to_be_public = var.storage_account_config.allow_nested_items_to_be_public
-  tags                         = var.tags
+resource "azurerm_storage_account" "document_storage" {
+  name                     = "docs${random_string.suffix.result}"
+  resource_group_name      = var.resource_group_name
+  location                 = var.location
+  account_tier             = var.storage_account_config.account_tier
+  account_replication_type = var.storage_account_config.account_replication_type
+  tags                     = var.tags
 
+  # Security settings
+  enable_https_traffic_only       = var.storage_account_config.enable_https_traffic_only
+  min_tls_version                = var.storage_account_config.min_tls_version
+  allow_nested_items_to_be_public = var.storage_account_config.allow_nested_items_to_be_public
+
+  # Network rules
+  network_rules {
+    default_action             = var.storage_account_config.network_rules.default_action
+    bypass                     = var.storage_account_config.network_rules.bypass
+    ip_rules                  = var.storage_account_config.network_rules.ip_rules
+    virtual_network_subnet_ids = var.storage_account_config.network_rules.virtual_network_subnet_ids
+  }
+
+  # Blob service properties
   blob_properties {
     versioning_enabled = var.storage_account_config.versioning_enabled
     delete_retention_policy {
@@ -48,14 +59,9 @@ resource "azurerm_storage_account" "main" {
     }
   }
 
-  network_rules {
-    default_action             = var.storage_account_config.network_rules.default_action
-    bypass                     = var.storage_account_config.network_rules.bypass
-    ip_rules                   = var.storage_account_config.network_rules.ip_rules
-    virtual_network_subnet_ids = var.storage_account_config.network_rules.virtual_network_subnet_ids
-  }
-
+  # Lifecycle management
   lifecycle_rule {
+    name    = "document-lifecycle"
     enabled = true
     filters {
       prefix_match = ["documents/"]
@@ -71,13 +77,13 @@ resource "azurerm_storage_account" "main" {
 }
 
 # Cosmos DB Account for vector storage
-resource "azurerm_cosmosdb_account" "main" {
-  name                = "vectordb${random_string.suffix.result}"
+resource "azurerm_cosmosdb_account" "vector_store" {
+  name                = "vectors${random_string.suffix.result}"
   resource_group_name = var.resource_group_name
   location           = var.location
   offer_type         = var.cosmos_db_config.offer_type
-  kind              = var.cosmos_db_config.kind
-  tags              = var.tags
+  kind               = var.cosmos_db_config.kind
+  tags               = var.tags
 
   enable_automatic_failover = var.cosmos_db_config.enable_automatic_failover
   enable_multiple_write_locations = var.cosmos_db_config.enable_multiple_write_locations
@@ -105,17 +111,18 @@ resource "azurerm_cosmosdb_account" "main" {
 }
 
 # Redis Cache for performance optimization
-resource "azurerm_redis_cache" "main" {
+resource "azurerm_redis_cache" "cache" {
   name                = "cache${random_string.suffix.result}"
   resource_group_name = var.resource_group_name
   location           = var.location
   capacity           = var.redis_cache_config.capacity
   family             = var.redis_cache_config.family
   sku_name           = var.redis_cache_config.sku_name
+  tags               = var.tags
+
   enable_non_ssl_port = var.redis_cache_config.enable_non_ssl_port
   minimum_tls_version = var.redis_cache_config.minimum_tls_version
   shard_count        = var.redis_cache_config.shard_count
-  tags               = var.tags
 
   redis_configuration {
     maxmemory_reserved = var.redis_cache_config.maxmemory_reserved
@@ -128,20 +135,23 @@ resource "azurerm_redis_cache" "main" {
     start_hour_utc = var.redis_cache_config.patch_schedule.start_hour_utc
   }
 
-  dynamic "cluster_config" {
+  # Clustering configuration
+  dynamic "cluster_policy" {
     for_each = var.redis_cache_config.cluster_config.enabled ? [1] : []
     content {
-      enabled                  = true
       max_replicas_per_master = var.redis_cache_config.cluster_config.max_replicas_per_master
     }
   }
 
-  persistence_config {
+  # Persistence configuration
+  persistence_configuration {
     enabled                = var.redis_cache_config.persistence_config.enabled
-    frequency_in_minutes   = var.redis_cache_config.persistence_config.frequency_in_minutes
+    frequency_in_minutes = var.redis_cache_config.persistence_config.frequency_in_minutes
   }
 
+  # Firewall rules
   firewall_rules {
+    name     = "default"
     start_ip = var.redis_cache_config.firewall_rules.start_ip
     end_ip   = var.redis_cache_config.firewall_rules.end_ip
   }
@@ -149,40 +159,40 @@ resource "azurerm_redis_cache" "main" {
 
 # Outputs
 output "storage_account_name" {
-  value = azurerm_storage_account.main.name
+  value = azurerm_storage_account.document_storage.name
   description = "The name of the storage account"
 }
 
 output "storage_account_primary_access_key" {
-  value = azurerm_storage_account.main.primary_access_key
+  value = azurerm_storage_account.document_storage.primary_access_key
   sensitive = true
   description = "The primary access key for the storage account"
 }
 
 output "cosmos_db_name" {
-  value = azurerm_cosmosdb_account.main.name
+  value = azurerm_cosmosdb_account.vector_store.name
   description = "The name of the Cosmos DB account"
 }
 
 output "cosmos_db_primary_key" {
-  value = azurerm_cosmosdb_account.main.primary_key
+  value = azurerm_cosmosdb_account.vector_store.primary_key
   sensitive = true
   description = "The primary key for the Cosmos DB account"
 }
 
 output "cosmos_db_connection_strings" {
-  value = azurerm_cosmosdb_account.main.connection_strings
+  value = azurerm_cosmosdb_account.vector_store.connection_strings
   sensitive = true
   description = "The connection strings for the Cosmos DB account"
 }
 
 output "redis_cache_name" {
-  value = azurerm_redis_cache.main.name
+  value = azurerm_redis_cache.cache.name
   description = "The name of the Redis Cache instance"
 }
 
 output "redis_cache_primary_connection_string" {
-  value = azurerm_redis_cache.main.primary_connection_string
+  value = azurerm_redis_cache.cache.primary_connection_string
   sensitive = true
   description = "The primary connection string for the Redis Cache instance"
 }
