@@ -1,17 +1,12 @@
-# Environment identifier
-environment = "staging"
-
-# Azure region for resource deployment
-location = "eastus2"
-
-# Resource group name
+# Environment Identification
+environment         = "staging"
+location           = "eastus2"
 resource_group_name = "rg-catalog-search-staging"
 
-# AKS cluster configuration
+# AKS Configuration
 aks_config = {
   cluster_name        = "aks-catalog-search-staging"
   kubernetes_version  = "1.26"
-  
   system_node_pool = {
     name                = "systempool"
     vm_size            = "Standard_D4s_v3"
@@ -20,7 +15,6 @@ aks_config = {
     max_count          = 4
     enable_auto_scaling = true
   }
-  
   app_node_pool = {
     name                = "apppool"
     vm_size            = "Standard_D8s_v3"
@@ -29,7 +23,6 @@ aks_config = {
     max_count          = 6
     enable_auto_scaling = true
   }
-  
   gpu_node_pool = {
     name                = "gpupool"
     vm_size            = "Standard_NC6s_v3"
@@ -40,7 +33,7 @@ aks_config = {
   }
 }
 
-# Database configurations
+# Database Configuration
 database_config = {
   sql = {
     name                  = "sql-catalog-search-staging"
@@ -51,7 +44,6 @@ database_config = {
     storage_mb            = 256000
     geo_redundant_backup  = false
   }
-  
   cosmos = {
     name                      = "cosmos-catalog-search-staging"
     consistency_level         = "Session"
@@ -61,12 +53,11 @@ database_config = {
   }
 }
 
-# Storage configuration
+# Storage Configuration
 storage_config = {
   account_name             = "stcatalogsearchstg"
   account_tier            = "Standard"
   account_replication_type = "ZRS"
-  
   containers = {
     documents = {
       name        = "documents"
@@ -79,11 +70,10 @@ storage_config = {
   }
 }
 
-# Network configuration
+# Network Configuration
 network_config = {
   vnet_name     = "vnet-catalog-search-staging"
   address_space = ["10.1.0.0/16"]
-  
   subnets = {
     aks = {
       name           = "snet-aks"
@@ -98,7 +88,6 @@ network_config = {
       address_prefix = "10.1.5.0/24"
     }
   }
-  
   network_security_rules = {
     allow_https = {
       priority                = 100
@@ -111,13 +100,12 @@ network_config = {
   }
 }
 
-# Monitoring configuration
+# Monitoring Configuration
 monitoring_config = {
   workspace_name            = "log-catalog-search-staging"
   retention_days           = 30
   enable_container_insights = true
   enable_vm_insights       = true
-  
   alerts = {
     cpu_threshold    = 80
     memory_threshold = 80
@@ -125,7 +113,7 @@ monitoring_config = {
   }
 }
 
-# Resource tags
+# Resource Tags
 tags = {
   Environment = "Staging"
   Project     = "CatalogSearch"
