@@ -1,0 +1,49 @@
+# Kubernetes Service manifest for Celery workers monitoring and management
+# Version: v1.25+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: celery-worker
+  namespace: catalog-search
+  labels:
+    app: celery
+    component: worker
+    tier: backend
+    part-of: catalog-search
+    managed-by: kubernetes
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9901"
+    prometheus.io/path: "/metrics"
+    monitoring.kubernetes.io/description: "Celery worker monitoring endpoints"
+    service.kubernetes.io/topology-aware-hints: "auto"
+
+spec:
+  # Internal-only service type for security isolation
+  type: ClusterIP
+  
+  # Expose monitoring and management ports
+  ports:
+    # Prometheus metrics endpoint
+    - name: metrics
+      port: 9901
+      targetPort: 9901
+      protocol: TCP
+    
+    # Celery Flower UI endpoint
+    - name: flower
+      port: 5555
+      targetPort: 5555
+      protocol: TCP
+  
+  # Target pod selection using deployment labels
+  selector:
+    app: celery
+    component: worker
+  
+  # No session affinity needed for monitoring services
+  sessionAffinity: None
+  
+  # Cluster-wide internal traffic policy
+  internalTrafficPolicy: Cluster
