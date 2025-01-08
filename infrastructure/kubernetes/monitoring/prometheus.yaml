@@ -1,0 +1,111 @@
+# Prometheus Kubernetes Configuration
+# Version: v2.45.0
+# Purpose: Core monitoring system deployment with high availability and security
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: monitoring
+    part-of: catalog-search-system
+spec:
+  replicas: 2  # High availability configuration
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        component: monitoring
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+    spec:
+      # Security context for non-root execution
+      securityContext:
+        fsGroup: 65534  # nobody group
+        runAsUser: 65534  # nobody user
+        runAsNonRoot: true
+      
+      serviceAccountName: prometheus
+      
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.45.0
+        args:
+          - --config.file=/etc/prometheus/prometheus.yml
+          - --storage.tsdb.path=/prometheus
+          - --storage.tsdb.retention.time=15d  # Retention period for metrics
+          - --web.enable-lifecycle  # Enable runtime configuration reloading
+          - --web.enable-admin-api  # Enable admin API for management
+          - --web.console.libraries=/usr/share/prometheus/console_libraries
+          - --web.console.templates=/usr/share/prometheus/consoles
+        
+        ports:
+          - containerPort: 9090
+            name: web
+            protocol: TCP
+        
+        # Resource limits and requests
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 1000m
+            memory: 4Gi
+        
+        # Volume mounts for configuration and storage
+        volumeMounts:
+          - name: prometheus-config
+            mountPath: /etc/prometheus
+          - name: prometheus-storage
+            mountPath: /prometheus
+          - name: rules
+            mountPath: /etc/prometheus/rules
+        
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: web
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+        
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: web
+          initialDelaySeconds: 30
+          timeoutSeconds: 30
+      
+      # Configuration volumes
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
+      
+      # Grace period for proper shutdown
+      terminationGracePeriodSeconds: 300
+  
+  # Persistent storage configuration
+  volumeClaimTemplates:
+    - metadata:
+        name: prometheus-storage
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: managed-premium
+        resources:
+          requests:
+            storage: 50Gi  # Storage size for metrics retention
