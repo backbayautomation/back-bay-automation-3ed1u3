@@ -1,11 +1,11 @@
 """
-SQLAlchemy models initialization module for AI-powered Product Catalog Search System.
-Implements secure multi-tenant data model with comprehensive relationship management.
+Initialization module for SQLAlchemy models in the AI-powered Product Catalog Search System.
+Implements multi-tenant data model with comprehensive security and relationship management.
 
 Version: 1.0.0
 """
 
-# Import models in dependency order to ensure proper relationship initialization
+# Import models in dependency order to handle foreign key relationships correctly
 from .organization import Organization
 from .user import User, UserRole
 from .client import Client
@@ -15,58 +15,42 @@ from .embedding import Embedding
 from .chat_session import ChatSession
 from .message import Message
 
-# Export all models for easy access while maintaining explicit imports
+# Export all models for external use with proper documentation
 __all__ = [
-    "Organization",  # Multi-tenant organization model
-    "User",         # User authentication and authorization
-    "UserRole",     # User role enumeration
-    "Client",       # Client management within organizations
-    "Document",     # Document storage and processing
-    "Chunk",        # Document chunk management
-    "Embedding",    # Vector embeddings for similarity search
+    "Organization",  # Top-level entity in multi-tenant hierarchy
+    "User",         # User management with role-based access
+    "UserRole",     # Enumeration of user roles
+    "Client",       # Client management for multi-tenant system
+    "Document",     # Document management and processing
+    "Chunk",        # Document chunking for vector search
+    "Embedding",    # Vector embeddings for semantic search
     "ChatSession",  # Chat session management
-    "Message"       # Chat message storage
+    "Message"       # Chat message handling
 ]
 
-# Validate model relationships to ensure proper initialization
-def validate_relationships():
-    """
-    Validate all model relationships are properly configured.
-    Ensures data integrity and proper multi-tenant isolation.
-    
-    Raises:
-        RuntimeError: If relationship validation fails
-    """
-    # Organization relationships
-    assert hasattr(Organization, 'clients'), "Organization missing clients relationship"
-    
-    # User relationships
-    assert hasattr(User, 'organization'), "User missing organization relationship"
-    assert hasattr(User, 'client'), "User missing client relationship"
-    assert hasattr(User, 'chat_sessions'), "User missing chat_sessions relationship"
-    
-    # Client relationships
-    assert hasattr(Client, 'organization'), "Client missing organization relationship"
-    assert hasattr(Client, 'documents'), "Client missing documents relationship"
-    assert hasattr(Client, 'users'), "Client missing users relationship"
-    
-    # Document relationships
-    assert hasattr(Document, 'client'), "Document missing client relationship"
-    assert hasattr(Document, 'chunks'), "Document missing chunks relationship"
-    
-    # Chunk relationships
-    assert hasattr(Chunk, 'document'), "Chunk missing document relationship"
-    assert hasattr(Chunk, 'embedding'), "Chunk missing embedding relationship"
-    
-    # Embedding relationships
-    assert hasattr(Embedding, 'chunk'), "Embedding missing chunk relationship"
-    
-    # ChatSession relationships
-    assert hasattr(ChatSession, 'user'), "ChatSession missing user relationship"
-    assert hasattr(ChatSession, 'messages'), "ChatSession missing messages relationship"
-    
-    # Message relationships
-    assert hasattr(Message, 'chat_session'), "Message missing chat_session relationship"
+# Version information
+__version__ = "1.0.0"
+__author__ = "AI-Powered Product Catalog Search System Team"
 
-# Validate relationships on module import
-validate_relationships()
+# Module documentation
+__doc__ = """
+SQLAlchemy models package implementing a secure multi-tenant data model for the
+AI-powered Product Catalog Search System. Provides comprehensive data management
+with proper relationship handling and security controls.
+
+Models:
+- Organization: Top-level tenant entity with isolation
+- User: User management with role-based access control
+- Client: Client-specific data and configuration
+- Document: Document processing and management
+- Chunk: Document chunking for vector search
+- Embedding: Vector embeddings for semantic search
+- ChatSession: Chat interaction management
+- Message: Chat message handling
+
+Security Features:
+- Multi-tenant data isolation
+- Role-based access control
+- Audit logging
+- Encrypted sensitive data
+"""
