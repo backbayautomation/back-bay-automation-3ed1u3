@@ -17,7 +17,7 @@ class OrganizationBase(BaseModel):
             "theme": "light",
             "language": "en",
             "features": ["chat", "export"],
-            "retention_period": 90
+            "retention_days": 30
         }]
     )
 
@@ -89,7 +89,7 @@ class OrganizationInDB(OrganizationBase):
 class Organization(OrganizationInDB):
     """Complete Pydantic model for organization response data with relationships."""
     clients: Optional[List['Client']] = Field(
-        None,
+        default=None,
         description="List of clients associated with the organization"
     )
 
@@ -104,24 +104,26 @@ class Organization(OrganizationInDB):
             Organization: Validated Organization schema instance
             
         Raises:
-            ValueError: If ORM model is invalid or missing required fields
+            ValueError: If invalid or missing required fields
+            TypeError: If invalid ORM model type
         """
-        if not orm_model:
-            raise ValueError("Invalid ORM model provided")
+        if not hasattr(orm_model, '__table__'):
+            raise TypeError("Invalid ORM model provided")
 
         try:
             # Convert ORM model to dictionary with relationship handling
             data = {
-                "id": orm_model.id,
-                "name": orm_model.name,
-                "settings": orm_model.settings,
-                "created_at": orm_model.created_at,
-                "updated_at": orm_model.updated_at,
-                "clients": orm_model.clients if hasattr(orm_model, "clients") else None
+                'id': orm_model.id,
+                'name': orm_model.name,
+                'settings': orm_model.settings,
+                'created_at': orm_model.created_at,
+                'updated_at': orm_model.updated_at,
+                'clients': orm_model.clients if hasattr(orm_model, 'clients') else None
             }
             
             # Create and validate Organization instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Organization from ORM model: {str(e)}")
 
