@@ -20,19 +20,29 @@ spec:
         tier: cache
         component: distributed-cache
     spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - redis
+              topologyKey: kubernetes.io/hostname
       containers:
       - name: redis
-        image: redis:7.0-alpine  # Latest stable Redis 7.0 Alpine-based image for minimal footprint
+        image: redis:7.0-alpine
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
         ports:
-        - containerPort: 6379
-          name: redis
-        resources:
-          requests:
-            cpu: 500m
-            memory: 1Gi
-          limits:
-            cpu: "2"
-            memory: 6Gi
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -44,11 +54,13 @@ spec:
             secretKeyRef:
               name: redis-secrets
               key: encryption-key
-        command:
-        - redis-server
-        - /etc/redis/redis.conf
-        - --requirepass
-        - $(REDIS_PASSWORD)
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 6Gi
         volumeMounts:
         - name: redis-config
           mountPath: /etc/redis
@@ -74,24 +86,16 @@ spec:
           timeoutSeconds: 3
           successThreshold: 1
           failureThreshold: 3
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 999
-          allowPrivilegeEscalation: false
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - redis-cli
+              - shutdown
       volumes:
       - name: redis-config
         configMap:
           name: redis-config
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - redis
-            topologyKey: kubernetes.io/hostname
   volumeClaimTemplates:
   - metadata:
       name: redis-data
