@@ -4,243 +4,219 @@
  * @version 1.0.0
  */
 
-import axios, { AxiosInstance, AxiosRequestConfig } from 'axios'; // v1.5.0
-import * as CryptoJS from 'crypto-js'; // v4.1.1
+import axios, { AxiosInstance } from 'axios'; // v1.5.0
+import CryptoJS from 'crypto-js'; // v4.1.1
 import rax from 'retry-axios'; // v3.0.0
 import { SecurityConfig } from '@security/config'; // v1.0.0
 import { AuthLogger } from '@logging/auth'; // v1.0.0
-import {
-    LoginCredentials,
-    AuthTokens,
-    UserProfile,
-    authTokensSchema,
-    TOKEN_CONFIG,
+import { 
+    LoginCredentials, 
+    AuthTokens, 
+    UserProfile, 
     isAuthTokens,
-    createEmailAddress
+    TOKEN_CONFIG 
 } from '../types/auth';
 import { ApiResponse } from '../types/common';
 
 // Security constants
 const ENCRYPTION_KEY_SIZE = 256;
-const TOKEN_REFRESH_THRESHOLD = 300; // 5 minutes in seconds
 const MAX_RETRY_ATTEMPTS = 3;
-const CIRCUIT_BREAKER_THRESHOLD = 5;
+const TOKEN_REFRESH_THRESHOLD = 300; // 5 minutes in seconds
 
 /**
- * Decorator for rate limiting authentication attempts
- */
-function RateLimit(limit: number, window: string) {
-    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-        const original = descriptor.value;
-        const rateLimiter = new Map<string, number[]>();
-
-        descriptor.value = async function (...args: any[]) {
-            const key = args[0]?.email || 'default';
-            const now = Date.now();
-            const windowMs = parseTimeWindow(window);
-            
-            const attempts = rateLimiter.get(key)?.filter(time => now - time < windowMs) || [];
-            if (attempts.length >= limit) {
-                throw new Error('Rate limit exceeded. Please try again later.');
-            }
-            
-            rateLimiter.set(key, [...attempts, now]);
-            return original.apply(this, args);
-        };
-    };
-}
-
-/**
- * Decorator for audit logging of authentication events
- */
-function AuditLog(eventType: string) {
-    return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
-        const original = descriptor.value;
-        descriptor.value = async function (...args: any[]) {
-            try {
-                const result = await original.apply(this, args);
-                this.logger?.log(eventType, { success: true, ...args[0] });
-                return result;
-            } catch (error) {
-                this.logger?.log(eventType, { success: false, error: error.message, ...args[0] });
-                throw error;
-            }
-        };
-    };
-}
-
-/**
- * Core authentication service implementing secure authentication and token management
+ * Core authentication service with comprehensive security features
+ * and monitoring capabilities.
  */
 @Injectable()
 @MonitoredService('AuthService')
 export class AuthService {
-    private readonly apiClient: AxiosInstance;
+    private readonly axiosInstance: AxiosInstance;
     private readonly encryptionKey: string;
-    private readonly circuitBreaker: CircuitBreaker;
+    private refreshPromise: Promise<ApiResponse<AuthTokens>> | null = null;
 
     constructor(
         private readonly securityConfig: SecurityConfig,
         private readonly logger: AuthLogger
     ) {
         this.encryptionKey = this.generateEncryptionKey();
-        this.circuitBreaker = new CircuitBreaker(CIRCUIT_BREAKER_THRESHOLD);
-        this.apiClient = this.createSecureApiClient();
+        this.axiosInstance = this.createSecureAxiosInstance();
     }
 
     /**
      * Authenticates user with enhanced security features including MFA
+     * and organization context.
      */
     @RateLimit(10, '1m')
     @AuditLog('auth:login')
-    public async login(credentials: LoginCredentials): Promise<ApiResponse<AuthTokens>> {
+    public async login(
+        credentials: LoginCredentials,
+        securityConfig: SecurityConfig
+    ): Promise<ApiResponse<AuthTokens>> {
         try {
-            // Input validation and sanitization
-            const validatedEmail = createEmailAddress(credentials.email);
-            const sanitizedCredentials = {
-                email: validatedEmail,
-                password: this.encryptPassword(credentials.password),
-                organizationId: credentials.organizationId,
-                mfaToken: credentials.mfaToken
-            };
+            // Sanitize and validate input
+            this.validateCredentials(credentials);
 
             // Add security headers
-            const headers = this.getSecurityHeaders();
+            const headers = this.getSecurityHeaders(securityConfig);
 
-            // Perform authentication request
-            const response = await this.apiClient.post<ApiResponse<AuthTokens>>(
-                '/auth/login',
-                sanitizedCredentials,
+            // Encrypt sensitive data
+            const encryptedPayload = this.encryptPayload(credentials);
+
+            const response = await this.axiosInstance.post<ApiResponse<AuthTokens>>(
+                '/api/v1/auth/login',
+                encryptedPayload,
                 { headers }
             );
 
-            // Validate response
-            if (!isAuthTokens(response.data.data)) {
-                throw new Error('Invalid token response format');
+            if (response.data.success && isAuthTokens(response.data.data)) {
+                // Encrypt tokens before storage
+                const encryptedTokens = this.encryptTokens(response.data.data);
+                this.storeTokens(encryptedTokens);
+
+                this.logger.info('Authentication successful', {
+                    userId: response.data.data.userId,
+                    organizationId: credentials.organizationId
+                });
+
+                return response.data;
             }
 
-            // Encrypt and store tokens
-            const encryptedTokens = this.encryptTokens(response.data.data);
-            this.storeTokens(encryptedTokens);
-
-            return {
-                success: true,
-                data: encryptedTokens,
-                error: null,
-                message: 'Authentication successful',
-                statusCode: 200,
-                metadata: {}
-            };
+            throw new Error('Invalid authentication response');
         } catch (error) {
-            this.handleAuthError(error);
-            throw error;
+            this.logger.error('Authentication failed', { error });
+            throw this.handleAuthError(error);
         }
     }
 
     /**
-     * Securely refreshes access token with encryption and automatic retry
+     * Securely refreshes access token with encryption and automatic retry.
      */
     @CircuitBreaker(3, '1m')
     @AuditLog('auth:refresh')
-    public async refreshToken(encryptedRefreshToken: string): Promise<ApiResponse<AuthTokens>> {
+    public async refreshToken(
+        encryptedRefreshToken: string,
+        securityConfig: SecurityConfig
+    ): Promise<ApiResponse<AuthTokens>> {
+        // Implement singleton pattern for refresh
+        if (this.refreshPromise) {
+            return this.refreshPromise;
+        }
+
         try {
-            const decryptedToken = this.decryptToken(encryptedRefreshToken);
-            
-            if (!this.isTokenValid(decryptedToken)) {
-                throw new Error('Invalid refresh token');
-            }
+            this.refreshPromise = (async () => {
+                const decryptedToken = this.decryptToken(encryptedRefreshToken);
+                this.validateRefreshToken(decryptedToken);
 
-            const response = await this.apiClient.post<ApiResponse<AuthTokens>>(
-                '/auth/refresh',
-                { refreshToken: decryptedToken },
-                { headers: this.getSecurityHeaders() }
-            );
+                const headers = this.getSecurityHeaders(securityConfig);
+                const response = await this.axiosInstance.post<ApiResponse<AuthTokens>>(
+                    '/api/v1/auth/refresh',
+                    { refreshToken: decryptedToken },
+                    { headers }
+                );
 
-            const newTokens = this.encryptTokens(response.data.data);
-            this.storeTokens(newTokens);
+                if (response.data.success && isAuthTokens(response.data.data)) {
+                    const encryptedTokens = this.encryptTokens(response.data.data);
+                    this.storeTokens(encryptedTokens);
+                    return response.data;
+                }
 
-            return {
-                success: true,
-                data: newTokens,
-                error: null,
-                message: 'Token refresh successful',
-                statusCode: 200,
-                metadata: {}
-            };
+                throw new Error('Invalid token refresh response');
+            })();
+
+            return await this.refreshPromise;
         } catch (error) {
-            this.handleAuthError(error);
-            throw error;
+            this.logger.error('Token refresh failed', { error });
+            throw this.handleAuthError(error);
+        } finally {
+            this.refreshPromise = null;
         }
     }
 
     /**
-     * Validates token integrity and expiration
+     * Validates token integrity and expiration.
      */
     public async validateToken(encryptedToken: string): Promise<boolean> {
         try {
             const decryptedToken = this.decryptToken(encryptedToken);
-            return this.isTokenValid(decryptedToken);
-        } catch {
+            const tokenParts = decryptedToken.split('.');
+            
+            if (tokenParts.length !== 3) {
+                return false;
+            }
+
+            const payload = JSON.parse(atob(tokenParts[1]));
+            const expirationTime = payload.exp * 1000;
+            
+            return Date.now() < expirationTime;
+        } catch (error) {
+            this.logger.error('Token validation failed', { error });
             return false;
         }
     }
 
     /**
-     * Creates secure API client with interceptors and retry logic
+     * Creates secure axios instance with interceptors and retry logic.
      */
-    private createSecureApiClient(): AxiosInstance {
-        const client = axios.create({
+    private createSecureAxiosInstance(): AxiosInstance {
+        const instance = axios.create({
             baseURL: this.securityConfig.apiBaseUrl,
             timeout: 10000,
-            withCredentials: true
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Client-Version': process.env.APP_VERSION
+            }
         });
 
         // Add retry logic
-        client.defaults.raxConfig = {
+        instance.defaults.raxConfig = {
             retry: MAX_RETRY_ATTEMPTS,
-            retryDelay: this.calculateRetryDelay,
+            retryDelay: this.getExponentialDelay,
             statusCodesToRetry: [[408, 429, 500, 502, 503, 504]]
         };
-        rax.attach(client);
 
-        // Add security interceptors
-        client.interceptors.request.use(this.addSecurityHeaders);
-        client.interceptors.response.use(
+        rax.attach(instance);
+
+        // Add response interceptor for token refresh
+        instance.interceptors.response.use(
             response => response,
-            this.handleApiError
+            async error => {
+                if (error.response?.status === 401 && this.shouldRefreshToken()) {
+                    return this.handleTokenRefresh(error);
+                }
+                throw error;
+            }
         );
 
-        return client;
+        return instance;
     }
 
     /**
-     * Generates secure encryption key
+     * Generates secure encryption key for token encryption.
      */
     private generateEncryptionKey(): string {
         return CryptoJS.lib.WordArray.random(ENCRYPTION_KEY_SIZE / 8).toString();
     }
 
     /**
-     * Encrypts sensitive tokens
+     * Encrypts authentication tokens for secure storage.
      */
     private encryptTokens(tokens: AuthTokens): AuthTokens {
         return {
+            ...tokens,
             accessToken: this.encryptToken(tokens.accessToken),
-            refreshToken: this.encryptToken(tokens.refreshToken),
-            expiresIn: tokens.expiresIn,
-            tokenType: tokens.tokenType
+            refreshToken: this.encryptToken(tokens.refreshToken)
         };
     }
 
     /**
-     * Encrypts individual token
+     * Encrypts individual token with AES-256.
      */
     private encryptToken(token: string): string {
         return CryptoJS.AES.encrypt(token, this.encryptionKey).toString();
     }
 
     /**
-     * Decrypts token for validation
+     * Decrypts token for validation or refresh.
      */
     private decryptToken(encryptedToken: string): string {
         const bytes = CryptoJS.AES.decrypt(encryptedToken, this.encryptionKey);
@@ -248,44 +224,115 @@ export class AuthService {
     }
 
     /**
-     * Validates token expiration and integrity
+     * Handles authentication errors with proper logging and formatting.
      */
-    private isTokenValid(token: string): boolean {
-        try {
-            const decoded = this.decodeToken(token);
-            const now = Math.floor(Date.now() / 1000);
-            return decoded.exp > now + TOKEN_REFRESH_THRESHOLD;
-        } catch {
-            return false;
+    private handleAuthError(error: any): Error {
+        const errorMessage = error.response?.data?.message || 'Authentication failed';
+        return new Error(errorMessage);
+    }
+
+    /**
+     * Validates refresh token expiration and integrity.
+     */
+    private validateRefreshToken(token: string): void {
+        if (!token || !this.validateToken(token)) {
+            throw new Error('Invalid or expired refresh token');
         }
     }
 
     /**
-     * Handles authentication errors with logging
+     * Determines if token refresh should be attempted.
      */
-    private handleAuthError(error: any): void {
-        this.logger.error('Authentication error', {
-            error: error.message,
-            code: error.response?.status
-        });
-        throw new Error(error.response?.data?.message || 'Authentication failed');
+    private shouldRefreshToken(): boolean {
+        const currentToken = this.getStoredAccessToken();
+        if (!currentToken) return false;
+
+        const decodedToken = this.decryptToken(currentToken);
+        const payload = JSON.parse(atob(decodedToken.split('.')[1]));
+        const expirationTime = payload.exp * 1000;
+        
+        return Date.now() > expirationTime - TOKEN_REFRESH_THRESHOLD * 1000;
     }
 
     /**
-     * Generates security headers for requests
+     * Handles token refresh process with error handling.
      */
-    private getSecurityHeaders(): Record<string, string> {
+    private async handleTokenRefresh(error: any): Promise<any> {
+        try {
+            const refreshToken = this.getStoredRefreshToken();
+            if (!refreshToken) {
+                throw new Error('No refresh token available');
+            }
+
+            const response = await this.refreshToken(refreshToken, this.securityConfig);
+            if (response.success) {
+                // Retry original request with new token
+                const originalRequest = error.config;
+                originalRequest.headers.Authorization = `Bearer ${response.data.accessToken}`;
+                return this.axiosInstance(originalRequest);
+            }
+        } catch (refreshError) {
+            this.logger.error('Token refresh failed', { refreshError });
+        }
+        throw error;
+    }
+
+    /**
+     * Calculates exponential delay for retry attempts.
+     */
+    private getExponentialDelay(retryCount: number): number {
+        return Math.min(1000 * Math.pow(2, retryCount), 10000);
+    }
+
+    /**
+     * Retrieves stored access token from secure storage.
+     */
+    private getStoredAccessToken(): string | null {
+        return localStorage.getItem('access_token');
+    }
+
+    /**
+     * Retrieves stored refresh token from secure storage.
+     */
+    private getStoredRefreshToken(): string | null {
+        return localStorage.getItem('refresh_token');
+    }
+
+    /**
+     * Stores encrypted tokens in secure storage.
+     */
+    private storeTokens(tokens: AuthTokens): void {
+        localStorage.setItem('access_token', tokens.accessToken);
+        localStorage.setItem('refresh_token', tokens.refreshToken);
+    }
+
+    /**
+     * Generates security headers for API requests.
+     */
+    private getSecurityHeaders(config: SecurityConfig): Record<string, string> {
         return {
-            'X-CSRF-Token': this.securityConfig.csrfToken,
-            'X-Client-Version': process.env.APP_VERSION || '1.0.0',
-            'X-Request-ID': crypto.randomUUID()
+            'X-CSRF-Token': config.csrfToken,
+            'X-Request-ID': crypto.randomUUID(),
+            'X-Client-Version': process.env.APP_VERSION || '1.0.0'
         };
     }
 
     /**
-     * Calculates exponential backoff for retries
+     * Validates login credentials format and content.
      */
-    private calculateRetryDelay(retryCount: number): number {
-        return Math.min(1000 * Math.pow(2, retryCount), 10000);
+    private validateCredentials(credentials: LoginCredentials): void {
+        if (!credentials.email || !credentials.password) {
+            throw new Error('Invalid credentials format');
+        }
+    }
+
+    /**
+     * Encrypts sensitive payload data for transmission.
+     */
+    private encryptPayload(data: any): string {
+        return CryptoJS.AES.encrypt(
+            JSON.stringify(data),
+            this.encryptionKey
+        ).toString();
     }
 }
