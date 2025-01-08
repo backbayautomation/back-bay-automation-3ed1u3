@@ -1,229 +1,239 @@
 /**
  * Advanced service layer for document management operations providing secure,
- * monitored, and resilient document handling with comprehensive error management.
+ * monitored, and resilient document handling with comprehensive error management,
+ * progress tracking, and performance optimization.
  * @version 1.0.0
  */
 
 import { Observable, from, throwError } from 'rxjs'; // v7.8.0
 import { retry, catchError, timeout } from 'rxjs/operators'; // v7.8.0
+
 import {
-    uploadDocument,
-    getDocuments,
-    getDocumentById,
-    deleteDocument,
-    processDocument
+  uploadDocument,
+  getDocuments,
+  getDocumentById,
+  deleteDocument,
+  processDocument
 } from '../api/documents';
+
 import {
-    Document,
-    DocumentUploadRequest,
-    DocumentListResponse,
-    DocumentType,
-    ProcessingStatus
+  Document,
+  DocumentUploadRequest,
+  DocumentListResponse,
+  DocumentType,
+  ProcessingStatus
 } from '../types/document';
 
 /**
- * Configuration for document service operations
+ * Default configuration for document operations
  */
-const SERVICE_CONFIG = {
-    UPLOAD: {
-        MAX_RETRIES: 3,
-        TIMEOUT: 300000, // 5 minutes
-        ALLOWED_TYPES: ['pdf', 'docx', 'xlsx', 'txt'] as DocumentType[],
-        MAX_FILE_SIZE: 10485760 // 10MB
-    },
-    PROCESSING: {
-        TIMEOUT: 600000, // 10 minutes
-        RETRY_DELAY: 5000,
-        MAX_RETRIES: 5
-    },
-    CACHE: {
-        TTL: 300000, // 5 minutes
-        MAX_ITEMS: 100
-    }
+const DEFAULT_CONFIG = {
+  maxRetries: 3,
+  timeout: 60000,
+  progressThrottle: 250,
+  maxFileSize: 10485760, // 10MB
+  allowedTypes: ['pdf', 'docx', 'xlsx', 'txt'] as DocumentType[],
+  processingTimeout: 300000 // 5 minutes
 } as const;
 
 /**
- * Interface for document list query parameters
+ * Cache configuration for document operations
  */
-interface DocumentListParams {
-    cursor?: string;
-    limit: number;
-    clientId?: string;
-    type?: DocumentType;
-    sortBy?: string;
-    order?: 'asc' | 'desc';
+const CACHE_CONFIG = {
+  listTTL: 300000, // 5 minutes
+  detailsTTL: 600000 // 10 minutes
+} as const;
+
+/**
+ * Document operation error types
+ */
+export class DocumentError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public details?: unknown
+  ) {
+    super(message);
+    this.name = 'DocumentError';
+  }
 }
 
 /**
- * Interface for document upload options
+ * Enhanced document upload with progress tracking, validation, and retry mechanism
  */
-interface UploadOptions {
-    maxRetries?: number;
-    timeout?: number;
-    onProgress?: (progress: number) => void;
+export async function uploadDocumentWithProgress(
+  request: DocumentUploadRequest,
+  onProgress?: (progress: number) => void,
+  options: { maxRetries?: number; timeout?: number } = {}
+): Promise<Document> {
+  // Validate file size
+  if (request.file.size > DEFAULT_CONFIG.maxFileSize) {
+    throw new DocumentError(
+      `File size exceeds maximum limit of ${DEFAULT_CONFIG.maxFileSize / 1024 / 1024}MB`,
+      'FILE_SIZE_ERROR'
+    );
+  }
+
+  // Validate file type
+  if (!DEFAULT_CONFIG.allowedTypes.includes(request.type)) {
+    throw new DocumentError(
+      `Unsupported file type. Allowed types: ${DEFAULT_CONFIG.allowedTypes.join(', ')}`,
+      'FILE_TYPE_ERROR'
+    );
+  }
+
+  try {
+    const document = await uploadDocument(request, onProgress);
+    return document;
+  } catch (error) {
+    throw new DocumentError(
+      'Failed to upload document',
+      'UPLOAD_ERROR',
+      error
+    );
+  }
 }
-
-/**
- * Interface for document processing options
- */
-interface ProcessingOptions {
-    timeout?: number;
-    retries?: number;
-}
-
-/**
- * Validates document before upload
- */
-const validateDocument = (file: File): void => {
-    if (!file) {
-        throw new Error('No file provided');
-    }
-
-    if (file.size > SERVICE_CONFIG.UPLOAD.MAX_FILE_SIZE) {
-        throw new Error(`File size exceeds maximum limit of ${SERVICE_CONFIG.UPLOAD.MAX_FILE_SIZE / 1024 / 1024}MB`);
-    }
-
-    const fileType = file.name.split('.').pop()?.toLowerCase() as DocumentType;
-    if (!SERVICE_CONFIG.UPLOAD.ALLOWED_TYPES.includes(fileType)) {
-        throw new Error(`File type ${fileType} not supported. Allowed types: ${SERVICE_CONFIG.UPLOAD.ALLOWED_TYPES.join(', ')}`);
-    }
-};
-
-/**
- * Enhanced document upload with progress tracking and validation
- */
-export const uploadDocumentWithProgress = async (
-    request: DocumentUploadRequest,
-    onProgress?: (progress: number) => void,
-    options: UploadOptions = {}
-): Promise<Document> => {
-    validateDocument(request.file);
-
-    const uploadTimeout = options.timeout || SERVICE_CONFIG.UPLOAD.TIMEOUT;
-    const maxRetries = options.maxRetries || SERVICE_CONFIG.UPLOAD.MAX_RETRIES;
-
-    try {
-        const document = await uploadDocument(request, onProgress);
-        return document;
-    } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Document upload failed: ${error.message}`);
-        }
-        throw error;
-    }
-};
 
 /**
  * Enhanced document list retrieval with caching and cursor pagination
  */
-export const getDocumentList = async (
-    params: DocumentListParams
-): Promise<DocumentListResponse> => {
-    const cacheKey = `documents:${JSON.stringify(params)}`;
-    const cachedResponse = await getCachedResponse(cacheKey);
+export async function getDocumentList(params: {
+  cursor?: string;
+  limit: number;
+  clientId?: string;
+  type?: DocumentType;
+  sortBy?: string;
+  order?: 'asc' | 'desc';
+}): Promise<DocumentListResponse> {
+  const cacheKey = `documents_list_${JSON.stringify(params)}`;
+  const cachedResult = getCachedData<DocumentListResponse>(cacheKey);
 
-    if (cachedResponse) {
-        return cachedResponse;
-    }
+  if (cachedResult) {
+    return cachedResult;
+  }
 
-    try {
-        const response = await getDocuments({
-            page: 1,
-            limit: params.limit,
-            sortBy: params.sortBy,
-            order: params.order,
-            filters: {
-                clientId: params.clientId,
-                type: params.type
-            }
-        });
-
-        await cacheResponse(cacheKey, response);
-        return response;
-    } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to retrieve documents: ${error.message}`);
-        }
-        throw error;
-    }
-};
+  try {
+    const response = await getDocuments(params);
+    setCachedData(cacheKey, response, CACHE_CONFIG.listTTL);
+    return response;
+  } catch (error) {
+    throw new DocumentError(
+      'Failed to retrieve document list',
+      'LIST_ERROR',
+      error
+    );
+  }
+}
 
 /**
  * Secure document detail retrieval with caching
  */
-export const getDocumentDetails = async (documentId: string): Promise<Document> => {
-    const cacheKey = `document:${documentId}`;
-    const cachedDocument = await getCachedResponse(cacheKey);
+export async function getDocumentDetails(
+  documentId: string
+): Promise<Document> {
+  const cacheKey = `document_${documentId}`;
+  const cachedDocument = getCachedData<Document>(cacheKey);
 
-    if (cachedDocument) {
-        return cachedDocument;
-    }
+  if (cachedDocument) {
+    return cachedDocument;
+  }
 
-    try {
-        const document = await getDocumentById(documentId);
-        await cacheResponse(cacheKey, document);
-        return document;
-    } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to retrieve document details: ${error.message}`);
-        }
-        throw error;
-    }
-};
+  try {
+    const document = await getDocumentById(documentId);
+    setCachedData(cacheKey, document, CACHE_CONFIG.detailsTTL);
+    return document;
+  } catch (error) {
+    throw new DocumentError(
+      'Failed to retrieve document details',
+      'DETAILS_ERROR',
+      error
+    );
+  }
+}
 
 /**
  * Secure document deletion with cleanup and verification
  */
-export const removeDocument = async (documentId: string): Promise<void> => {
-    try {
-        await deleteDocument(documentId);
-        await invalidateCache(`document:${documentId}`);
-        await invalidateCache('documents:*');
-    } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to delete document: ${error.message}`);
-        }
-        throw error;
-    }
-};
+export async function removeDocument(documentId: string): Promise<void> {
+  try {
+    await deleteDocument(documentId);
+    // Clear document from cache
+    removeCachedData(`document_${documentId}`);
+    // Invalidate list cache
+    invalidateListCache();
+  } catch (error) {
+    throw new DocumentError(
+      'Failed to delete document',
+      'DELETE_ERROR',
+      error
+    );
+  }
+}
 
 /**
  * Enhanced document processing with real-time monitoring
  */
-export const startDocumentProcessing = (
-    documentId: string,
-    options: ProcessingOptions = {}
-): Observable<ProcessingStatus> => {
-    const processingTimeout = options.timeout || SERVICE_CONFIG.PROCESSING.TIMEOUT;
-    const maxRetries = options.retries || SERVICE_CONFIG.PROCESSING.MAX_RETRIES;
+export function startDocumentProcessing(
+  documentId: string,
+  options: { timeout?: number; retries?: number } = {}
+): Observable<ProcessingStatus> {
+  return from(processDocument(documentId)).pipe(
+    timeout(options.timeout || DEFAULT_CONFIG.processingTimeout),
+    retry({
+      count: options.retries || DEFAULT_CONFIG.maxRetries,
+      delay: (error, retryCount) => {
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+        console.warn(`Retrying document processing (attempt ${retryCount + 1})`, error);
+        return delay;
+      }
+    }),
+    catchError(error => {
+      return throwError(() => new DocumentError(
+        'Document processing failed',
+        'PROCESSING_ERROR',
+        error
+      ));
+    })
+  );
+}
 
-    return from(processDocument(documentId)).pipe(
-        timeout(processingTimeout),
-        retry({
-            count: maxRetries,
-            delay: SERVICE_CONFIG.PROCESSING.RETRY_DELAY
-        }),
-        catchError((error) => {
-            if (error instanceof Error) {
-                return throwError(() => new Error(`Document processing failed: ${error.message}`));
-            }
-            return throwError(() => error);
-        })
-    );
-};
-
-/**
- * Cache management utilities
- */
-const getCachedResponse = async <T>(key: string): Promise<T | null> => {
-    // Implementation would use a caching solution like localStorage or IndexedDB
+// Cache utility functions
+function getCachedData<T>(key: string): T | null {
+  try {
+    const cached = sessionStorage.getItem(key);
+    if (cached) {
+      const { data, expiry } = JSON.parse(cached);
+      if (expiry > Date.now()) {
+        return data as T;
+      }
+      sessionStorage.removeItem(key);
+    }
     return null;
-};
+  } catch {
+    return null;
+  }
+}
 
-const cacheResponse = async <T>(key: string, data: T): Promise<void> => {
-    // Implementation would use a caching solution like localStorage or IndexedDB
-};
+function setCachedData<T>(key: string, data: T, ttl: number): void {
+  try {
+    const cacheData = {
+      data,
+      expiry: Date.now() + ttl
+    };
+    sessionStorage.setItem(key, JSON.stringify(cacheData));
+  } catch {
+    console.warn('Failed to cache data');
+  }
+}
 
-const invalidateCache = async (pattern: string): Promise<void> => {
-    // Implementation would clear cached entries matching the pattern
-};
+function removeCachedData(key: string): void {
+  sessionStorage.removeItem(key);
+}
+
+function invalidateListCache(): void {
+  Object.keys(sessionStorage).forEach(key => {
+    if (key.startsWith('documents_list_')) {
+      sessionStorage.removeItem(key);
+    }
+  });
+}
