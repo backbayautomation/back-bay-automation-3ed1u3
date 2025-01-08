@@ -1,4 +1,4 @@
-# Terraform configuration for staging environment of AI-powered Product Catalog Search System
+# Terraform configuration for staging environment
 # Version: 1.0
 # Provider Versions:
 # - terraform: ~> 1.0
@@ -12,7 +12,7 @@ terraform {
     resource_group_name  = "rg-terraform-state"
     storage_account_name = "stterraformstaging"
     container_name      = "tfstate"
-    key                 = "staging.terraform.tfstate"
+    key                = "staging.terraform.tfstate"
   }
 
   required_providers {
@@ -102,15 +102,15 @@ module "main" {
     address_space = ["10.1.0.0/16"]
     subnets = {
       aks = {
-        name                     = "snet-aks"
-        address_prefix          = "10.1.0.0/22"
-        service_endpoints       = ["Microsoft.Sql", "Microsoft.Storage"]
+        name                = "snet-aks"
+        address_prefix      = "10.1.0.0/22"
+        service_endpoints   = ["Microsoft.Sql", "Microsoft.Storage"]
         enforce_private_link_endpoint_network_policies = true
       }
       db = {
-        name                     = "snet-db"
-        address_prefix          = "10.1.4.0/24"
-        service_endpoints       = ["Microsoft.Sql"]
+        name                = "snet-db"
+        address_prefix      = "10.1.4.0/24"
+        service_endpoints   = ["Microsoft.Sql"]
         enforce_private_link_endpoint_network_policies = true
       }
     }
