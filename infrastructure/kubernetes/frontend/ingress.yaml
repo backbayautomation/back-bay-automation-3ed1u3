@@ -1,0 +1,78 @@
+# Kubernetes Ingress manifest for frontend application
+# Version: networking.k8s.io/v1 (Kubernetes v1.25+)
+# Purpose: External traffic routing and load balancing for React-based dual portal system
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-ingress
+  namespace: catalog-search
+  labels:
+    app: frontend
+    component: web
+    environment: production
+  annotations:
+    # Ingress controller configuration
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    
+    # Request size and timeout configurations
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    
+    # SSL/TLS configuration with Let's Encrypt
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # CORS policy configuration
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://*.catalog-search.com"
+    
+    # Security headers and HTTPS enforcement
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    
+    # Monitoring configuration
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "10254"
+
+spec:
+  # TLS configuration for secure communication
+  tls:
+    - hosts:
+        - catalog-search.com
+        - "*.catalog-search.com"
+      secretName: frontend-tls
+  
+  # Routing rules for different portals
+  rules:
+    # Client portal routing
+    - host: catalog-search.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+    
+    # Admin portal routing
+    - host: admin.catalog-search.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
