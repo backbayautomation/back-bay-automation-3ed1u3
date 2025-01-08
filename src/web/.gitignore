@@ -44,10 +44,6 @@ yarn-error.log*
 *.bak
 *.sublime-workspace
 *.sublime-project
-.project
-.settings/
-.classpath
-.factorypath
 
 # OS Files
 .DS_Store
@@ -58,7 +54,6 @@ yarn-error.log*
 ehthumbs.db
 Thumbs.db
 Desktop.ini
-$RECYCLE.BIN/
 
 # Temporary files
 *.tmp
@@ -70,8 +65,4 @@ $RECYCLE.BIN/
 .eslintcache
 .stylelintcache
 *.tsbuildinfo
-.next/
-.nuxt/
-.out/
-.vercel/
-.now/
+.env.*.local
