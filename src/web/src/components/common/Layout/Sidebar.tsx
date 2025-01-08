@@ -1,39 +1,40 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'; // v18.2.0
-import { 
-  Drawer, 
-  List, 
-  ListItem, 
-  ListItemIcon, 
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Drawer,
+  List,
+  ListItem,
+  ListItemIcon,
   ListItemText,
   ListItemButton,
   Collapse,
   IconButton,
   useMediaQuery,
   useTheme as useMuiTheme,
-  Box,
-  Divider
+  styled,
 } from '@mui/material'; // v5.14.0
-import { 
-  ExpandLess, 
-  ExpandMore, 
-  ChevronLeft 
+import {
+  ExpandLess,
+  ExpandMore,
+  ChevronLeft,
+  ChevronRight,
 } from '@mui/icons-material'; // v5.14.0
-import { withErrorBoundary } from 'react-error-boundary'; // v4.0.0
+import { ErrorBoundary } from 'react-error-boundary'; // v4.0.0
 import { useTheme } from '../../../contexts/ThemeContext';
 
-// Constants for component configuration
+// Constants for configuration
 const DRAWER_WIDTH = 240;
 const MOBILE_BREAKPOINT = 768;
 const TRANSITION_DURATION = 225;
 const MIN_TOUCH_TARGET = 44;
 
+// ARIA labels for accessibility
 const ARIA_LABELS = {
   SIDEBAR: 'Main Navigation',
   TOGGLE: 'Toggle Navigation',
-  SUBMENU: 'Expand Submenu'
+  SUBMENU: 'Expand Submenu',
 };
 
-// Interface definitions
+// Props interface for the Sidebar component
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
@@ -45,6 +46,7 @@ interface SidebarProps {
   customStyles?: React.CSSProperties;
 }
 
+// Interface for navigation items
 interface NavigationItem {
   id: string;
   label: string;
@@ -56,31 +58,64 @@ interface NavigationItem {
   metadata?: Record<string, unknown>;
 }
 
-// Custom hook for navigation event handling
-const useNavigationHandlers = (config: {
-  onNavigate?: (path: string) => void;
-  onClose: () => void;
-}) => {
-  const handleNavigation = useCallback((path: string) => {
-    config.onNavigate?.(path);
-    config.onClose();
-  }, [config]);
+// Styled components for enhanced theming
+const StyledDrawer = styled(Drawer)(({ theme }) => ({
+  width: DRAWER_WIDTH,
+  flexShrink: 0,
+  '& .MuiDrawer-paper': {
+    width: DRAWER_WIDTH,
+    boxSizing: 'border-box',
+    backgroundColor: theme.palette.background.paper,
+    borderRight: `1px solid ${theme.palette.divider}`,
+    transition: theme.transitions.create(['width', 'margin'], {
+      easing: theme.transitions.easing.sharp,
+      duration: TRANSITION_DURATION,
+    }),
+  },
+  [theme.breakpoints.down('md')]: {
+    width: '100%',
+    '& .MuiDrawer-paper': {
+      width: '100%',
+    },
+  },
+}));
 
-  const handleKeyboardNavigation = useCallback((
-    event: React.KeyboardEvent,
-    path: string
-  ) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      handleNavigation(path);
-    }
-  }, [handleNavigation]);
+const StyledListItemButton = styled(ListItemButton)(({ theme }) => ({
+  minHeight: MIN_TOUCH_TARGET,
+  padding: theme.spacing(1, 2),
+  '&:hover': {
+    backgroundColor: theme.palette.action.hover,
+  },
+  '&:focus-visible': {
+    outline: `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: '-2px',
+  },
+}));
 
-  return { handleNavigation, handleKeyboardNavigation };
+// Error Fallback component
+const SidebarErrorFallback = ({ error }: { error: Error }) => (
+  <div role="alert" style={{ padding: '1rem' }}>
+    <h3>Navigation Error</h3>
+    <pre>{error.message}</pre>
+  </div>
+);
+
+// Custom hook for navigation handlers
+const useNavigationHandlers = (
+  onNavigate?: (path: string) => void,
+  onClose?: () => void
+) => {
+  return useCallback(
+    (path: string) => {
+      onNavigate?.(path);
+      onClose?.();
+    },
+    [onNavigate, onClose]
+  );
 };
 
 // Main Sidebar component
-const SidebarComponent: React.FC<SidebarProps> = ({
+const Sidebar: React.FC<SidebarProps> = ({
   isOpen,
   onClose,
   items,
@@ -88,172 +123,128 @@ const SidebarComponent: React.FC<SidebarProps> = ({
   persistent = false,
   allowedRoles = [],
   onNavigate,
-  customStyles
+  customStyles,
 }) => {
-  const { theme, isDarkMode } = useTheme();
   const muiTheme = useMuiTheme();
-  const isMobile = useMediaQuery(`(max-width:${MOBILE_BREAKPOINT}px)`);
+  const { isDarkMode } = useTheme();
+  const isMobile = useMediaQuery(muiTheme.breakpoints.down('md'));
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
-  const { handleNavigation, handleKeyboardNavigation } = useNavigationHandlers({ onNavigate, onClose });
+  const handleNavigation = useNavigationHandlers(onNavigate, onClose);
 
-  // Filter navigation items based on roles
+  // Filter items based on roles
   const filteredItems = useMemo(() => {
-    return items.filter(item => {
+    return items.filter((item) => {
       if (!item.roles || item.roles.length === 0) return true;
-      return item.roles.some(role => allowedRoles.includes(role));
+      return item.roles.some((role) => allowedRoles.includes(role));
     });
   }, [items, allowedRoles]);
 
-  // Handle submenu expansion
+  // Handle item expansion
   const handleExpand = useCallback((itemId: string) => {
-    setExpandedItems(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(itemId)) {
-        newSet.delete(itemId);
+    setExpandedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) {
+        next.delete(itemId);
       } else {
-        newSet.add(itemId);
+        next.add(itemId);
       }
-      return newSet;
+      return next;
     });
   }, []);
 
-  // Reset expanded items on mobile when closing
-  useEffect(() => {
-    if (!isOpen && isMobile) {
-      setExpandedItems(new Set());
-    }
-  }, [isOpen, isMobile]);
+  // Handle keyboard navigation
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent, path: string) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        handleNavigation(path);
+      }
+    },
+    [handleNavigation]
+  );
 
   // Render navigation items recursively
-  const renderNavItems = (navItems: NavigationItem[], level = 0) => {
-    return navItems.map(item => {
-      const hasChildren = item.children && item.children.length > 0;
-      const isExpanded = expandedItems.has(item.id);
+  const renderNavItems = useCallback(
+    (navItems: NavigationItem[], level = 0) => {
+      return navItems.map((item) => {
+        const hasChildren = item.children && item.children.length > 0;
+        const isExpanded = expandedItems.has(item.id);
 
-      return (
-        <React.Fragment key={item.id}>
-          <ListItem
-            disablePadding
-            sx={{
-              pl: level * 2,
-              minHeight: MIN_TOUCH_TARGET
-            }}
-          >
-            <ListItemButton
-              onClick={() => hasChildren ? handleExpand(item.id) : handleNavigation(item.path)}
-              onKeyDown={(e) => handleKeyboardNavigation(e, item.path)}
-              disabled={item.disabled}
-              aria-expanded={hasChildren ? isExpanded : undefined}
-              sx={{
-                minHeight: MIN_TOUCH_TARGET,
-                '&:hover': {
-                  backgroundColor: theme.palette.action.hover
+        return (
+          <React.Fragment key={item.id}>
+            <ListItem
+              disablePadding
+              sx={{ pl: level * 2 }}
+              aria-disabled={item.disabled}
+            >
+              <StyledListItemButton
+                onClick={() =>
+                  hasChildren ? handleExpand(item.id) : handleNavigation(item.path)
                 }
-              }}
-            >
-              {item.icon && (
-                <ListItemIcon sx={{ minWidth: MIN_TOUCH_TARGET }}>
-                  {item.icon}
-                </ListItemIcon>
-              )}
-              <ListItemText primary={item.label} />
-              {hasChildren && (
-                <IconButton
-                  aria-label={ARIA_LABELS.SUBMENU}
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleExpand(item.id);
+                onKeyDown={(e) => handleKeyDown(e, item.path)}
+                disabled={item.disabled}
+                aria-expanded={hasChildren ? isExpanded : undefined}
+              >
+                <ListItemIcon>{item.icon}</ListItemIcon>
+                <ListItemText
+                  primary={item.label}
+                  primaryTypographyProps={{
+                    variant: 'body2',
+                    color: item.disabled ? 'text.disabled' : 'text.primary',
                   }}
-                >
-                  {isExpanded ? <ExpandLess /> : <ExpandMore />}
-                </IconButton>
-              )}
-            </ListItemButton>
-          </ListItem>
-          {hasChildren && (
-            <Collapse in={isExpanded} timeout="auto" unmountOnExit>
-              <List component="div" disablePadding>
-                {renderNavItems(item.children, level + 1)}
-              </List>
-            </Collapse>
-          )}
-        </React.Fragment>
-      );
-    });
-  };
-
-  const drawerContent = (
-    <Box
-      role="navigation"
-      aria-label={ARIA_LABELS.SIDEBAR}
-      sx={{
-        width: isMobile ? '100%' : DRAWER_WIDTH,
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        bgcolor: theme.palette.background.paper,
-        ...customStyles
-      }}
-    >
-      {!persistent && (
-        <>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 1 }}>
-            <IconButton
-              onClick={onClose}
-              aria-label={ARIA_LABELS.TOGGLE}
-              sx={{ minHeight: MIN_TOUCH_TARGET, minWidth: MIN_TOUCH_TARGET }}
-            >
-              <ChevronLeft />
-            </IconButton>
-          </Box>
-          <Divider />
-        </>
-      )}
-      <List
-        component="nav"
-        sx={{
-          width: '100%',
-          p: theme.spacing(2),
-          overflowY: 'auto',
-          overflowX: 'hidden'
-        }}
-      >
-        {renderNavItems(filteredItems)}
-      </List>
-    </Box>
+                />
+                {hasChildren && (isExpanded ? <ExpandLess /> : <ExpandMore />)}
+              </StyledListItemButton>
+            </ListItem>
+            {hasChildren && (
+              <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                <List component="div" disablePadding>
+                  {renderNavItems(item.children, level + 1)}
+                </List>
+              </Collapse>
+            )}
+          </React.Fragment>
+        );
+      });
+    },
+    [expandedItems, handleExpand, handleNavigation, handleKeyDown]
   );
+
+  // Effect for mobile handling
+  useEffect(() => {
+    if (!isMobile && !persistent) {
+      setExpandedItems(new Set());
+    }
+  }, [isMobile, persistent]);
 
   return (
-    <Drawer
-      variant={variant}
-      open={isOpen}
-      onClose={onClose}
-      anchor="left"
-      sx={{
-        width: DRAWER_WIDTH,
-        flexShrink: 0,
-        '& .MuiDrawer-paper': {
-          width: DRAWER_WIDTH,
-          boxSizing: 'border-box',
-          transition: muiTheme.transitions.create(['width', 'margin'], {
-            easing: muiTheme.transitions.easing.sharp,
-            duration: TRANSITION_DURATION
-          })
-        }
-      }}
-    >
-      {drawerContent}
-    </Drawer>
+    <ErrorBoundary FallbackComponent={SidebarErrorFallback}>
+      <StyledDrawer
+        variant={variant}
+        open={isOpen}
+        onClose={onClose}
+        anchor="left"
+        sx={customStyles}
+        PaperProps={{
+          elevation: 2,
+          'aria-label': ARIA_LABELS.SIDEBAR,
+        }}
+      >
+        {isMobile && (
+          <IconButton
+            onClick={onClose}
+            aria-label={ARIA_LABELS.TOGGLE}
+            sx={{ m: 1, alignSelf: 'flex-end' }}
+          >
+            {isDarkMode ? <ChevronLeft /> : <ChevronRight />}
+          </IconButton>
+        )}
+        <List component="nav" aria-label={ARIA_LABELS.SIDEBAR}>
+          {renderNavItems(filteredItems)}
+        </List>
+      </StyledDrawer>
+    </ErrorBoundary>
   );
 };
-
-// Error boundary wrapper
-const Sidebar = withErrorBoundary(SidebarComponent, {
-  fallback: <div>Error loading navigation sidebar</div>,
-  onError: (error) => {
-    console.error('Sidebar Error:', error);
-  }
-});
 
 export default Sidebar;
