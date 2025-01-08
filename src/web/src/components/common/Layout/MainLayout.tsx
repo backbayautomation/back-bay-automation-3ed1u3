@@ -28,77 +28,50 @@ const MainContainer = styled(Box)(({ theme }) => ({
   backgroundColor: theme.palette.background.default,
   transition: theme.transitions.create(['padding-left', 'margin-left'], {
     duration: LAYOUT_TRANSITIONS.duration,
-    easing: theme.transitions.easing.sharp,
+    easing: LAYOUT_TRANSITIONS.easing,
   }),
-  '@media (prefers-reduced-motion: reduce)': {
-    transition: 'none',
-  },
 }));
 
 const ContentContainer = styled(Container)(({ theme }) => ({
   flexGrow: 1,
   padding: theme.spacing(3),
-  marginTop: '64px', // Header height
-  minHeight: `calc(100vh - 64px - ${theme.spacing(6)})`, // Account for header and footer
-  transition: theme.transitions.create('margin', {
+  marginTop: 64, // Header height
+  minHeight: `calc(100vh - 64px - 48px)`, // Viewport - Header - Footer
+  transition: theme.transitions.create(['margin', 'width'], {
     duration: LAYOUT_TRANSITIONS.duration,
-    easing: theme.transitions.easing.sharp,
+    easing: LAYOUT_TRANSITIONS.easing,
   }),
   [theme.breakpoints.down('sm')]: {
     padding: theme.spacing(2),
   },
-  '@media (prefers-reduced-motion: reduce)': {
-    transition: 'none',
-  },
+  position: 'relative',
+  zIndex: 1,
 }));
 
 // Error boundary for layout component
-class LayoutErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
+class LayoutErrorBoundary extends React.Component<{ children: React.ReactNode }> {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Layout Error:', error, errorInfo);
+    // TODO: Add error reporting service integration
   }
 
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error): void {
-    console.error('Layout Error:', error);
-  }
-
-  render(): React.ReactNode {
-    if (this.state.hasError) {
-      return (
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100vh',
-            p: 3,
-          }}
-        >
-          <h1>Something went wrong with the layout. Please refresh the page.</h1>
-        </Box>
-      );
-    }
+  render() {
     return this.props.children;
   }
 }
 
-// Memoized MainLayout component
-const MainLayout: React.FC<MainLayoutProps> = React.memo(({
+// Main layout component with memoization for performance
+const MainLayout = React.memo<MainLayoutProps>(({
   children,
   portalType,
   className,
-  analyticsEnabled = false,
+  analyticsEnabled = false
 }) => {
-  // State and responsive hooks
+  // State and hooks
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const isMobile = useMediaQuery(`(max-width:${MOBILE_BREAKPOINT}px)`);
 
-  // Reset sidebar state on mobile/desktop switch
+  // Set initial sidebar state based on viewport
   useEffect(() => {
     setIsSidebarOpen(!isMobile);
   }, [isMobile]);
@@ -108,28 +81,24 @@ const MainLayout: React.FC<MainLayoutProps> = React.memo(({
     setIsSidebarOpen(prev => !prev);
   }, []);
 
-  // Analytics tracking for layout interactions
+  // Track layout interactions if analytics enabled
   useEffect(() => {
     if (analyticsEnabled) {
-      // Track layout mount
-      const trackLayoutMount = async () => {
-        try {
-          await fetch('/api/analytics/layout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event: 'layout_mount',
-              portalType,
-              viewport: isMobile ? 'mobile' : 'desktop',
-            }),
-          });
-        } catch (error) {
-          console.error('Analytics Error:', error);
-        }
+      // TODO: Implement layout analytics tracking
+      const trackLayoutInteraction = (action: string) => {
+        console.info('Layout Interaction:', action);
       };
-      trackLayoutMount();
+
+      trackLayoutInteraction('layout_mounted');
+      return () => trackLayoutInteraction('layout_unmounted');
     }
-  }, [analyticsEnabled, portalType, isMobile]);
+  }, [analyticsEnabled]);
+
+  // Dynamic styles based on sidebar state
+  const getLayoutStyles = () => ({
+    marginLeft: !isMobile && isSidebarOpen ? `${DRAWER_WIDTH}px` : 0,
+    width: !isMobile && isSidebarOpen ? `calc(100% - ${DRAWER_WIDTH}px)` : '100%',
+  });
 
   return (
     <LayoutErrorBoundary>
@@ -143,20 +112,16 @@ const MainLayout: React.FC<MainLayoutProps> = React.memo(({
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           variant={isMobile ? 'temporary' : 'persistent'}
-          items={[]} // Navigation items should be passed from parent
+          items={[]} // Navigation items to be passed from parent
           persistent={!isMobile}
+          allowedRoles={[]} // Roles to be passed from parent
         />
 
         <ContentContainer
           maxWidth={false}
-          sx={{
-            marginLeft: {
-              sm: isSidebarOpen ? `${DRAWER_WIDTH}px` : 0,
-            },
-            width: {
-              sm: isSidebarOpen ? `calc(100% - ${DRAWER_WIDTH}px)` : '100%',
-            },
-          }}
+          sx={getLayoutStyles()}
+          component="main"
+          role="main"
         >
           {children}
         </ContentContainer>
