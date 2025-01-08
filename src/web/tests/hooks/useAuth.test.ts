@@ -11,7 +11,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { AuthContext } from '../../src/contexts/AuthContext';
 import type { AuthState } from '../../src/types/auth';
 
-// Mock initial authentication state
+// Mock initial auth state
 const mockAuthState: AuthState = {
   isAuthenticated: false,
   isLoading: false,
@@ -24,12 +24,12 @@ const mockAuthState: AuthState = {
 // Mock login credentials
 const mockLoginCredentials = {
   email: 'test@example.com',
-  password: 'Password123!'
+  password: 'password123'
 };
 
-// Mock authentication tokens
+// Mock tokens
 const mockTokens = {
-  accessToken: 'mock.access.token',
+  accessToken: 'mock.jwt.token',
   refreshToken: 'mock.refresh.token',
   expiresIn: 3600,
   tokenType: 'Bearer'
@@ -46,30 +46,36 @@ const mockUserProfile = {
   clientId: '123e4567-e89b-12d3-a456-426614174002',
   organization: {
     id: '123e4567-e89b-12d3-a456-426614174001',
-    name: 'Test Organization'
+    name: 'Test Org'
   }
 };
 
 /**
- * Creates a mock authentication context wrapper with configurable state and handlers
+ * Creates a mock authentication context wrapper with configurable initial state
+ * and mock functions for testing
  */
-const createAuthWrapper = (
+const mockAuthContext = (
   initialState: Partial<AuthState> = {},
-  mockHandlers: Partial<Record<'login' | 'logout' | 'refreshToken' | 'clearError', jest.Mock>> = {}
+  mockHandlers: Partial<Record<string, jest.Mock>> = {}
 ): React.FC => {
   const defaultState: AuthState = {
     ...mockAuthState,
     ...initialState
   };
 
+  const mockLogin = jest.fn();
+  const mockLogout = jest.fn();
+  const mockRefreshToken = jest.fn();
+  const mockClearError = jest.fn();
+
   return ({ children }: { children: React.ReactNode }) => (
     <AuthContext.Provider
       value={{
         state: defaultState,
-        login: mockHandlers.login || jest.fn(),
-        logout: mockHandlers.logout || jest.fn(),
-        refreshToken: mockHandlers.refreshToken || jest.fn(),
-        clearError: mockHandlers.clearError || jest.fn()
+        login: mockHandlers.login || mockLogin,
+        logout: mockHandlers.logout || mockLogout,
+        refreshToken: mockHandlers.refreshToken || mockRefreshToken,
+        clearError: mockHandlers.clearError || mockClearError
       }}
     >
       {children}
@@ -78,171 +84,172 @@ const createAuthWrapper = (
 };
 
 describe('useAuth Hook', () => {
-  // Clear all mocks before each test
-  beforeEach(() => {
+  afterEach(() => {
     jest.clearAllMocks();
   });
 
   it('should throw error when used outside AuthContext', () => {
-    // Attempt to render hook without context
     const { result } = renderHook(() => useAuth());
-
-    // Verify error is thrown with correct message
     expect(result.error).toEqual(
-      new Error('useAuth hook must be used within an AuthProvider component. Please ensure your component is wrapped with AuthProvider.')
+      new Error('useAuth must be used within an AuthProvider. Ensure your component is wrapped in the AuthProvider component.')
     );
   });
 
-  it('should return current authentication state', () => {
-    // Create wrapper with mock state
-    const wrapper = createAuthWrapper({
-      isAuthenticated: true,
+  it('should provide initial authentication state', () => {
+    const wrapper = mockAuthContext();
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
+    expect(result.current.tokens).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  it('should handle successful login flow', async () => {
+    const mockLoginFn = jest.fn().mockResolvedValue({
       user: mockUserProfile,
       tokens: mockTokens
     });
 
-    // Render hook with wrapper
+    const wrapper = mockAuthContext({}, { login: mockLoginFn });
     const { result } = renderHook(() => useAuth(), { wrapper });
 
-    // Verify state is returned correctly
+    await act(async () => {
+      await result.current.login(mockLoginCredentials);
+    });
+
+    expect(mockLoginFn).toHaveBeenCalledWith(mockLoginCredentials);
     expect(result.current.isAuthenticated).toBe(true);
     expect(result.current.user).toEqual(mockUserProfile);
     expect(result.current.tokens).toEqual(mockTokens);
   });
 
-  it('should handle successful login flow', async () => {
-    // Create mock login handler
-    const mockLogin = jest.fn().mockResolvedValue({
-      user: mockUserProfile,
-      tokens: mockTokens
-    });
-
-    // Create wrapper with mock handlers
-    const wrapper = createAuthWrapper({}, { login: mockLogin });
-
-    // Render hook with wrapper
-    const { result } = renderHook(() => useAuth(), { wrapper });
-
-    // Attempt login
-    await act(async () => {
-      await result.current.login(mockLoginCredentials);
-    });
-
-    // Verify login was called with correct credentials
-    expect(mockLogin).toHaveBeenCalledWith(mockLoginCredentials);
-  });
-
-  it('should handle login failure', async () => {
-    // Create mock login handler that throws error
+  it('should handle login failure with proper error state', async () => {
     const mockError = new Error('Invalid credentials');
-    const mockLogin = jest.fn().mockRejectedValue(mockError);
+    const mockLoginFn = jest.fn().mockRejectedValue(mockError);
 
-    // Create wrapper with mock handlers
-    const wrapper = createAuthWrapper({}, { login: mockLogin });
-
-    // Render hook with wrapper
+    const wrapper = mockAuthContext({}, { login: mockLoginFn });
     const { result } = renderHook(() => useAuth(), { wrapper });
 
-    // Attempt login and verify error handling
-    await expect(
-      act(async () => {
+    await act(async () => {
+      try {
         await result.current.login(mockLoginCredentials);
-      })
-    ).rejects.toThrow(mockError);
+      } catch (error) {
+        expect(error).toBe(mockError);
+      }
+    });
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.error).toBe('Invalid credentials');
   });
 
-  it('should handle logout flow', async () => {
-    // Create mock logout handler
-    const mockLogout = jest.fn().mockResolvedValue(undefined);
-
-    // Create wrapper with mock handlers
-    const wrapper = createAuthWrapper(
-      { isAuthenticated: true, user: mockUserProfile },
-      { logout: mockLogout }
+  it('should handle logout successfully', async () => {
+    const mockLogoutFn = jest.fn().mockResolvedValue(undefined);
+    const wrapper = mockAuthContext(
+      {
+        isAuthenticated: true,
+        user: mockUserProfile,
+        tokens: mockTokens
+      },
+      { logout: mockLogoutFn }
     );
 
-    // Render hook with wrapper
     const { result } = renderHook(() => useAuth(), { wrapper });
 
-    // Attempt logout
     await act(async () => {
       await result.current.logout();
     });
 
-    // Verify logout was called
-    expect(mockLogout).toHaveBeenCalled();
+    expect(mockLogoutFn).toHaveBeenCalled();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.user).toBeNull();
+    expect(result.current.tokens).toBeNull();
   });
 
-  it('should handle token refresh', async () => {
-    // Create mock refresh handler
-    const mockRefresh = jest.fn().mockResolvedValue({
+  it('should handle token refresh successfully', async () => {
+    const mockNewTokens = {
       ...mockTokens,
-      accessToken: 'new.access.token'
-    });
+      accessToken: 'new.jwt.token'
+    };
+    const mockRefreshFn = jest.fn().mockResolvedValue(mockNewTokens);
 
-    // Create wrapper with mock handlers
-    const wrapper = createAuthWrapper(
-      { isAuthenticated: true, tokens: mockTokens },
-      { refreshToken: mockRefresh }
+    const wrapper = mockAuthContext(
+      {
+        isAuthenticated: true,
+        tokens: mockTokens
+      },
+      { refreshToken: mockRefreshFn }
     );
 
-    // Render hook with wrapper
     const { result } = renderHook(() => useAuth(), { wrapper });
 
-    // Attempt token refresh
     await act(async () => {
       await result.current.refreshToken();
     });
 
-    // Verify refresh was called
-    expect(mockRefresh).toHaveBeenCalled();
+    expect(mockRefreshFn).toHaveBeenCalled();
+    expect(result.current.tokens).toEqual(mockNewTokens);
   });
 
-  it('should handle error clearing', () => {
-    // Create mock clear error handler
-    const mockClearError = jest.fn();
+  it('should handle token refresh failure', async () => {
+    const mockError = new Error('Token refresh failed');
+    const mockRefreshFn = jest.fn().mockRejectedValue(mockError);
 
-    // Create wrapper with mock handlers and error state
-    const wrapper = createAuthWrapper(
-      { error: 'Test error' },
-      { clearError: mockClearError }
+    const wrapper = mockAuthContext(
+      {
+        isAuthenticated: true,
+        tokens: mockTokens
+      },
+      { refreshToken: mockRefreshFn }
     );
 
-    // Render hook with wrapper
     const { result } = renderHook(() => useAuth(), { wrapper });
 
-    // Attempt to clear error
+    await act(async () => {
+      try {
+        await result.current.refreshToken();
+      } catch (error) {
+        expect(error).toBe(mockError);
+      }
+    });
+
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.tokens).toBeNull();
+    expect(result.current.error).toBe('Token refresh failed');
+  });
+
+  it('should clear error state', () => {
+    const mockClearErrorFn = jest.fn();
+    const wrapper = mockAuthContext(
+      { error: 'Test error' },
+      { clearError: mockClearErrorFn }
+    );
+
+    const { result } = renderHook(() => useAuth(), { wrapper });
+
     act(() => {
       result.current.clearError();
     });
 
-    // Verify clear error was called
-    expect(mockClearError).toHaveBeenCalled();
+    expect(mockClearErrorFn).toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
   });
 
-  it('should handle loading states', async () => {
-    // Create mock login handler with delay
-    const mockLogin = jest.fn().mockImplementation(
+  it('should handle loading state during authentication', async () => {
+    const mockLoginFn = jest.fn().mockImplementation(
       () => new Promise(resolve => setTimeout(resolve, 100))
     );
 
-    // Create wrapper with mock handlers
-    const wrapper = createAuthWrapper({ isLoading: true }, { login: mockLogin });
-
-    // Render hook with wrapper
+    const wrapper = mockAuthContext({ isLoading: true }, { login: mockLoginFn });
     const { result } = renderHook(() => useAuth(), { wrapper });
 
-    // Verify initial loading state
     expect(result.current.isLoading).toBe(true);
 
-    // Attempt login
     await act(async () => {
       await result.current.login(mockLoginCredentials);
     });
 
-    // Verify loading state after login
-    await waitFor(() => {
-      expect(result.current.isLoading).toBe(false);
-    });
+    expect(result.current.isLoading).toBe(false);
   });
 });
