@@ -1,0 +1,18 @@
+node_modules/**
+
+# Build outputs
+dist/**
+build/**
+
+# Test coverage
+coverage/**
+
+# Config files
+*.config.js
+
+# Type declarations
+vite-env.d.ts
+**/*.d.ts
+
+# Source maps
+**/*.js.map
