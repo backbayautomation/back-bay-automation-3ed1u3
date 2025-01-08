@@ -1,6 +1,6 @@
 /**
- * Barrel export file for layout components with comprehensive type definitions.
- * Provides consistent access to layout components for the dual-portal system.
+ * Barrel export file for layout components implementing the dual-portal system.
+ * Provides strongly-typed exports for all layout components with comprehensive documentation.
  * @version 1.0.0
  */
 
@@ -17,75 +17,44 @@ import type { SidebarProps } from './Sidebar';
 import MainLayout from './MainLayout';
 import type { MainLayoutProps } from './MainLayout';
 
-// Re-export components with proper type definitions
-export {
-  Header,
-  type HeaderProps,
-  Footer,
-  type FooterProps,
-  Sidebar,
-  type SidebarProps,
-  MainLayout,
-  type MainLayoutProps,
-};
+// Re-export components with comprehensive JSDoc documentation
 
 /**
- * Default export for convenient import of all layout components
- * @example
- * import Layout from './components/common/Layout';
- * const { Header, Footer, Sidebar, MainLayout } = Layout;
+ * Header component for the dual-portal system.
+ * Implements responsive navigation with user authentication and portal-specific controls.
+ * @component
  */
+export { Header };
+export type { HeaderProps };
+
+/**
+ * Footer component with WCAG 2.1 AA compliance and theme integration.
+ * Provides consistent layout termination across both admin and client portals.
+ * @component
+ */
+export { Footer };
+export type { FooterProps };
+
+/**
+ * Sidebar navigation component with role-based access control.
+ * Supports nested navigation, keyboard accessibility, and responsive behavior.
+ * @component
+ */
+export { Sidebar };
+export type { SidebarProps };
+
+/**
+ * Main layout component orchestrating the overall application structure.
+ * Manages responsive layout transitions and component composition for both portals.
+ * @component
+ */
+export { MainLayout };
+export type { MainLayoutProps };
+
+// Default export for convenient importing
 export default {
   Header,
   Footer,
   Sidebar,
   MainLayout,
 };
-
-// Type definitions for layout-specific interfaces
-export interface LayoutTheme {
-  spacing: (value: number) => string;
-  palette: {
-    background: {
-      default: string;
-      paper: string;
-    };
-    text: {
-      primary: string;
-      secondary: string;
-    };
-    divider: string;
-  };
-  transitions: {
-    create: (props: string[], options?: { duration?: number; easing?: string }) => string;
-  };
-  zIndex: {
-    appBar: number;
-    drawer: number;
-  };
-}
-
-/**
- * Common layout configuration constants
- */
-export const LAYOUT_CONSTANTS = {
-  DRAWER_WIDTH: 240,
-  HEADER_HEIGHT: 64,
-  FOOTER_HEIGHT: 48,
-  MOBILE_BREAKPOINT: 768,
-  TRANSITION_DURATION: 225,
-} as const;
-
-/**
- * Portal type definition for dual-portal system
- */
-export type PortalType = 'admin' | 'client';
-
-/**
- * Layout state interface for managing responsive behavior
- */
-export interface LayoutState {
-  isSidebarOpen: boolean;
-  isMobile: boolean;
-  portalType: PortalType;
-}
