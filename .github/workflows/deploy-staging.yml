@@ -1,0 +1,206 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+  deployments: write
+  environments: write
+  security-events: write
+
+concurrency:
+  group: staging
+  cancel-in-progress: true
+
+env:
+  ENVIRONMENT: staging
+  AZURE_CREDENTIALS: ${{ secrets.AZURE_STAGING_CREDENTIALS }}
+  ACR_NAME: ${{ secrets.STAGING_ACR_NAME }}
+  CLUSTER_NAME: ${{ secrets.STAGING_AKS_CLUSTER_NAME }}
+  RESOURCE_GROUP: ${{ secrets.STAGING_RESOURCE_GROUP }}
+  TF_WORKSPACE: staging
+  DEPLOY_TIMEOUT: 600
+  HEALTH_CHECK_RETRIES: 5
+  LOAD_TEST_DURATION: 300
+
+jobs:
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.app_url }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ env.AZURE_CREDENTIALS }}
+          enable-AzPSSession: true
+
+      - name: Initialize Terraform
+        working-directory: infrastructure/terraform/environments/staging
+        run: |
+          terraform init -backend-config="resource_group_name=${{ env.RESOURCE_GROUP }}"
+
+      - name: Select Terraform Workspace
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform workspace select ${{ env.TF_WORKSPACE }}
+
+      - name: Validate Terraform
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform validate
+
+      - name: Plan Infrastructure Changes
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform plan -out=tfplan
+
+      - name: Apply Infrastructure Changes
+        working-directory: infrastructure/terraform/environments/staging
+        run: terraform apply -auto-approve tfplan
+
+  build-and-push-images:
+    name: Build and Push Images
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          buildkitd-flags: --debug
+
+      - name: Login to Azure Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: src/backend
+          file: src/backend/Dockerfile
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:latest
+          cache-to: type=inline
+          build-args: |
+            ENVIRONMENT=staging
+
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: src/web
+          file: src/web/Dockerfile
+          push: true
+          tags: ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:latest
+          cache-to: type=inline
+          build-args: |
+            ENVIRONMENT=staging
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx
+          artifact-name: sbom.spdx
+          images: |
+            ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+            ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+
+  deploy-to-kubernetes:
+    name: Deploy to Kubernetes
+    needs: build-and-push-images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.27.3'
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ env.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.CLUSTER_NAME }}
+
+      - name: Deploy Blue Environment
+        run: |
+          kubectl apply -f infrastructure/kubernetes/backend/deployment-blue.yaml
+          kubectl apply -f infrastructure/kubernetes/frontend/deployment-blue.yaml
+          kubectl rollout status deployment/backend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl rollout status deployment/frontend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
+
+      - name: Run Integration Tests
+        run: |
+          for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
+            if curl -f https://staging-blue.example.com/health; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Execute Load Tests
+        run: |
+          k6 run load-tests/staging.js \
+            --duration ${{ env.LOAD_TEST_DURATION }}s \
+            --vus 50
+
+      - name: Switch Traffic
+        if: success()
+        run: |
+          kubectl apply -f infrastructure/kubernetes/ingress-blue.yaml
+          sleep 30
+          kubectl delete -f infrastructure/kubernetes/ingress-green.yaml
+
+      - name: Monitor Deployment Health
+        run: |
+          kubectl get events --sort-by='.lastTimestamp' -n staging
+          kubectl top pods -n staging
+          kubectl get pods,svc,ingress -n staging
+
+      - name: Rollback on Failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/backend-blue -n staging
+          kubectl rollout undo deployment/frontend-blue -n staging
+          kubectl apply -f infrastructure/kubernetes/ingress-green.yaml
+
+      - name: Update Deployment Status
+        if: always()
+        uses: chrnorm/deployment-status@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          environment-url: https://staging.example.com
+          state: ${{ job.status }}
+          deployment-id: ${{ github.event.deployment.id }}
