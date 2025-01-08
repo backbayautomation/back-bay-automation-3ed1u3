@@ -1,280 +1,269 @@
 """
 Comprehensive test suite for the vector search service implementation.
-Tests vector search functionality, tenant isolation, error handling, and performance monitoring.
+Tests vector similarity search, embedding indexing, caching, multi-tenant isolation,
+error handling, and performance monitoring.
 
 Version: 1.0.0
 """
 
 import pytest
 import numpy as np
-import uuid
+from uuid import uuid4
 from datetime import datetime
-from unittest.mock import Mock, patch
-from prometheus_client import Counter, Histogram, Gauge
+import fakeredis
+from prometheus_client import Counter, Histogram
 from tenacity import RetryError
 
 from app.services.vector_search import VectorSearchService
 from app.models.embedding import Embedding
 from app.models.chunk import Chunk
-from app.models.document import Document
 from app.constants import VectorSearchConfig
 
 # Test configuration constants
 VECTOR_DIMENSION = VectorSearchConfig.VECTOR_DIMENSION.value
 TEST_EMBEDDING_COUNT = 10
-SIMILARITY_THRESHOLD = VectorSearchConfig.SIMILARITY_THRESHOLD.value
+SIMILARITY_THRESHOLD = 0.8
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 CIRCUIT_BREAKER_THRESHOLD = 5
 METRICS_PREFIX = 'vector_search_test'
 
+# Initialize test metrics
+SEARCH_LATENCY = Histogram(f'{METRICS_PREFIX}_latency_seconds', 'Test search latency')
+SEARCH_ERRORS = Counter(f'{METRICS_PREFIX}_errors_total', 'Test error count')
+
 @pytest.fixture
 def mock_cache():
-    """Create mock Redis cache for testing."""
-    return Mock()
+    """Fixture providing a mock Redis cache for testing."""
+    return fakeredis.FakeStrictRedis()
 
 @pytest.fixture
-def mock_metrics():
-    """Create mock Prometheus metrics for testing."""
-    return {
-        'search_requests': Counter('test_search_requests', 'Test search requests'),
-        'search_latency': Histogram('test_search_latency', 'Test search latency'),
-        'cache_hits': Counter('test_cache_hits', 'Test cache hits'),
-        'cache_misses': Counter('test_cache_misses', 'Test cache misses'),
-        'index_size': Gauge('test_index_size', 'Test index size')
+async def vector_service(db_session, mock_cache):
+    """Fixture providing configured vector search service."""
+    config = {
+        'vector_dimension': VECTOR_DIMENSION,
+        'similarity_threshold': SIMILARITY_THRESHOLD,
+        'max_retries': MAX_RETRIES,
+        'retry_delay': RETRY_DELAY
     }
+    return VectorSearchService(db_session, mock_cache, config)
 
 @pytest.fixture
-async def test_embeddings(db_session):
-    """Create test embeddings with associated chunks and documents."""
-    embeddings = []
-    client_id = uuid.uuid4()
-    document = Document(
-        client_id=client_id,
-        filename="test_doc.pdf",
-        type="pdf",
-        metadata={"test": True}
-    )
-    db_session.add(document)
+def create_test_embeddings(db_session):
+    """
+    Create test embedding vectors with tenant isolation.
     
-    for i in range(TEST_EMBEDDING_COUNT):
-        # Create random vector with correct dimension
-        vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-        vector = vector / np.linalg.norm(vector)  # Normalize vector
+    Args:
+        db_session: Database session
+        count: Number of embeddings to create
+        tenant_id: Tenant identifier
         
-        # Create chunk
-        chunk = Chunk(
-            document_id=document.id,
-            content=f"Test content {i}",
-            sequence=i,
-            metadata={"test": True}
-        )
-        db_session.add(chunk)
-        
-        # Create embedding
-        embedding = Embedding(
-            chunk_id=chunk.id,
-            embedding_vector=vector,
-            similarity_score=0.0,
-            metadata={
-                "test": True,
-                "vector_params": {
-                    "dimension": VECTOR_DIMENSION,
-                    "algorithm": "cosine",
-                    "batch_size": 32
+    Returns:
+        List of created embeddings
+    """
+    def _create_embeddings(count: int, tenant_id: str):
+        embeddings = []
+        for i in range(count):
+            # Create random vector
+            vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
+            vector = vector / np.linalg.norm(vector)
+            
+            # Create chunk with tenant isolation
+            chunk = Chunk(
+                document_id=uuid4(),
+                content=f"Test content {i}",
+                sequence=i,
+                metadata={
+                    'tenant_id': tenant_id,
+                    'test_id': i
                 }
-            }
-        )
-        embeddings.append(embedding)
-        db_session.add(embedding)
+            )
+            db_session.add(chunk)
+            
+            # Create embedding
+            embedding = Embedding(
+                chunk_id=chunk.id,
+                embedding_vector=vector,
+                similarity_score=1.0,
+                metadata={
+                    'tenant_id': tenant_id,
+                    'test_metadata': f'test_{i}'
+                }
+            )
+            db_session.add(embedding)
+            embeddings.append(embedding)
+        
+        db_session.commit()
+        return embeddings
     
-    await db_session.commit()
-    return embeddings
+    return _create_embeddings
 
 @pytest.mark.asyncio
-async def test_vector_search_basic(db_session, mock_cache, test_embeddings):
+async def test_vector_search_basic(vector_service, create_test_embeddings):
     """Test basic vector similarity search functionality."""
-    # Initialize service
-    service = VectorSearchService(db_session, mock_cache)
+    tenant_id = str(uuid4())
+    embeddings = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_id)
     
     # Create query vector
     query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
     query_vector = query_vector / np.linalg.norm(query_vector)
     
     # Perform search
-    results = await service.search(
-        query_embedding=query_vector,
-        tenant_id=str(test_embeddings[0].chunk.document.client_id),
-        threshold=SIMILARITY_THRESHOLD
-    )
+    results = await vector_service.search(query_vector, tenant_id)
     
     # Validate results
-    assert isinstance(results, list)
-    assert len(results) > 0
-    for result in results:
-        assert 'chunk_id' in result
-        assert 'similarity_score' in result
-        assert 0 <= result['similarity_score'] <= 1
-        assert result['similarity_score'] >= SIMILARITY_THRESHOLD
-
-@pytest.mark.asyncio
-async def test_multi_tenant_isolation(db_session, mock_cache):
-    """Test vector search isolation between tenants."""
-    # Create embeddings for two tenants
-    tenant_a_id = uuid.uuid4()
-    tenant_b_id = uuid.uuid4()
-    
-    # Create documents for each tenant
-    doc_a = Document(client_id=tenant_a_id, filename="doc_a.pdf", type="pdf")
-    doc_b = Document(client_id=tenant_b_id, filename="doc_b.pdf", type="pdf")
-    db_session.add_all([doc_a, doc_b])
-    await db_session.commit()
-    
-    # Create embeddings for each tenant
-    embeddings_a = []
-    embeddings_b = []
-    
-    for i in range(5):
-        # Tenant A embeddings
-        vector_a = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-        vector_a = vector_a / np.linalg.norm(vector_a)
-        chunk_a = Chunk(document_id=doc_a.id, content=f"Tenant A content {i}", sequence=i)
-        db_session.add(chunk_a)
-        embedding_a = Embedding(chunk_id=chunk_a.id, embedding_vector=vector_a)
-        embeddings_a.append(embedding_a)
-        
-        # Tenant B embeddings
-        vector_b = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-        vector_b = vector_b / np.linalg.norm(vector_b)
-        chunk_b = Chunk(document_id=doc_b.id, content=f"Tenant B content {i}", sequence=i)
-        db_session.add(chunk_b)
-        embedding_b = Embedding(chunk_id=chunk_b.id, embedding_vector=vector_b)
-        embeddings_b.append(embedding_b)
-    
-    db_session.add_all(embeddings_a + embeddings_b)
-    await db_session.commit()
-    
-    # Initialize service
-    service = VectorSearchService(db_session, mock_cache)
-    
-    # Test search with tenant A context
-    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-    query_vector = query_vector / np.linalg.norm(query_vector)
-    
-    results_a = await service.search(query_vector, str(tenant_a_id))
-    
-    # Verify only tenant A results
-    assert all(result['document_id'] == str(doc_a.id) for result in results_a)
-    
-    # Test search with tenant B context
-    results_b = await service.search(query_vector, str(tenant_b_id))
-    
-    # Verify only tenant B results
-    assert all(result['document_id'] == str(doc_b.id) for result in results_b)
-
-@pytest.mark.asyncio
-async def test_error_handling(db_session, mock_cache, test_embeddings):
-    """Test error handling and retry mechanisms."""
-    # Configure mock cache to simulate errors
-    mock_cache.get.side_effect = [Exception("Cache error"), None]
-    
-    service = VectorSearchService(db_session, mock_cache)
-    
-    # Test retry mechanism
-    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-    query_vector = query_vector / np.linalg.norm(query_vector)
-    
-    with pytest.raises(RetryError):
-        await service.search(
-            query_vector,
-            str(test_embeddings[0].chunk.document.client_id),
-            max_retries=2
-        )
-    
-    # Verify cache error handling
-    assert mock_cache.get.call_count == 2  # Retried once
-    
-    # Test invalid vector dimension
-    invalid_vector = np.random.rand(VECTOR_DIMENSION + 1).astype(np.float32)
-    with pytest.raises(ValueError):
-        await service.search(
-            invalid_vector,
-            str(test_embeddings[0].chunk.document.client_id)
-        )
-
-@pytest.mark.asyncio
-async def test_performance_monitoring(db_session, mock_cache, mock_metrics, test_embeddings):
-    """Test performance metrics collection and monitoring."""
-    service = VectorSearchService(
-        db_session,
-        mock_cache,
-        metrics=mock_metrics
-    )
-    
-    # Perform multiple searches to generate metrics
-    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-    query_vector = query_vector / np.linalg.norm(query_vector)
-    
-    for _ in range(5):
-        await service.search(
-            query_vector,
-            str(test_embeddings[0].chunk.document.client_id)
-        )
-    
-    # Verify metrics collection
-    assert mock_metrics['search_requests']._value._value == 5
-    assert mock_metrics['search_latency']._sum._value > 0
-    assert mock_metrics['cache_misses']._value._value > 0
-    assert mock_metrics['index_size']._value._value == len(test_embeddings)
-
-@pytest.mark.asyncio
-async def test_batch_indexing(db_session, mock_cache, test_embeddings):
-    """Test batch indexing functionality."""
-    service = VectorSearchService(db_session, mock_cache)
-    
-    # Batch index embeddings
-    await service.batch_index(
-        test_embeddings,
-        str(test_embeddings[0].chunk.document.client_id)
-    )
-    
-    # Verify index size
-    assert service._index.ntotal == len(test_embeddings)
-    
-    # Test search after indexing
-    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
-    query_vector = query_vector / np.linalg.norm(query_vector)
-    
-    results = await service.search(
-        query_vector,
-        str(test_embeddings[0].chunk.document.client_id)
-    )
-    
     assert len(results) > 0
     assert all(0 <= result['similarity_score'] <= 1 for result in results)
+    assert all('chunk_id' in result for result in results)
+    assert all('content' in result for result in results)
 
 @pytest.mark.asyncio
-async def test_cache_operations(db_session, mock_cache, test_embeddings):
-    """Test caching functionality."""
-    service = VectorSearchService(db_session, mock_cache)
+async def test_multi_tenant_isolation(vector_service, create_test_embeddings):
+    """Test vector search isolation between tenants."""
+    tenant_a = str(uuid4())
+    tenant_b = str(uuid4())
     
+    # Create embeddings for both tenants
+    embeddings_a = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_a)
+    embeddings_b = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_b)
+    
+    # Index embeddings
+    await vector_service.batch_index(embeddings_a, tenant_a)
+    await vector_service.batch_index(embeddings_b, tenant_b)
+    
+    # Create query vector
+    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
+    query_vector = query_vector / np.linalg.norm(query_vector)
+    
+    # Search with tenant A context
+    results_a = await vector_service.search(query_vector, tenant_a)
+    
+    # Verify only tenant A results
+    assert all(result['metadata']['tenant_id'] == tenant_a for result in results_a)
+    
+    # Search with tenant B context
+    results_b = await vector_service.search(query_vector, tenant_b)
+    
+    # Verify only tenant B results
+    assert all(result['metadata']['tenant_id'] == tenant_b for result in results_b)
+
+@pytest.mark.asyncio
+async def test_batch_indexing(vector_service, create_test_embeddings):
+    """Test batch indexing of embeddings."""
+    tenant_id = str(uuid4())
+    embeddings = create_test_embeddings(TEST_EMBEDDING_COUNT * 2, tenant_id)
+    
+    # Perform batch indexing
+    await vector_service.batch_index(embeddings, tenant_id)
+    
+    # Verify index size
+    index = vector_service._get_tenant_index(tenant_id)
+    assert index.ntotal == len(embeddings)
+    
+    # Verify search works after indexing
+    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
+    query_vector = query_vector / np.linalg.norm(query_vector)
+    
+    results = await vector_service.search(query_vector, tenant_id)
+    assert len(results) > 0
+
+@pytest.mark.asyncio
+async def test_cache_operations(vector_service, create_test_embeddings, mock_cache):
+    """Test vector search caching functionality."""
+    tenant_id = str(uuid4())
+    embeddings = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_id)
+    
+    # Index embeddings
+    await vector_service.batch_index(embeddings, tenant_id)
+    
+    # Create query vector
     query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
     query_vector = query_vector / np.linalg.norm(query_vector)
     
     # First search - should miss cache
-    mock_cache.get.return_value = None
-    results1 = await service.search(
-        query_vector,
-        str(test_embeddings[0].chunk.document.client_id)
-    )
+    results_1 = await vector_service.search(query_vector, tenant_id)
     
     # Second search - should hit cache
-    mock_cache.get.return_value = results1
-    results2 = await service.search(
-        query_vector,
-        str(test_embeddings[0].chunk.document.client_id)
+    results_2 = await vector_service.search(query_vector, tenant_id)
+    
+    # Verify results are identical
+    assert results_1 == results_2
+    
+    # Verify cache hit metrics
+    cache_hits = mock_cache.get(f"search:{tenant_id}:{hash(query_vector.tobytes())}")
+    assert cache_hits is not None
+
+@pytest.mark.asyncio
+async def test_error_handling(vector_service, create_test_embeddings, mock_cache):
+    """Test error handling and retry mechanisms."""
+    tenant_id = str(uuid4())
+    embeddings = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_id)
+    
+    # Simulate cache failure
+    mock_cache.flushall()
+    
+    # Test retry mechanism
+    with pytest.raises(RetryError):
+        await vector_service.search(
+            np.zeros(VECTOR_DIMENSION + 1),  # Invalid dimension
+            tenant_id
+        )
+    
+    # Verify error metrics
+    assert SEARCH_ERRORS._value.get() > 0
+
+@pytest.mark.asyncio
+async def test_performance_monitoring(vector_service, create_test_embeddings):
+    """Test performance metrics collection and monitoring."""
+    tenant_id = str(uuid4())
+    embeddings = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_id)
+    
+    # Index embeddings
+    await vector_service.batch_index(embeddings, tenant_id)
+    
+    # Perform multiple searches
+    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
+    query_vector = query_vector / np.linalg.norm(query_vector)
+    
+    for _ in range(5):
+        await vector_service.search(query_vector, tenant_id)
+    
+    # Verify metrics
+    assert SEARCH_LATENCY._sum.get() > 0
+    
+    # Get service metrics
+    metrics = await vector_service.get_metrics()
+    assert 'search_latency' in metrics
+    assert 'index_size' in metrics
+    assert metrics['index_size'][tenant_id] == TEST_EMBEDDING_COUNT
+
+@pytest.mark.asyncio
+async def test_similarity_threshold(vector_service, create_test_embeddings):
+    """Test similarity threshold filtering."""
+    tenant_id = str(uuid4())
+    embeddings = create_test_embeddings(TEST_EMBEDDING_COUNT, tenant_id)
+    
+    # Index embeddings
+    await vector_service.batch_index(embeddings, tenant_id)
+    
+    # Create query vector
+    query_vector = np.random.rand(VECTOR_DIMENSION).astype(np.float32)
+    query_vector = query_vector / np.linalg.norm(query_vector)
+    
+    # Search with different thresholds
+    results_default = await vector_service.search(query_vector, tenant_id)
+    results_high = await vector_service.search(
+        query_vector, 
+        tenant_id, 
+        threshold=0.9
+    )
+    results_low = await vector_service.search(
+        query_vector, 
+        tenant_id, 
+        threshold=0.5
     )
     
-    assert results1 == results2
-    assert mock_cache.get.call_count == 2
-    assert mock_cache.setex.call_count == 1
+    # Verify threshold filtering
+    assert len(results_high) <= len(results_default) <= len(results_low)
+    assert all(r['similarity_score'] >= 0.9 for r in results_high)
+    assert all(r['similarity_score'] >= 0.5 for r in results_low)

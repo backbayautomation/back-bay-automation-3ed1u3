@@ -54,7 +54,7 @@ const validateTokenExpiration = (token: string): boolean => {
 };
 
 /**
- * Password matching refinement function
+ * Password matching validation refinement function
  */
 const matchesPassword = (confirmPassword: string, data: { password: string }): boolean => {
   return confirmPassword === data.password;
@@ -67,12 +67,12 @@ export const loginSchema = z.object({
   email: z.string()
     .min(1, LOGIN_ERROR_MESSAGES.REQUIRED_EMAIL)
     .email(LOGIN_ERROR_MESSAGES.INVALID_EMAIL)
-    .transform(email => email.toLowerCase())
-    .refine(email => validateEmail(email).length === 0, {
+    .refine((email) => validateEmail(email).length === 0, {
       message: LOGIN_ERROR_MESSAGES.INVALID_EMAIL
     }),
   password: z.string()
     .min(1, LOGIN_ERROR_MESSAGES.REQUIRED_PASSWORD)
+    .min(8, LOGIN_ERROR_MESSAGES.INVALID_PASSWORD)
     .refine(validatePasswordComplexity, {
       message: LOGIN_ERROR_MESSAGES.INVALID_PASSWORD
     })
@@ -97,6 +97,9 @@ export const passwordResetSchema = z.object({
     .refine(matchesPassword, {
       message: PASSWORD_RESET_ERROR_MESSAGES.PASSWORDS_DONT_MATCH
     })
+}).refine((data) => data.password === data.confirmPassword, {
+  message: PASSWORD_RESET_ERROR_MESSAGES.PASSWORDS_DONT_MATCH,
+  path: ['confirmPassword']
 });
 
 /**
@@ -112,10 +115,7 @@ export const validateLoginCredentials = async (
     await loginSchema.parseAsync(credentials);
     return true;
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw error;
-    }
-    throw new Error(LOGIN_ERROR_MESSAGES.SECURITY_VALIDATION_FAILED);
+    throw error;
   }
 };
 
@@ -132,9 +132,6 @@ export const validatePasswordReset = async (
     await passwordResetSchema.parseAsync(resetData);
     return true;
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      throw error;
-    }
-    throw new Error(PASSWORD_RESET_ERROR_MESSAGES.SECURITY_VALIDATION_FAILED);
+    throw error;
   }
 };

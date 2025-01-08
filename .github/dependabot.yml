@@ -1,6 +1,7 @@
 version: 2
+
 updates:
-  # Python backend dependencies configuration
+  # Python backend dependencies
   - package-ecosystem: "pip"
     directory: "/src/backend"
     schedule:
@@ -23,7 +24,7 @@ updates:
     assignees:
       - "security-team"
 
-  # Frontend NPM dependencies configuration
+  # Node.js frontend dependencies
   - package-ecosystem: "npm"
     directory: "/src/web"
     schedule:
@@ -46,7 +47,7 @@ updates:
     assignees:
       - "security-team"
 
-  # GitHub Actions workflow dependencies
+  # GitHub Actions workflows
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -74,6 +75,7 @@ registries:
     security:
       require-ssl: true
       verify-ssl: true
+  
   npm-registry:
     type: npm-registry
     url: https://registry.npmjs.org

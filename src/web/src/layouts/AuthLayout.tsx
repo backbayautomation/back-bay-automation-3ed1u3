@@ -1,14 +1,13 @@
 import React from 'react'; // ^18.2.0
-import { Box, Container, Paper } from '@mui/material'; // ^5.14.0
-import { styled } from '@mui/material/styles'; // ^5.14.0
+import { Box, Container, Paper } from '@mui/material'; // 5.14.0
+import { styled } from '@mui/material/styles'; // 5.14.0
 import { Navigate } from 'react-router-dom'; // ^6.14.0
 import { ErrorBoundary } from 'react-error-boundary'; // ^4.0.0
-
 import { useAuth } from '../contexts/AuthContext';
 import PageLoader from '../components/common/Loaders/PageLoader';
 
 /**
- * Props interface for AuthLayout component
+ * Props interface for AuthLayout component with proper typing
  */
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -33,11 +32,6 @@ const AuthContainer = styled(Container)(({ theme }) => ({
   // Accessibility attributes
   role: 'main',
   'aria-label': 'Authentication page',
-  // Prevent content shift during loading
-  position: 'relative',
-  // Improve text rendering
-  WebkitFontSmoothing: 'antialiased',
-  MozOsxFontSmoothing: 'grayscale',
 }));
 
 /**
@@ -54,57 +48,40 @@ const AuthPaper = styled(Paper)(({ theme }) => ({
   // Responsive adjustments
   [theme.breakpoints.down('sm')]: {
     padding: theme.spacing(3),
-    maxWidth: '100%',
+    margin: theme.spacing(2),
   },
-  // Smooth transitions
-  transition: theme.transitions.create(['box-shadow', 'transform'], {
-    duration: theme.transitions.duration.short,
-  }),
-  '&:hover': {
-    boxShadow: theme.shadows[4],
-  },
-  // Improve focus visibility
-  '&:focus-within': {
-    outline: `2px solid ${theme.palette.primary.main}`,
-    outlineOffset: '2px',
-  },
+  // Animation for smooth mounting
+  animation: 'fadeIn 0.3s ease-in-out',
+  '@keyframes fadeIn': {
+    from: { opacity: 0, transform: 'translateY(-20px)' },
+    to: { opacity: 1, transform: 'translateY(0)' }
+  }
 }));
 
 /**
- * Default error fallback component
+ * Default error fallback component for auth-related errors
  */
-const DefaultErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
-  <AuthContainer>
-    <AuthPaper>
-      <Box
-        sx={{
-          textAlign: 'center',
-          color: 'error.main',
-          p: 2,
-        }}
-      >
-        <h2>Authentication Error</h2>
-        <p>{error.message}</p>
-      </Box>
-    </AuthPaper>
-  </AuthContainer>
-);
+const DefaultErrorFallback = styled(Box)(({ theme }) => ({
+  padding: theme.spacing(3),
+  textAlign: 'center',
+  color: theme.palette.error.main,
+}));
 
 /**
  * Layout component for authentication pages with enhanced error handling
  * and state management
  */
-const AuthLayout = React.memo<AuthLayoutProps>(({
+const AuthLayout: React.FC<AuthLayoutProps> = React.memo(({
   children,
   redirectTo,
-  fallback = <DefaultErrorFallback />
+  fallback
 }) => {
   const { state: { isAuthenticated, isLoading, error } } = useAuth();
 
-  // Show loader during authentication check
+  // Show loader while checking authentication state
   if (isLoading) {
     return (
-      <PageLoader
+      <PageLoader 
         message="Verifying authentication..."
         size="medium"
       />
@@ -118,31 +95,17 @@ const AuthLayout = React.memo<AuthLayoutProps>(({
 
   return (
     <ErrorBoundary
-      FallbackComponent={({ error }) => (
-        React.isValidElement(fallback) 
-          ? fallback 
-          : <DefaultErrorFallback error={error} />
-      )}
+      fallback={fallback || <DefaultErrorFallback>
+        {error || 'An error occurred during authentication'}
+      </DefaultErrorFallback>}
     >
-      <AuthContainer>
+      <AuthContainer maxWidth="sm">
         <AuthPaper
-          component="main"
           elevation={3}
+          component="main"
           role="region"
           aria-label="Authentication form"
         >
-          {error ? (
-            <Box
-              sx={{
-                color: 'error.main',
-                mb: 2,
-                textAlign: 'center',
-              }}
-              role="alert"
-            >
-              {error}
-            </Box>
-          ) : null}
           {children}
         </AuthPaper>
       </AuthContainer>

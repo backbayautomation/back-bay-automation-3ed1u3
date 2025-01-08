@@ -1,6 +1,6 @@
-# Kubernetes version: v1.25+
-# Purpose: Defines namespace-level resource quotas for AI-powered Product Catalog Search System
-# Ensures fair resource allocation and multi-tenant isolation
+# Kubernetes ResourceQuota configuration for AI-powered Product Catalog Search System
+# Version: v1.25+
+# Purpose: Define namespace-level resource constraints for multi-tenant workload isolation
 
 apiVersion: v1
 kind: ResourceQuota
@@ -11,8 +11,8 @@ metadata:
     app: ai-catalog-search
     environment: ${ENV}
   annotations:
-    description: "Production-grade resource quotas for AI Catalog Search System"
-    monitoring.kubernetes.io/quota-enabled: "true"
+    description: "Production-grade resource quotas for AI Catalog Search system"
+    monitoring.kubernetes.io/quota-tracking: "true"
     monitoring.kubernetes.io/resource-tracking: "true"
     monitoring.kubernetes.io/utilization-alerts: "true"
     monitoring.kubernetes.io/compliance-checking: "true"

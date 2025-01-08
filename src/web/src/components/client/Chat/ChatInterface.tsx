@@ -1,217 +1,229 @@
+/**
+ * ChatInterface component implementing a production-ready chat interface with
+ * real-time message exchange, accessibility compliance, and rich content rendering.
+ * @version 1.0.0
+ */
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { styled } from '@mui/material/styles';
-import { Paper, Box } from '@mui/material';
+import { Paper, Box, Alert, Snackbar } from '@mui/material';
 import { ErrorBoundary } from 'react-error-boundary';
 
 // Internal imports
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import useWebSocket from '../../../hooks/useWebSocket';
-import { ChatSession, Message, ErrorState } from '../../../types/chat';
-import { addMessage, selectCurrentSession } from '../../../redux/slices/chatSlice';
+import { ChatSession, Message, ErrorState, WebSocketStatus } from '../../../types/chat';
+import { selectCurrentSession, selectWebSocketStatus, addMessage } from '../../../redux/slices/chatSlice';
 import { VALIDATION_CONSTANTS } from '../../../config/constants';
 
-// Styled components with accessibility and responsive design
+// Styled components
 const ChatContainer = styled(Paper)(({ theme }) => ({
-  display: 'flex',
-  flexDirection: 'column',
-  height: '100%',
-  minHeight: '600px',
-  maxHeight: '800px',
-  borderRadius: theme.shape.borderRadius,
-  boxShadow: theme.shadows[1],
-  backgroundColor: theme.palette.background.paper,
-  position: 'relative',
-  overflow: 'hidden',
-  '@media (max-width: 600px)': {
-    minHeight: '100vh',
-    borderRadius: 0,
-  },
-  '&:focus': {
-    outline: `2px solid ${theme.palette.primary.main}`,
-    outlineOffset: '2px',
-  },
-  '@media (prefers-reduced-motion: reduce)': {
-    transition: 'none',
-  },
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    minHeight: '600px',
+    maxHeight: '800px',
+    borderRadius: theme.shape.borderRadius,
+    boxShadow: theme.shadows[1],
+    backgroundColor: theme.palette.background.paper,
+    position: 'relative',
+    overflow: 'hidden',
+    '@media (max-width: 600px)': {
+        minHeight: '100vh',
+        borderRadius: 0
+    },
+    '&:focus': {
+        outline: `2px solid ${theme.palette.primary.main}`,
+        outlineOffset: '2px'
+    }
 }));
 
-const ErrorContainer = styled(Box)(({ theme }) => ({
-  padding: theme.spacing(2),
-  color: theme.palette.error.main,
-  backgroundColor: theme.palette.error.light,
-  borderRadius: theme.shape.borderRadius,
-  margin: theme.spacing(2),
+const MessageContainer = styled(Box)(({ theme }) => ({
+    flex: 1,
+    overflow: 'hidden',
+    position: 'relative',
+    borderBottom: `1px solid ${theme.palette.divider}`
 }));
 
-// Interface definitions
+// Props interface
 interface ChatInterfaceProps {
-  className?: string;
-  sessionId: string;
-  onError?: (error: ErrorState) => void;
-  'aria-label'?: string;
+    className?: string;
+    sessionId: string;
+    onError?: (error: ErrorState) => void;
+    'aria-label'?: string;
 }
 
-// Constants
-const ARIA_LABELS = {
-  chat_region: 'Chat message area',
-  message_input: 'Type your message',
-  loading: 'Loading messages',
-  error: 'Error in chat',
-};
-
-const ERROR_MESSAGES = {
-  connection: 'Connection lost. Retrying...',
-  message_failed: 'Failed to send message',
-  generic: 'An error occurred',
-};
-
-const RETRY_CONFIG = {
-  max_attempts: 3,
-  delay_ms: 1000,
-  backoff_factor: 1.5,
-};
-
-// Main component
+/**
+ * ChatInterface component with real-time messaging, accessibility, and error handling
+ */
 const ChatInterface = React.memo<ChatInterfaceProps>(({
-  className,
-  sessionId,
-  onError,
-  'aria-label': ariaLabel = ARIA_LABELS.chat_region,
+    className,
+    sessionId,
+    onError,
+    'aria-label': ariaLabel = 'Chat interface'
 }) => {
-  const dispatch = useDispatch();
-  const currentSession = useSelector(selectCurrentSession);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const retryCountRef = useRef(0);
+    // Redux hooks
+    const dispatch = useDispatch();
+    const currentSession = useSelector(selectCurrentSession);
+    const wsStatus = useSelector(selectWebSocketStatus);
 
-  // WebSocket setup with reconnection and error handling
-  const {
-    isConnected,
-    connectionState,
-    sendMessage,
-    addListener,
-    removeListener,
-  } = useWebSocket({
-    baseUrl: process.env.REACT_APP_WS_URL || 'ws://localhost:8080',
-    token: sessionId,
-    autoConnect: true,
-    reconnectAttempts: RETRY_CONFIG.max_attempts,
-    monitoringEnabled: true,
-  });
+    // State management
+    const [isLoading, setIsLoading] = useState(false);
+    const [hasMoreMessages, setHasMoreMessages] = useState(false);
+    const [error, setError] = useState<ErrorState | null>(null);
+    const lastMessageRef = useRef<string | null>(null);
 
-  // Message handling
-  const handleMessageSubmit = useCallback(async (content: string) => {
-    if (!content.trim() || !isConnected) {
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await sendMessage('chat.message', {
-        content,
-        sessionId,
-        metadata: {
-          hasMarkdown: true,
-          hasCodeBlock: content.includes('```'),
-        },
-      });
-      retryCountRef.current = 0;
-    } catch (error) {
-      retryCountRef.current += 1;
-      const shouldRetry = retryCountRef.current < RETRY_CONFIG.max_attempts;
-
-      onError?.({
-        type: 'message_send',
-        message: ERROR_MESSAGES.message_failed,
-        timestamp: new Date(),
-        retryCount: retryCountRef.current,
-      });
-
-      if (shouldRetry) {
-        const delay = RETRY_CONFIG.delay_ms * Math.pow(RETRY_CONFIG.backoff_factor, retryCountRef.current);
-        setTimeout(() => handleMessageSubmit(content), delay);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [isConnected, sendMessage, sessionId, onError]);
-
-  // WebSocket message listener
-  useEffect(() => {
-    const handleIncomingMessage = (message: Message) => {
-      dispatch(addMessage(message));
-    };
-
-    addListener('chat.message', handleIncomingMessage);
-    return () => removeListener('chat.message', handleIncomingMessage);
-  }, [addListener, removeListener, dispatch]);
-
-  // Connection state monitoring
-  useEffect(() => {
-    if (!isConnected) {
-      onError?.({
-        type: 'connection',
-        message: ERROR_MESSAGES.connection,
-        timestamp: new Date(),
-        retryCount: retryCountRef.current,
-      });
-    }
-  }, [isConnected, onError]);
-
-  // Load more messages handler
-  const handleLoadMore = useCallback(() => {
-    if (currentSession?.messages.length && !isLoading) {
-      setIsLoading(true);
-      // Implementation for loading previous messages would go here
-      setHasMoreMessages(false);
-      setIsLoading(false);
-    }
-  }, [currentSession?.messages.length, isLoading]);
-
-  // Error boundary fallback
-  const handleError = useCallback((error: Error) => {
-    onError?.({
-      type: 'system',
-      message: ERROR_MESSAGES.generic,
-      timestamp: new Date(),
-      retryCount: 0,
+    // WebSocket connection
+    const {
+        isConnected,
+        sendMessage,
+        addListener,
+        removeListener
+    } = useWebSocket({
+        baseUrl: process.env.REACT_APP_WS_URL || 'ws://localhost:8080',
+        token: sessionStorage.getItem('ws_token') || '',
+        autoConnect: true,
+        reconnectAttempts: 5,
+        monitoringEnabled: true
     });
-    return (
-      <ErrorContainer role="alert">
-        {ERROR_MESSAGES.generic}
-      </ErrorContainer>
-    );
-  }, [onError]);
 
-  return (
-    <ErrorBoundary FallbackComponent={({ error }) => handleError(error)}>
-      <ChatContainer
-        className={className}
-        role="region"
-        aria-label={ariaLabel}
-        aria-busy={isLoading}
-        data-testid="chat-interface"
-      >
-        <MessageList
-          isLoading={isLoading}
-          onScrollTop={handleLoadMore}
-          hasMoreMessages={hasMoreMessages}
-        />
-        <ChatInput
-          chatSessionId={sessionId}
-          onMessageSent={handleMessageSubmit}
-          maxLength={VALIDATION_CONSTANTS.MAX_CHAT_MESSAGE_LENGTH}
-          enableMarkdown
-          enableLatex
-          offlineQueueEnabled
-        />
-      </ChatContainer>
-    </ErrorBoundary>
-  );
+    // Handle incoming messages
+    const handleIncomingMessage = useCallback((message: Message) => {
+        if (message.sessionId === sessionId) {
+            dispatch(addMessage(message));
+            lastMessageRef.current = message.id;
+            setIsLoading(false);
+        }
+    }, [dispatch, sessionId]);
+
+    // Handle message submission
+    const handleMessageSubmit = useCallback(async (content: string) => {
+        if (!content.trim() || !isConnected) {
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            await sendMessage('chat.message', {
+                content,
+                sessionId,
+                metadata: {
+                    hasMarkdown: content.includes('```') || content.includes('*'),
+                    hasCodeBlock: content.includes('```'),
+                    codeLanguage: null,
+                    renderOptions: {
+                        enableLatex: content.includes('$'),
+                        enableDiagrams: content.includes('```mermaid'),
+                        syntaxHighlighting: content.includes('```')
+                    }
+                }
+            });
+        } catch (err) {
+            const errorState: ErrorState = {
+                type: 'SEND_ERROR',
+                message: 'Failed to send message',
+                timestamp: new Date(),
+                retryCount: 0
+            };
+            setError(errorState);
+            onError?.(errorState);
+            setIsLoading(false);
+        }
+    }, [isConnected, sendMessage, sessionId, onError]);
+
+    // Load more messages
+    const handleLoadMore = useCallback(async () => {
+        if (isLoading || !currentSession) return;
+
+        setIsLoading(true);
+        try {
+            // Implementation for loading previous messages
+            setHasMoreMessages(currentSession.messages.length >= 50);
+        } catch (err) {
+            setError({
+                type: 'LOAD_ERROR',
+                message: 'Failed to load messages',
+                timestamp: new Date(),
+                retryCount: 0
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    }, [isLoading, currentSession]);
+
+    // Set up WebSocket listeners
+    useEffect(() => {
+        addListener('chat.message', handleIncomingMessage);
+        return () => removeListener('chat.message', handleIncomingMessage);
+    }, [addListener, removeListener, handleIncomingMessage]);
+
+    // Error handling component
+    const ErrorFallback = ({ error, resetErrorBoundary }: any) => (
+        <Box p={3} role="alert">
+            <Alert 
+                severity="error" 
+                onClose={resetErrorBoundary}
+                sx={{ mb: 2 }}
+            >
+                {error.message || 'An error occurred in the chat interface'}
+            </Alert>
+        </Box>
+    );
+
+    return (
+        <ErrorBoundary FallbackComponent={ErrorFallback}>
+            <ChatContainer
+                className={className}
+                role="region"
+                aria-label={ariaLabel}
+                tabIndex={0}
+            >
+                <MessageContainer>
+                    <MessageList
+                        isLoading={isLoading}
+                        onScrollTop={handleLoadMore}
+                        hasMoreMessages={hasMoreMessages}
+                    />
+                </MessageContainer>
+
+                <ChatInput
+                    chatSessionId={sessionId}
+                    onMessageSent={handleMessageSubmit}
+                    maxLength={VALIDATION_CONSTANTS.MAX_CHAT_MESSAGE_LENGTH}
+                    enableMarkdown
+                    enableLatex
+                />
+
+                <Snackbar
+                    open={!!error}
+                    autoHideDuration={6000}
+                    onClose={() => setError(null)}
+                >
+                    <Alert 
+                        severity="error" 
+                        onClose={() => setError(null)}
+                        sx={{ width: '100%' }}
+                    >
+                        {error?.message}
+                    </Alert>
+                </Snackbar>
+
+                {wsStatus !== WebSocketStatus.CONNECTED && (
+                    <Alert 
+                        severity="warning"
+                        sx={{ position: 'absolute', top: 0, left: 0, right: 0 }}
+                    >
+                        Connection lost. Reconnecting...
+                    </Alert>
+                )}
+            </ChatContainer>
+        </ErrorBoundary>
+    );
 });
 
+// Display name for debugging
 ChatInterface.displayName = 'ChatInterface';
 
 export default ChatInterface;

@@ -1,166 +1,153 @@
-import React, { useCallback, useEffect } from 'react';
-import { Box, Typography } from '@mui/material'; // v5.14.0
-import { withErrorBoundary } from 'react-error-boundary'; // v4.0.0
-import { ApplicationInsights } from '@azure/application-insights-web'; // v2.8.3
-
+import React, { useState, useCallback, useEffect } from 'react';
+import { Box, Typography } from '@mui/material';
+import { useApplicationInsights } from '@azure/application-insights-web';
+import { ErrorBoundary } from 'react-error-boundary';
 import AdminLayout from '../../layouts/AdminLayout';
 import UserList from '../../components/admin/UserManagement/UserList';
 import { useAuth } from '../../hooks/useAuth';
-import { User, UserRole } from '../../types/user';
+import type { User, UserRole } from '../../types/user';
 
-// Initialize Application Insights
-const appInsights = new ApplicationInsights({
-  config: {
-    connectionString: process.env.VITE_APPINSIGHTS_CONNECTION_STRING,
-    enableAutoRouteTracking: true,
-  },
-});
-appInsights.loadAppInsights();
-
+// Props interface with TypeScript strict typing
 interface UsersPageProps {
   testId?: string;
   onError?: (error: Error) => void;
 }
 
+// Error boundary fallback component
+const ErrorFallback = ({ error }: { error: Error }) => (
+  <Box 
+    role="alert" 
+    sx={{ 
+      padding: 3,
+      color: 'error.main',
+      backgroundColor: 'error.light' 
+    }}
+  >
+    <Typography variant="h6" component="h2" gutterBottom>
+      Error Loading User Management
+    </Typography>
+    <Typography variant="body1">{error.message}</Typography>
+  </Box>
+);
+
+/**
+ * Admin Users page component providing comprehensive user management functionality
+ * with role-based access control, enhanced accessibility, and analytics tracking.
+ */
 const UsersPage: React.FC<UsersPageProps> = React.memo(({ 
   testId = 'admin-users-page',
   onError 
 }) => {
-  const { user, isAuthenticated } = useAuth();
+  // Hooks initialization
+  const { appInsights } = useApplicationInsights();
+  const { user, hasRole } = useAuth();
+  const [allowedRoles, setAllowedRoles] = useState<UserRole[]>([]);
 
-  // Track page view
+  // Track page view on component mount
   useEffect(() => {
-    appInsights.trackPageView({
-      name: 'Admin - Users Page',
+    appInsights?.trackPageView({
+      name: 'Admin - User Management',
+      uri: window.location.pathname,
       properties: {
         userRole: user?.role,
-        clientId: user?.clientId,
-      },
+        clientId: user?.clientId
+      }
     });
-  }, [user]);
+  }, [appInsights, user]);
+
+  // Set allowed roles based on current user's role
+  useEffect(() => {
+    if (hasRole('SYSTEM_ADMIN')) {
+      setAllowedRoles([
+        UserRole.SYSTEM_ADMIN,
+        UserRole.CLIENT_ADMIN,
+        UserRole.REGULAR_USER
+      ]);
+    } else if (hasRole('CLIENT_ADMIN')) {
+      setAllowedRoles([
+        UserRole.CLIENT_ADMIN,
+        UserRole.REGULAR_USER
+      ]);
+    } else {
+      setAllowedRoles([UserRole.REGULAR_USER]);
+    }
+  }, [hasRole]);
 
   // Handle user updates with analytics tracking
   const handleUserUpdate = useCallback(async (updatedUser: User) => {
     try {
-      appInsights.trackEvent({
-        name: 'User Update',
+      // Track user management action
+      appInsights?.trackEvent({
+        name: 'UserManagementAction',
         properties: {
-          adminId: user?.id,
-          userId: updatedUser.id,
-          action: updatedUser.id ? 'update' : 'create',
-        },
+          actionType: updatedUser.id ? 'update' : 'create',
+          userRole: user?.role,
+          targetUserRole: updatedUser.role,
+          clientId: user?.clientId
+        }
       });
 
-      // API call would go here
-      // await updateUser(updatedUser);
+      // Additional user update logic would go here
+      // This would typically involve an API call to update the user
 
     } catch (error) {
-      appInsights.trackException({
+      appInsights?.trackException({
         error: error as Error,
+        severityLevel: 2,
         properties: {
-          adminId: user?.id,
-          userId: updatedUser.id,
-          action: 'user_update_failed',
-        },
+          component: 'UsersPage',
+          action: 'handleUserUpdate',
+          userId: updatedUser.id
+        }
       });
+      
+      if (onError && error instanceof Error) {
+        onError(error);
+      }
       throw error;
     }
-  }, [user]);
-
-  // Get allowed roles based on current user's role
-  const getAllowedRoles = useCallback(() => {
-    if (user?.role === UserRole.SYSTEM_ADMIN) {
-      return [
-        UserRole.SYSTEM_ADMIN,
-        UserRole.CLIENT_ADMIN,
-        UserRole.REGULAR_USER,
-      ];
-    }
-    if (user?.role === UserRole.CLIENT_ADMIN) {
-      return [
-        UserRole.CLIENT_ADMIN,
-        UserRole.REGULAR_USER,
-      ];
-    }
-    return [UserRole.REGULAR_USER];
-  }, [user]);
+  }, [appInsights, user, onError]);
 
   return (
-    <AdminLayout>
-      <Box
-        component="main"
-        role="main"
-        aria-label="User Management"
-        data-testid={testId}
-        sx={{
-          p: 3,
-          width: '100%',
-          maxWidth: '1200px',
-          margin: '0 auto',
-        }}
-      >
-        <Typography
-          variant="h4"
-          component="h1"
-          gutterBottom
-          sx={{
-            mb: 3,
-            fontWeight: 500,
-            color: 'text.primary',
-          }}
-        >
-          User Management
-        </Typography>
-
+    <ErrorBoundary
+      FallbackComponent={ErrorFallback}
+      onError={(error) => {
+        appInsights?.trackException({
+          error,
+          severityLevel: 3,
+          properties: {
+            component: 'UsersPage',
+            userId: user?.id
+          }
+        });
+        if (onError) onError(error);
+      }}
+    >
+      <AdminLayout>
         <Box
+          component="main"
+          role="main"
+          aria-label="User Management"
+          data-testid={testId}
           sx={{
-            backgroundColor: 'background.paper',
-            borderRadius: 1,
-            boxShadow: 1,
-            overflow: 'hidden',
+            padding: 3,
+            width: '100%',
+            maxWidth: 'lg',
+            margin: '0 auto'
           }}
         >
           <UserList
             clientId={user?.clientId || undefined}
             onUserUpdate={handleUserUpdate}
-            roles={getAllowedRoles()}
+            roles={allowedRoles}
           />
         </Box>
-      </Box>
-    </AdminLayout>
+      </AdminLayout>
+    </ErrorBoundary>
   );
 });
 
-// Error boundary wrapper
-const UsersPageWithErrorBoundary = withErrorBoundary(UsersPage, {
-  fallback: (
-    <Box
-      role="alert"
-      aria-label="Error Message"
-      sx={{
-        p: 3,
-        color: 'error.main',
-        textAlign: 'center',
-      }}
-    >
-      <Typography variant="h6">
-        An error occurred while loading the user management page.
-        Please try refreshing the page.
-      </Typography>
-    </Box>
-  ),
-  onError: (error, componentStack) => {
-    appInsights.trackException({
-      error,
-      properties: {
-        componentStack,
-        location: 'UsersPage',
-      },
-    });
-  },
-});
-
 // Display name for debugging
-UsersPageWithErrorBoundary.displayName = 'UsersPage';
+UsersPage.displayName = 'UsersPage';
 
-export default UsersPageWithErrorBoundary;
+export default UsersPage;

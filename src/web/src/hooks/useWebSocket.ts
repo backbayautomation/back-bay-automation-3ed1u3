@@ -1,267 +1,285 @@
 /**
- * Enterprise-grade custom React hook for WebSocket connection management
- * Version: 1.0.0
- * Dependencies:
- * - react: 18.2.0
+ * @fileoverview Enterprise-grade custom React hook for WebSocket connection management
+ * @version 1.0.0
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'; // v18.2.0
 import { WebSocketClient, WS_EVENTS } from '../api/websocket';
-import { WebSocketStatus } from '../types/chat';
 
-// Connection state management types
+/**
+ * Connection state enumeration
+ */
 export enum ConnectionState {
-  CONNECTING = 'connecting',
-  CONNECTED = 'connected',
-  DISCONNECTED = 'disconnected',
-  RECONNECTING = 'reconnecting',
-  ERROR = 'error'
+    DISCONNECTED = 'DISCONNECTED',
+    CONNECTING = 'CONNECTING',
+    CONNECTED = 'CONNECTED',
+    RECONNECTING = 'RECONNECTING'
 }
 
-// Interface for queued messages during disconnection
+/**
+ * Interface for queued messages during disconnection
+ */
 interface QueuedMessage {
-  event: string;
-  data: any;
-  timestamp: number;
-  retryCount: number;
+    event: string;
+    data: any;
+    timestamp: string;
 }
 
-// Interface for connection metrics
+/**
+ * Interface for connection metrics
+ */
 interface ConnectionMetrics {
-  latency: number;
-  messagesSent: number;
-  messagesReceived: number;
-  reconnectAttempts: number;
-  lastHeartbeat: number;
-  uptime: number;
+    latency: number;
+    messagesSent: number;
+    messagesReceived: number;
+    reconnectAttempts: number;
+    lastHeartbeat: string;
+    uptime: number;
 }
 
-// Configuration options for the WebSocket hook
-export interface UseWebSocketOptions {
-  baseUrl: string;
-  token: string;
-  autoConnect?: boolean;
-  reconnectAttempts?: number;
-  reconnectInterval?: number;
-  messageQueueSize?: number;
-  compressionEnabled?: boolean;
-  monitoringEnabled?: boolean;
+/**
+ * Configuration options for WebSocket hook
+ */
+interface UseWebSocketOptions {
+    baseUrl: string;
+    token: string;
+    autoConnect?: boolean;
+    reconnectAttempts?: number;
+    reconnectInterval?: number;
+    messageQueueSize?: number;
+    compressionEnabled?: boolean;
+    monitoringEnabled?: boolean;
 }
 
-// Return type for the WebSocket hook
-export interface UseWebSocketReturn {
-  isConnected: boolean;
-  connectionState: ConnectionState;
-  connect: () => Promise<void>;
-  disconnect: () => void;
-  sendMessage: (event: string, data: any) => Promise<void>;
-  addListener: (event: string, callback: Function) => void;
-  removeListener: (event: string, callback: Function) => void;
-  getMetrics: () => ConnectionMetrics;
-  clearMessageQueue: () => void;
-  getPendingMessages: () => QueuedMessage[];
+/**
+ * Enterprise-grade WebSocket hook return type
+ */
+interface UseWebSocketReturn {
+    isConnected: boolean;
+    connectionState: ConnectionState;
+    connect: () => Promise<void>;
+    disconnect: () => void;
+    sendMessage: (event: string, data: any) => Promise<void>;
+    addListener: (event: string, callback: Function) => void;
+    removeListener: (event: string, callback: Function) => void;
+    getMetrics: () => ConnectionMetrics;
+    clearMessageQueue: () => void;
+    getPendingMessages: () => QueuedMessage[];
 }
 
 /**
  * Enterprise-grade custom hook for WebSocket connection management
- * Provides robust connection handling, automatic reconnection, and monitoring
  */
 export const useWebSocket = ({
-  baseUrl,
-  token,
-  autoConnect = true,
-  reconnectAttempts = 5,
-  reconnectInterval = 1000,
-  messageQueueSize = 100,
-  compressionEnabled = false,
-  monitoringEnabled = true
+    baseUrl,
+    token,
+    autoConnect = true,
+    reconnectAttempts = 5,
+    reconnectInterval = 1000,
+    messageQueueSize = 100,
+    compressionEnabled = false,
+    monitoringEnabled = true
 }: UseWebSocketOptions): UseWebSocketReturn => {
-  // Client reference to maintain connection across renders
-  const wsClientRef = useRef<WebSocketClient | null>(null);
-  
-  // State management
-  const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
-  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
-  const [metrics, setMetrics] = useState<ConnectionMetrics>({
-    latency: 0,
-    messagesSent: 0,
-    messagesReceived: 0,
-    reconnectAttempts: 0,
-    lastHeartbeat: 0,
-    uptime: 0
-  });
+    // WebSocket client reference
+    const wsClient = useRef<WebSocketClient | null>(null);
+    
+    // Connection state management
+    const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
+    const [isConnected, setIsConnected] = useState(false);
+    
+    // Metrics tracking
+    const metricsRef = useRef<ConnectionMetrics>({
+        latency: 0,
+        messagesSent: 0,
+        messagesReceived: 0,
+        reconnectAttempts: 0,
+        lastHeartbeat: new Date().toISOString(),
+        uptime: 0
+    });
 
-  // Performance monitoring
-  const startTimeRef = useRef<number>(Date.now());
-  const metricsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    // Message queue for handling disconnections
+    const messageQueueRef = useRef<QueuedMessage[]>([]);
+    const uptimeInterval = useRef<NodeJS.Timeout>();
 
-  // Memoized connection handler
-  const connect = useCallback(async () => {
-    if (wsClientRef.current) {
-      return;
-    }
-
-    try {
-      setConnectionState(ConnectionState.CONNECTING);
-      
-      wsClientRef.current = new WebSocketClient(baseUrl, token, {
-        reconnectMaxAttempts: reconnectAttempts,
-        messageBufferSize: messageQueueSize
-      });
-
-      await wsClientRef.current.connect();
-      setConnectionState(ConnectionState.CONNECTED);
-      
-      // Process queued messages after connection
-      if (messageQueue.length > 0) {
-        for (const msg of messageQueue) {
-          await wsClientRef.current.send(msg.event, msg.data, {
-            retry: true,
-            compress: compressionEnabled
-          });
+    /**
+     * Initialize WebSocket client
+     */
+    const initializeClient = useCallback(() => {
+        if (!wsClient.current) {
+            wsClient.current = new WebSocketClient(baseUrl, token, {
+                reconnectMaxAttempts: reconnectAttempts,
+                reconnectBaseDelay: reconnectInterval,
+                messageBufferSize: messageQueueSize
+            });
         }
-        setMessageQueue([]);
-      }
-    } catch (error) {
-      setConnectionState(ConnectionState.ERROR);
-      throw error;
-    }
-  }, [baseUrl, token, reconnectAttempts, messageQueueSize, messageQueue, compressionEnabled]);
+    }, [baseUrl, token, reconnectAttempts, reconnectInterval, messageQueueSize]);
 
-  // Memoized disconnect handler
-  const disconnect = useCallback(async () => {
-    if (!wsClientRef.current) {
-      return;
-    }
+    /**
+     * Connect to WebSocket server
+     */
+    const connect = useCallback(async () => {
+        if (connectionState === ConnectionState.CONNECTING || 
+            connectionState === ConnectionState.CONNECTED) {
+            return;
+        }
 
-    try {
-      await wsClientRef.current.disconnect();
-      wsClientRef.current = null;
-      setConnectionState(ConnectionState.DISCONNECTED);
-    } catch (error) {
-      setConnectionState(ConnectionState.ERROR);
-      throw error;
-    }
-  }, []);
+        setConnectionState(ConnectionState.CONNECTING);
+        
+        try {
+            initializeClient();
+            await wsClient.current?.connect();
+            setIsConnected(true);
+            setConnectionState(ConnectionState.CONNECTED);
+        } catch (error) {
+            setConnectionState(ConnectionState.DISCONNECTED);
+            throw error;
+        }
+    }, [connectionState, initializeClient]);
 
-  // Memoized message sender with queue support
-  const sendMessage = useCallback(async (event: string, data: any) => {
-    if (!wsClientRef.current || connectionState !== ConnectionState.CONNECTED) {
-      if (messageQueue.length < messageQueueSize) {
-        setMessageQueue(prev => [...prev, {
-          event,
-          data,
-          timestamp: Date.now(),
-          retryCount: 0
-        }]);
-        return;
-      }
-      throw new Error('Message queue full');
-    }
+    /**
+     * Disconnect from WebSocket server
+     */
+    const disconnect = useCallback(() => {
+        wsClient.current?.disconnect();
+        setIsConnected(false);
+        setConnectionState(ConnectionState.DISCONNECTED);
+    }, []);
 
-    try {
-      await wsClientRef.current.send(event, data, {
-        retry: true,
-        compress: compressionEnabled
-      });
-      
-      if (monitoringEnabled) {
-        setMetrics(prev => ({
-          ...prev,
-          messagesSent: prev.messagesSent + 1
-        }));
-      }
-    } catch (error) {
-      throw error;
-    }
-  }, [connectionState, messageQueue, messageQueueSize, compressionEnabled, monitoringEnabled]);
+    /**
+     * Send message through WebSocket
+     */
+    const sendMessage = useCallback(async (event: string, data: any) => {
+        if (!wsClient.current || !isConnected) {
+            const queuedMessage: QueuedMessage = {
+                event,
+                data,
+                timestamp: new Date().toISOString()
+            };
+            
+            if (messageQueueRef.current.length < messageQueueSize) {
+                messageQueueRef.current.push(queuedMessage);
+            }
+            throw new Error('WebSocket not connected');
+        }
 
-  // Event listener management
-  const addListener = useCallback((event: string, callback: Function) => {
-    wsClientRef.current?.on(event, callback);
-  }, []);
+        try {
+            await wsClient.current.send(event, data, {
+                retry: true,
+                compress: compressionEnabled
+            });
+            metricsRef.current.messagesSent++;
+        } catch (error) {
+            throw error;
+        }
+    }, [isConnected, messageQueueSize, compressionEnabled]);
 
-  const removeListener = useCallback((event: string, callback: Function) => {
-    wsClientRef.current?.off(event, callback);
-  }, []);
+    /**
+     * Add event listener
+     */
+    const addListener = useCallback((event: string, callback: Function) => {
+        wsClient.current?.on(event, callback);
+    }, []);
 
-  // Metrics and monitoring
-  const updateMetrics = useCallback(() => {
-    if (monitoringEnabled && connectionState === ConnectionState.CONNECTED) {
-      setMetrics(prev => ({
-        ...prev,
-        uptime: Math.floor((Date.now() - startTimeRef.current) / 1000)
-      }));
-    }
-  }, [monitoringEnabled, connectionState]);
+    /**
+     * Remove event listener
+     */
+    const removeListener = useCallback((event: string, callback: Function) => {
+        wsClient.current?.off(event, callback);
+    }, []);
 
-  // Connection monitoring setup
-  useEffect(() => {
-    if (monitoringEnabled) {
-      metricsIntervalRef.current = setInterval(updateMetrics, 1000);
-    }
+    /**
+     * Get connection metrics
+     */
+    const getMetrics = useCallback((): ConnectionMetrics => {
+        return { ...metricsRef.current };
+    }, []);
 
-    return () => {
-      if (metricsIntervalRef.current) {
-        clearInterval(metricsIntervalRef.current);
-      }
+    /**
+     * Clear message queue
+     */
+    const clearMessageQueue = useCallback(() => {
+        messageQueueRef.current = [];
+    }, []);
+
+    /**
+     * Get pending messages
+     */
+    const getPendingMessages = useCallback((): QueuedMessage[] => {
+        return [...messageQueueRef.current];
+    }, []);
+
+    /**
+     * Set up WebSocket event listeners
+     */
+    useEffect(() => {
+        if (!wsClient.current) return;
+
+        const handleConnectionHealth = (data: any) => {
+            if (data.status === 'connected') {
+                setIsConnected(true);
+                setConnectionState(ConnectionState.CONNECTED);
+            } else {
+                setIsConnected(false);
+                setConnectionState(ConnectionState.DISCONNECTED);
+            }
+            metricsRef.current.lastHeartbeat = new Date().toISOString();
+        };
+
+        const handleMessage = () => {
+            metricsRef.current.messagesReceived++;
+        };
+
+        wsClient.current.on(WS_EVENTS.CONNECTION_HEALTH, handleConnectionHealth);
+        wsClient.current.on(WS_EVENTS.CHAT_MESSAGE, handleMessage);
+
+        return () => {
+            if (wsClient.current) {
+                wsClient.current.off(WS_EVENTS.CONNECTION_HEALTH, handleConnectionHealth);
+                wsClient.current.off(WS_EVENTS.CHAT_MESSAGE, handleMessage);
+            }
+        };
+    }, []);
+
+    /**
+     * Handle automatic connection
+     */
+    useEffect(() => {
+        if (autoConnect) {
+            connect();
+        }
+
+        return () => {
+            disconnect();
+        };
+    }, [autoConnect, connect, disconnect]);
+
+    /**
+     * Monitor connection uptime
+     */
+    useEffect(() => {
+        if (monitoringEnabled && isConnected) {
+            uptimeInterval.current = setInterval(() => {
+                metricsRef.current.uptime += 1;
+            }, 1000);
+        }
+
+        return () => {
+            if (uptimeInterval.current) {
+                clearInterval(uptimeInterval.current);
+            }
+        };
+    }, [monitoringEnabled, isConnected]);
+
+    return {
+        isConnected,
+        connectionState,
+        connect,
+        disconnect,
+        sendMessage,
+        addListener,
+        removeListener,
+        getMetrics,
+        clearMessageQueue,
+        getPendingMessages
     };
-  }, [monitoringEnabled, updateMetrics]);
-
-  // WebSocket event handlers setup
-  useEffect(() => {
-    const handleConnectionHealth = (data: { connected: boolean }) => {
-      if (data.connected) {
-        setMetrics(prev => ({
-          ...prev,
-          lastHeartbeat: Date.now()
-        }));
-      }
-    };
-
-    const handleError = () => {
-      setConnectionState(ConnectionState.ERROR);
-    };
-
-    if (wsClientRef.current) {
-      wsClientRef.current.on(WS_EVENTS.CONNECTION_HEALTH, handleConnectionHealth);
-      wsClientRef.current.on(WS_EVENTS.ERROR, handleError);
-    }
-
-    return () => {
-      if (wsClientRef.current) {
-        wsClientRef.current.off(WS_EVENTS.CONNECTION_HEALTH, handleConnectionHealth);
-        wsClientRef.current.off(WS_EVENTS.ERROR, handleError);
-      }
-    };
-  }, []);
-
-  // Auto-connect on mount if enabled
-  useEffect(() => {
-    if (autoConnect) {
-      connect();
-    }
-
-    return () => {
-      disconnect();
-    };
-  }, [autoConnect, connect, disconnect]);
-
-  // Utility methods
-  const getMetrics = useCallback(() => metrics, [metrics]);
-  const clearMessageQueue = useCallback(() => setMessageQueue([]), []);
-  const getPendingMessages = useCallback(() => messageQueue, [messageQueue]);
-
-  return {
-    isConnected: connectionState === ConnectionState.CONNECTED,
-    connectionState,
-    connect,
-    disconnect,
-    sendMessage,
-    addListener,
-    removeListener,
-    getMetrics,
-    clearMessageQueue,
-    getPendingMessages
-  };
 };

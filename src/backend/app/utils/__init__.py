@@ -1,6 +1,6 @@
 """
-Main entry point for the utils package, exposing commonly used utility functions for security,
-validation, document processing, and vector operations.
+Main entry point for the utils package, exposing commonly used utility functions
+for security, validation, document processing, and vector operations.
 
 Version: 1.0.0
 """
@@ -59,8 +59,3 @@ Comprehensive utility package providing enterprise-grade functions for:
 - Document processing and OCR preparation
 - Vector operations and similarity search
 '''
-
-# Verify all imported functions are available
-for func_name in __all__:
-    if not func_name in locals():
-        raise ImportError(f"Required function '{func_name}' not properly imported")

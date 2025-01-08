@@ -15,20 +15,17 @@ spec:
       # Default resource limits if not specified
       default:
         cpu: "500m"      # 0.5 CPU cores
-        memory: "512Mi"  # 512 MiB memory
-      
+        memory: "512Mi"  # 512 Mebibytes
       # Default resource requests if not specified
       defaultRequest:
         cpu: "250m"      # 0.25 CPU cores
-        memory: "256Mi"  # 256 MiB memory
-      
+        memory: "256Mi"  # 256 Mebibytes
       # Maximum allowed resource limits
       max:
         cpu: "4"         # 4 CPU cores
-        memory: "8Gi"    # 8 GiB memory
+        memory: "8Gi"    # 8 Gibibytes
         nvidia.com/gpu: "1"  # Maximum 1 GPU per container
-      
       # Minimum required resources
       min:
         cpu: "100m"      # 0.1 CPU cores
-        memory: "128Mi"  # 128 MiB memory
+        memory: "128Mi"  # 128 Mebibytes

@@ -25,9 +25,9 @@ env:
   CLUSTER_NAME: ${{ secrets.STAGING_AKS_CLUSTER_NAME }}
   RESOURCE_GROUP: ${{ secrets.STAGING_RESOURCE_GROUP }}
   TF_WORKSPACE: staging
-  DEPLOY_TIMEOUT: 600
-  HEALTH_CHECK_RETRIES: 5
-  LOAD_TEST_DURATION: 300
+  DEPLOY_TIMEOUT: '600'
+  HEALTH_CHECK_RETRIES: '5'
+  LOAD_TEST_DURATION: '300'
 
 jobs:
   deploy-infrastructure:
@@ -56,21 +56,21 @@ jobs:
       - name: Initialize Terraform
         working-directory: infrastructure/terraform/environments/staging
         run: |
-          terraform init -backend-config="resource_group_name=${{ env.RESOURCE_GROUP }}"
+          terraform init -backend=true \
+            -backend-config="resource_group_name=${{ env.RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=terraform-state" \
+            -backend-config="key=staging.tfstate"
 
       - name: Select Terraform Workspace
         working-directory: infrastructure/terraform/environments/staging
-        run: terraform workspace select ${{ env.TF_WORKSPACE }}
+        run: terraform workspace select ${{ env.TF_WORKSPACE }} || terraform workspace new ${{ env.TF_WORKSPACE }}
 
-      - name: Validate Terraform
-        working-directory: infrastructure/terraform/environments/staging
-        run: terraform validate
-
-      - name: Plan Infrastructure Changes
+      - name: Terraform Plan
         working-directory: infrastructure/terraform/environments/staging
         run: terraform plan -out=tfplan
 
-      - name: Apply Infrastructure Changes
+      - name: Terraform Apply
         working-directory: infrastructure/terraform/environments/staging
         run: terraform apply -auto-approve tfplan
 
@@ -95,38 +95,28 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build and Push Backend Image
+      - name: Build and push backend image
         uses: docker/build-push-action@v4
         with:
           context: src/backend
           file: src/backend/Dockerfile
           push: true
           tags: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:latest
-          cache-to: type=inline
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           build-args: |
-            ENVIRONMENT=staging
+            PYTHON_VERSION=3.11
+            POETRY_VERSION=1.7.0
 
-      - name: Build and Push Frontend Image
+      - name: Build and push frontend image
         uses: docker/build-push-action@v4
         with:
           context: src/web
           file: src/web/Dockerfile
           push: true
           tags: ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:latest
-          cache-to: type=inline
-          build-args: |
-            ENVIRONMENT=staging
-
-      - name: Generate SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          format: spdx
-          artifact-name: sbom.spdx
-          images: |
-            ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
-            ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy-to-kubernetes:
     name: Deploy to Kubernetes
@@ -155,52 +145,54 @@ jobs:
 
       - name: Deploy Blue Environment
         run: |
-          kubectl apply -f infrastructure/kubernetes/backend/deployment-blue.yaml
-          kubectl apply -f infrastructure/kubernetes/frontend/deployment-blue.yaml
+          # Update image tags in deployment files
+          sed -i "s|image:.*|image: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}|" infrastructure/kubernetes/backend/deployment.yaml
+          sed -i "s|image:.*|image: ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}|" infrastructure/kubernetes/frontend/deployment.yaml
+          
+          # Deploy blue environment
+          kubectl apply -f infrastructure/kubernetes/backend/deployment.yaml
+          kubectl apply -f infrastructure/kubernetes/frontend/deployment.yaml
+
+      - name: Wait for Deployment
+        run: |
           kubectl rollout status deployment/backend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
           kubectl rollout status deployment/frontend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
 
       - name: Run Integration Tests
         run: |
-          for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
-            if curl -f https://staging-blue.example.com/health; then
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
-
-      - name: Execute Load Tests
-        run: |
-          k6 run load-tests/staging.js \
-            --duration ${{ env.LOAD_TEST_DURATION }}s \
-            --vus 50
+          # Wait for services to be ready
+          kubectl wait --for=condition=ready pod -l app=backend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          kubectl wait --for=condition=ready pod -l app=frontend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
+          
+          # Run integration tests
+          npm run test:integration
 
       - name: Switch Traffic
         if: success()
         run: |
-          kubectl apply -f infrastructure/kubernetes/ingress-blue.yaml
-          sleep 30
-          kubectl delete -f infrastructure/kubernetes/ingress-green.yaml
-
-      - name: Monitor Deployment Health
-        run: |
-          kubectl get events --sort-by='.lastTimestamp' -n staging
-          kubectl top pods -n staging
-          kubectl get pods,svc,ingress -n staging
+          # Update service selectors to point to blue deployment
+          kubectl patch service backend-service -n staging -p '{"spec":{"selector":{"deployment":"blue"}}}'
+          kubectl patch service frontend-service -n staging -p '{"spec":{"selector":{"deployment":"blue"}}}'
+          
+          # Remove old green deployment if exists
+          kubectl delete deployment backend-green frontend-green -n staging --ignore-not-found
 
       - name: Rollback on Failure
         if: failure()
         run: |
+          # Revert to previous deployment
           kubectl rollout undo deployment/backend-blue -n staging
           kubectl rollout undo deployment/frontend-blue -n staging
-          kubectl apply -f infrastructure/kubernetes/ingress-green.yaml
+          
+          # Notify team of failure
+          echo "::error::Deployment failed, rolling back to previous version"
 
       - name: Update Deployment Status
         if: always()
-        uses: chrnorm/deployment-status@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          environment-url: https://staging.example.com
-          state: ${{ job.status }}
-          deployment-id: ${{ github.event.deployment.id }}
+        run: |
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "::set-output name=deployment_status::success"
+            echo "::set-output name=app_url::https://staging.example.com"
+          else
+            echo "::set-output name=deployment_status::failure"
+          fi

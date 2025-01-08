@@ -39,7 +39,7 @@ variable "resource_group_name" {
 # AKS cluster configuration
 variable "aks_config" {
   type = object({
-    cluster_name = string
+    cluster_name       = string
     kubernetes_version = string
     default_node_pool = object({
       name                = string
@@ -124,6 +124,11 @@ variable "network_config" {
       address_prefixes = list(string)
       service_endpoints = list(string)
     }))
+    private_endpoints = list(object({
+      name            = string
+      subnet_name     = string
+      service_name    = string
+    }))
     nsg_rules = list(object({
       name                       = string
       priority                   = number
@@ -136,7 +141,7 @@ variable "network_config" {
       destination_address_prefix = string
     }))
   })
-  description = "Virtual network configuration with subnets and NSG rules"
+  description = "Virtual network configuration including subnets and security rules"
 }
 
 # Monitoring configuration
@@ -144,16 +149,20 @@ variable "monitoring_config" {
   type = object({
     workspace_name     = string
     retention_in_days = number
-    solutions = list(string)
-    metrics_retention_days = number
+    solutions = list(object({
+      solution_name     = string
+      publisher        = string
+      product         = string
+    }))
+    metrics_retention = number
     alert_rules = list(object({
       name            = string
       description     = string
-      severity        = number
-      frequency       = string
-      window_size     = string
-      threshold       = number
-      operator        = string
+      severity       = number
+      frequency      = string
+      window_size    = string
+      threshold      = number
+      operator       = string
     }))
   })
   description = "Monitoring and observability configuration"
@@ -163,21 +172,24 @@ variable "monitoring_config" {
 variable "security_config" {
   type = object({
     key_vault = object({
-      name                = string
-      sku_name            = string
-      soft_delete_days    = number
-      purge_protection    = bool
+      name                    = string
+      sku_name               = string
+      soft_delete_enabled    = bool
+      purge_protection_enabled = bool
     })
     managed_identities = list(object({
-      name               = string
-      role_assignments   = list(string)
+      name        = string
+      role_assignments = list(object({
+        scope     = string
+        role_name = string
+      }))
     }))
     encryption = object({
-      key_source         = string
-      infrastructure_encryption_enabled = bool
+      key_source = string
+      key_type   = string
     })
   })
-  description = "Security configurations for Key Vault and managed identities"
+  description = "Security configurations including Key Vault and managed identities"
 }
 
 # Resource tags

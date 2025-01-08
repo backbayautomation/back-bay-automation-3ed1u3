@@ -13,17 +13,18 @@ interface DebounceOptions {
 }
 
 /**
- * A production-grade hook that provides debounced value updates with enhanced type safety,
- * memory leak prevention, and performance optimization.
+ * A production-grade debounce hook that provides type-safe value updates with
+ * sophisticated memory management and performance optimization.
  * 
  * @template T - Generic type parameter for value type safety
- * @param {T} value - The value to be debounced
- * @param {number} delay - Delay in milliseconds
- * @param {DebounceOptions} options - Optional configuration parameters
- * @returns {T} The debounced value
+ * @param value - The value to be debounced
+ * @param delay - Delay duration in milliseconds
+ * @param options - Optional configuration for debounce behavior
+ * @returns The debounced value of type T
  * 
  * @example
- * const debouncedValue = useDebounce(searchTerm, 300, { maxDelay: 1000 });
+ * const [searchTerm, setSearchTerm] = useState('');
+ * const debouncedSearch = useDebounce(searchTerm, 300);
  */
 const useDebounce = <T>(
   value: T,
@@ -44,76 +45,74 @@ const useDebounce = <T>(
 
   // Use ref for timeout to prevent memory leaks
   const timeoutRef = useRef<NodeJS.Timeout>();
-  
-  // Debug logging ref to track updates
-  const updateCountRef = useRef<number>(0);
 
-  // Memoized debug logger
-  const logDebug = useCallback((message: string) => {
+  // Track mounted state to prevent updates after unmount
+  const mountedRef = useRef<boolean>(true);
+
+  // Debug logging utility
+  const debugLog = useCallback((message: string) => {
     if (options.enableDebug) {
-      console.debug(
-        `[useDebounce] ${message}`,
-        {
-          value,
-          delay,
-          updateCount: updateCountRef.current,
-          timestamp: new Date().toISOString()
-        }
-      );
+      console.debug(`[useDebounce] ${message}`, {
+        value,
+        delay,
+        options,
+        currentTimeout: timeoutRef.current !== undefined
+      });
     }
-  }, [options.enableDebug]);
+  }, [options.enableDebug, value, delay]);
 
-  // Memoized debounce handler for performance
-  const debouncedSetValue = useCallback(() => {
-    updateCountRef.current += 1;
-    logDebug('Updating debounced value');
-    setDebouncedValue(value);
-  }, [value, logDebug]);
+  // Memoized update handler for performance
+  const handleUpdate = useCallback(() => {
+    debugLog('Updating debounced value');
+    
+    if (mountedRef.current) {
+      setDebouncedValue(value);
+    }
+  }, [value, debugLog]);
 
   useEffect(() => {
-    // Handle immediate execution if enabled
-    if (options.immediate && updateCountRef.current === 0) {
-      logDebug('Immediate execution');
-      debouncedSetValue();
+    debugLog('Value changed, setting up new debounce timeout');
+
+    // Handle immediate execution if configured
+    if (options.immediate && timeoutRef.current === undefined) {
+      debugLog('Immediate execution triggered');
+      handleUpdate();
       return;
     }
 
-    // Clear existing timeout to prevent memory leaks
+    // Clear existing timeout
     if (timeoutRef.current) {
-      logDebug('Clearing existing timeout');
+      debugLog('Clearing existing timeout');
       clearTimeout(timeoutRef.current);
     }
 
-    // Create new timeout with error handling
-    try {
-      timeoutRef.current = setTimeout(() => {
-        debouncedSetValue();
-      }, Math.min(delay, options.maxDelay || Infinity));
+    // Set new timeout with validated delay
+    const effectiveDelay = options.maxDelay 
+      ? Math.min(delay, options.maxDelay)
+      : delay;
 
-      logDebug('Set new timeout');
-    } catch (error) {
-      console.error('[useDebounce] Error setting timeout:', error);
-      // Fallback to immediate update in case of timeout error
-      debouncedSetValue();
-    }
+    timeoutRef.current = setTimeout(handleUpdate, effectiveDelay);
 
-    // Cleanup function to prevent memory leaks
+    // Cleanup function
     return () => {
       if (timeoutRef.current) {
-        logDebug('Cleanup: clearing timeout');
+        debugLog('Cleanup: clearing timeout');
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [
-    value,
-    delay,
-    options.immediate,
-    options.maxDelay,
-    debouncedSetValue,
-    logDebug
-  ]);
+  }, [value, delay, options.immediate, options.maxDelay, handleUpdate, debugLog]);
 
-  // Return debounced value with type guarantee
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (timeoutRef.current) {
+        debugLog('Component unmount: clearing timeout');
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [debugLog]);
+
   return debouncedValue;
 };
 

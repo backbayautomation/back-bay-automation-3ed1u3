@@ -59,11 +59,11 @@ resource "azurerm_monitor_action_group" "main" {
 resource "azurerm_monitor_metric_alert" "cpu_alert" {
   name                = "${var.environment}-cpu-alert"
   resource_group_name = var.resource_group_name
-  scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when CPU usage exceeds threshold"
-  severity            = 2
-  frequency           = "PT5M"
-  window_size         = "PT15M"
+  scopes             = [azurerm_application_insights.main.id]
+  description        = "Alert when CPU usage exceeds threshold"
+  severity           = 2
+  frequency          = "PT5M"
+  window_size        = "PT15M"
 
   criteria {
     metric_namespace = "microsoft.insights/components"
@@ -82,11 +82,11 @@ resource "azurerm_monitor_metric_alert" "cpu_alert" {
 resource "azurerm_monitor_metric_alert" "memory_alert" {
   name                = "${var.environment}-memory-alert"
   resource_group_name = var.resource_group_name
-  scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when memory usage exceeds threshold"
-  severity            = 2
-  frequency           = "PT5M"
-  window_size         = "PT15M"
+  scopes             = [azurerm_application_insights.main.id]
+  description        = "Alert when memory usage exceeds threshold"
+  severity           = 2
+  frequency          = "PT5M"
+  window_size        = "PT15M"
 
   criteria {
     metric_namespace = "microsoft.insights/components"
@@ -105,11 +105,11 @@ resource "azurerm_monitor_metric_alert" "memory_alert" {
 resource "azurerm_monitor_metric_alert" "response_time_alert" {
   name                = "${var.environment}-response-time-alert"
   resource_group_name = var.resource_group_name
-  scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when response time exceeds threshold"
-  severity            = 2
-  frequency           = "PT5M"
-  window_size         = "PT15M"
+  scopes             = [azurerm_application_insights.main.id]
+  description        = "Alert when response time exceeds threshold"
+  severity           = 2
+  frequency          = "PT5M"
+  window_size        = "PT15M"
 
   criteria {
     metric_namespace = "microsoft.insights/components"
@@ -127,7 +127,7 @@ resource "azurerm_monitor_metric_alert" "response_time_alert" {
 # Diagnostic settings for comprehensive logging
 resource "azurerm_monitor_diagnostic_setting" "main" {
   name                       = "${var.environment}-ai-catalog-diagnostics"
-  target_resource_id         = azurerm_application_insights.main.id
+  target_resource_id        = azurerm_application_insights.main.id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 
   log {

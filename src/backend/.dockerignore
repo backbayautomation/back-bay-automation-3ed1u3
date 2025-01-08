@@ -32,47 +32,24 @@ logs/
 tmp/
 
 # IDE specific
-.idea/
-.vscode/
+.DS_Store
+*.swp
+*.swo
 
-# Local development artifacts
-.coverage
-.coverage.*
-.pytest_cache/
-__pycache__/
+# Build and development artifacts
 *.pyc
 *.pyo
 *.pyd
-
-# Temporary files
-tmp/
-*.tmp
-*.temp
-
-# Docker specific
-Dockerfile*
-docker-compose*.yml
-.docker/
-
-# Certificate files
-*.crt
-*.key
-*.pem
-*.p12
-*.pfx
-
-# Local development environment
-.env
-.env.local
-.env.*.local
-.env.development
-.env.test
-.env.production
-
-# Debug files
-*.debug
-debug/
-
-# System files
-.DS_Store
-Thumbs.db
+.Python
+env/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg

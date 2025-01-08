@@ -23,7 +23,7 @@ spec:
   # Internal-only service type for security isolation
   type: ClusterIP
   
-  # Expose monitoring and management ports
+  # Exposed ports for monitoring and management
   ports:
     # Prometheus metrics endpoint
     - name: metrics
@@ -37,13 +37,13 @@ spec:
       targetPort: 5555
       protocol: TCP
   
-  # Target pod selection using deployment labels
+  # Label selector to target Celery worker pods
   selector:
     app: celery
     component: worker
   
-  # No session affinity needed for monitoring services
+  # Session handling configuration
   sessionAffinity: None
   
-  # Cluster-wide internal traffic policy
+  # Internal traffic policy for cluster routing
   internalTrafficPolicy: Cluster

@@ -1,14 +1,15 @@
 /**
  * Barrel export file for the DocumentViewer component module.
- * Provides centralized exports for document viewing functionality with comprehensive TypeScript support.
+ * Provides centralized exports for document viewing components and utilities
+ * with comprehensive TypeScript type support.
  * @version 1.0.0
  */
 
 // Context and hooks exports
 export { 
-    default as DocumentContext,
+    DocumentContext,
     DocumentContextProvider,
-    useDocumentContext 
+    useDocumentContext
 } from './DocumentContext';
 
 // Main component exports
@@ -20,14 +21,3 @@ export type {
     DocumentContextState,
     DocumentContextProviderProps 
 } from './DocumentContext';
-
-// Re-export types from DocumentPreview for external use
-export type { 
-    DocumentPreviewProps,
-    RowData 
-} from './DocumentPreview';
-
-// Re-export types from RelevanceIndicator for external use
-export type { 
-    RelevanceIndicatorProps 
-} from './RelevanceIndicator';

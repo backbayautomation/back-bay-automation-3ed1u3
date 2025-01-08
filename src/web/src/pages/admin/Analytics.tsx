@@ -1,192 +1,171 @@
-import React, { useCallback, useState, useEffect } from 'react';
-import { withErrorBoundary } from 'react-error-boundary';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Typography, CircularProgress, Alert } from '@mui/material';
+import { withErrorBoundary } from 'react-error-boundary';
 import AdminLayout from '../../layouts/AdminLayout';
 import AnalyticsDashboard from '../../components/admin/AnalyticsDashboard/AnalyticsDashboard';
 
-// Constants for analytics configuration
-const REFRESH_INTERVAL = 60000; // 1 minute in milliseconds
+// Constants for component configuration
+const REFRESH_INTERVAL = 60000; // 1 minute refresh interval
 const ERROR_MESSAGES = {
-  LOAD_ERROR: 'Failed to load analytics data. Please try again.',
-  REFRESH_ERROR: 'Error refreshing analytics data. Data may be stale.',
-};
+  LOAD_ERROR: 'Failed to load analytics data',
+  REFRESH_ERROR: 'Error refreshing analytics data'
+} as const;
 
-// Interface for component props
+// Props interface for Analytics page
 interface AnalyticsPageProps {
   refreshInterval?: number;
   initialDateRange?: {
-    start: Date;
-    end: Date;
+    startDate: Date;
+    endDate: Date;
   };
 }
 
-// Analytics page component with error boundary and performance optimization
-const AnalyticsPage: React.FC<AnalyticsPageProps> = React.memo(({
+// Error boundary fallback component
+const ErrorFallback = ({ error }: { error: Error }) => (
+  <Box sx={styles.errorContainer}>
+    <Alert 
+      severity="error" 
+      variant="filled"
+      role="alert"
+      aria-live="assertive"
+    >
+      {error.message}
+    </Alert>
+  </Box>
+);
+
+/**
+ * Analytics page component providing comprehensive system metrics and performance monitoring
+ * Implements real-time updates, error handling, and accessibility features
+ */
+const AnalyticsPage: React.FC<AnalyticsPageProps> = ({
   refreshInterval = REFRESH_INTERVAL,
   initialDateRange
 }) => {
-  // State management
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  // State for loading and error handling
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-  // Handle data export
-  const handleExport = useCallback((format: string) => {
+  // Handle data refresh with error boundary
+  const handleRefresh = useCallback(async () => {
     try {
-      // Analytics tracking for export action
-      window.gtag?.('event', 'analytics_export', {
-        format,
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error('Export error:', error);
-      setError('Failed to export analytics data');
+      setIsLoading(true);
+      setError(null);
+      // Actual data fetching is handled by AnalyticsDashboard component
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(ERROR_MESSAGES.REFRESH_ERROR));
+    } finally {
+      setIsLoading(false);
     }
   }, []);
 
-  // Effect for initial loading state
+  // Initial data load
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Error handling callback
-  const handleError = useCallback((error: Error) => {
-    setError(error.message);
-    // Log error to monitoring service
-    console.error('Analytics Error:', error);
-    window.gtag?.('event', 'analytics_error', {
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }, []);
+    handleRefresh();
+  }, [handleRefresh]);
 
   return (
     <AdminLayout>
-      <Box
-        component="main"
-        role="main"
-        aria-label="Analytics Dashboard"
-        sx={{
-          height: '100%',
-          overflow: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '24px',
-          padding: '24px',
-          backgroundColor: 'background.default'
-        }}
-      >
-        {/* Header Section */}
-        <Box
-          sx={{
-            marginBottom: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '8px'
-          }}
-        >
-          <Typography
-            variant="h4"
-            component="h1"
-            sx={{
-              fontSize: '24px',
-              fontWeight: '500',
-              color: 'text.primary',
-              lineHeight: 1.2
-            }}
+      <Box sx={styles.container}>
+        <Box sx={styles.header}>
+          <Typography 
+            variant="h4" 
+            component="h1" 
+            sx={styles.title}
+            aria-label="Analytics Dashboard"
           >
             Analytics Dashboard
           </Typography>
-          <Typography
-            variant="body1"
-            sx={{
-              fontSize: '16px',
-              color: 'text.secondary',
-              marginTop: '8px',
-              maxWidth: '800px'
-            }}
+          <Typography 
+            variant="body1" 
+            color="text.secondary" 
+            sx={styles.description}
           >
-            Monitor system performance, usage statistics, and document processing metrics in real-time.
+            Monitor system performance, usage statistics, and key metrics in real-time
           </Typography>
         </Box>
 
-        {/* Error Display */}
-        {error && (
-          <Alert 
-            severity="error" 
-            onClose={() => setError(null)}
-            sx={{ maxWidth: '800px', margin: '24px auto' }}
-          >
-            {error}
-          </Alert>
-        )}
-
-        {/* Loading State */}
-        {isLoading ? (
-          <Box
-            sx={{
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              minHeight: '200px'
-            }}
-          >
+        {isLoading && !error && (
+          <Box sx={styles.loadingContainer}>
             <CircularProgress 
+              size={40} 
               aria-label="Loading analytics data"
-              size={40}
             />
           </Box>
-        ) : (
-          // Analytics Dashboard Component
+        )}
+
+        {error && (
+          <Box sx={styles.errorContainer}>
+            <Alert 
+              severity="error" 
+              variant="filled"
+              role="alert"
+              aria-live="assertive"
+            >
+              {error.message}
+            </Alert>
+          </Box>
+        )}
+
+        {!isLoading && !error && (
           <AnalyticsDashboard
             refreshInterval={refreshInterval}
-            onExport={handleExport}
+            onExport={(format) => {
+              console.log(`Exporting analytics data in ${format} format`);
+              // TODO: Implement export functionality
+            }}
           />
         )}
       </Box>
     </AdminLayout>
   );
-});
+};
 
-// Error boundary wrapper for the analytics page
-const AnalyticsPageWithErrorBoundary = withErrorBoundary(AnalyticsPage, {
-  FallbackComponent: ({ error }) => (
-    <AdminLayout>
-      <Box
-        sx={{
-          padding: '24px',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '16px'
-        }}
-      >
-        <Typography variant="h5" color="error">
-          Error Loading Analytics
-        </Typography>
-        <Typography variant="body1">
-          {error.message || ERROR_MESSAGES.LOAD_ERROR}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Please refresh the page or contact support if the problem persists.
-        </Typography>
-      </Box>
-    </AdminLayout>
-  ),
+// Styles object for component
+const styles = {
+  container: {
+    padding: '24px',
+    height: '100%',
+    overflow: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px'
+  },
+  header: {
+    marginBottom: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  title: {
+    fontSize: '24px',
+    fontWeight: '500',
+    color: 'text.primary',
+    lineHeight: 1.2
+  },
+  description: {
+    fontSize: '16px',
+    color: 'text.secondary',
+    marginTop: '8px',
+    maxWidth: '800px'
+  },
+  loadingContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: '200px'
+  },
+  errorContainer: {
+    maxWidth: '800px',
+    margin: '24px auto'
+  }
+} as const;
+
+// Export enhanced component with error boundary
+export default withErrorBoundary(AnalyticsPage, {
+  FallbackComponent: ErrorFallback,
   onError: (error) => {
     console.error('Analytics Page Error:', error);
-    // Log to monitoring service
-    window.gtag?.('event', 'analytics_page_error', {
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    // TODO: Add error reporting service integration
   }
 });
-
-// Display name for debugging
-AnalyticsPageWithErrorBoundary.displayName = 'AnalyticsPage';
-
-export default AnalyticsPageWithErrorBoundary;

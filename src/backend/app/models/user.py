@@ -1,20 +1,23 @@
 """
-SQLAlchemy model defining the User entity for authentication, authorization and multi-tenant 
-user management with enhanced security and audit features.
+SQLAlchemy model defining the User entity with comprehensive security, audit,
+and multi-tenant features for the AI-powered Product Catalog Search System.
 
 Version: 1.0.0
 """
 
 from datetime import datetime
-from enum import Enum
 import re
-from typing import Optional
-from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime, Integer  # version: ^1.4.0
-from sqlalchemy.dialects.postgresql import UUID  # version: ^1.4.0
-from sqlalchemy.orm import relationship, validates  # version: ^1.4.0
+from enum import Enum
+from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime, Integer
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship, validates
 
 from ..db.base import Base
 from ..core.security import get_password_hash
+
+# Password validation regex
+PASSWORD_REGEX = r"^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{12,}$"
+EMAIL_REGEX = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
 
 class UserRole(Enum):
     """Enumeration defining possible user roles in the system."""
@@ -23,28 +26,33 @@ class UserRole(Enum):
     REGULAR_USER = "regular_user"
 
 class User(Base):
-    """SQLAlchemy model representing a user with enhanced security and audit features."""
-    __tablename__ = 'users'
+    """
+    SQLAlchemy model representing a user with enhanced security and audit features.
+    Implements comprehensive user management with role-based access control and
+    multi-tenant security measures.
+    """
+    __tablename__ = "users"
+    __table_args__ = {"schema": "tenant"}
 
     # Primary and Foreign Key Fields
     id = Column(UUID, primary_key=True, index=True,
                doc="Unique identifier for the user")
-    org_id = Column(UUID, ForeignKey('organizations.id', ondelete='CASCADE'),
+    org_id = Column(UUID, ForeignKey("tenant.organizations.id", ondelete="CASCADE"),
                    nullable=False, index=True,
                    doc="Organization ID for tenant isolation")
-    client_id = Column(UUID, ForeignKey('clients.id', ondelete='CASCADE'),
+    client_id = Column(UUID, ForeignKey("tenant.clients.id", ondelete="CASCADE"),
                       nullable=True, index=True,
-                      doc="Client ID for multi-tenant access")
+                      doc="Client ID for client-specific users")
 
     # User Information Fields
     email = Column(String(255), unique=True, nullable=False, index=True,
-                  doc="User's email address")
+                  doc="User's email address for authentication")
     hashed_password = Column(String(255), nullable=False,
                            doc="Securely hashed user password")
     full_name = Column(String(100), nullable=False,
                       doc="User's full name")
     role = Column(String(20), nullable=False, default=UserRole.REGULAR_USER.value,
-                 doc="User's role in the system")
+                 doc="User's role for access control")
     is_active = Column(Boolean, nullable=False, default=True,
                       doc="User account status")
 
@@ -78,35 +86,29 @@ class User(Base):
         Hash and set user password with validation.
 
         Args:
-            password: Plain text password to hash
+            password (str): Plain text password to hash and set
 
         Raises:
             ValueError: If password doesn't meet complexity requirements
         """
-        # Validate password complexity
-        if len(password) < 12:
-            raise ValueError("Password must be at least 12 characters long")
-        if not re.search(r"[A-Z]", password):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", password):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"\d", password):
-            raise ValueError("Password must contain at least one number")
-        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-            raise ValueError("Password must contain at least one special character")
+        if not re.match(PASSWORD_REGEX, password):
+            raise ValueError(
+                "Password must be at least 12 characters long and contain "
+                "at least one letter, one number, and one special character"
+            )
 
         self.hashed_password = get_password_hash(password)
         self.failed_login_attempts = 0
         self.updated_at = datetime.utcnow()
 
-    @validates('email')
+    @validates("email")
     def validate_email(self, key: str, email: str) -> str:
         """
         Validate email format and uniqueness.
 
         Args:
-            key: Field name being validated
-            email: Email address to validate
+            key (str): Field name being validated
+            email (str): Email address to validate
 
         Returns:
             str: Validated email address
@@ -117,24 +119,29 @@ class User(Base):
         if not email or not isinstance(email, str):
             raise ValueError("Email must be a non-empty string")
 
-        # Validate email format
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-        if not re.match(email_pattern, email):
+        if not re.match(EMAIL_REGEX, email):
             raise ValueError("Invalid email format")
 
-        # Convert to lowercase for consistency
-        email = email.lower()
+        email = email.lower().strip()
+        
+        # Check uniqueness (excluding self in case of updates)
+        existing = User.query.filter(
+            User.email == email,
+            User.id != self.id
+        ).first()
+        if existing:
+            raise ValueError("Email already registered")
 
         return email
 
-    @validates('role')
+    @validates("role")
     def validate_role(self, key: str, role: str) -> str:
         """
         Validate user role assignment.
 
         Args:
-            key: Field name being validated
-            role: Role to validate
+            key (str): Field name being validated
+            role (str): Role to validate
 
         Returns:
             str: Validated role value
@@ -147,42 +154,34 @@ class User(Base):
         except ValueError:
             raise ValueError(f"Invalid role: {role}")
 
-    @validates('client_id')
-    def validate_client_id(self, key: str, client_id: Optional[UUID]) -> Optional[UUID]:
-        """
-        Validate client ID based on user role.
-
-        Args:
-            key: Field name being validated
-            client_id: Client ID to validate
-
-        Returns:
-            Optional[UUID]: Validated client ID
-
-        Raises:
-            ValueError: If client ID validation fails
-        """
-        if self.role == UserRole.SYSTEM_ADMIN.value:
-            return None
-        if not client_id:
-            raise ValueError("Client ID is required for non-system admin users")
-        return client_id
-
-    def validate_tenant_access(self, tenant_id: UUID) -> bool:
+    @validates("client_id")
+    def validate_tenant_access(self, key: str, client_id: UUID) -> UUID:
         """
         Validate user's tenant access permissions.
 
         Args:
-            tenant_id: Tenant ID to validate access for
+            key (str): Field name being validated
+            client_id (UUID): Client ID to validate
 
         Returns:
-            bool: True if access is allowed, False otherwise
+            UUID: Validated client ID
+
+        Raises:
+            ValueError: If tenant access is invalid
         """
-        if self.role == UserRole.SYSTEM_ADMIN.value:
-            return True
-        if self.role == UserRole.CLIENT_ADMIN.value:
-            return str(self.client_id) == str(tenant_id)
-        return str(self.client_id) == str(tenant_id)
+        if client_id is None and self.role != UserRole.SYSTEM_ADMIN.value:
+            raise ValueError("Non-system admin users must be associated with a client")
+
+        if client_id is not None:
+            # Verify client belongs to user's organization
+            client = Client.query.filter_by(
+                id=client_id,
+                org_id=self.org_id
+            ).first()
+            if not client:
+                raise ValueError("Invalid client ID for organization")
+
+        return client_id
 
     def __repr__(self) -> str:
         """String representation of the User instance."""

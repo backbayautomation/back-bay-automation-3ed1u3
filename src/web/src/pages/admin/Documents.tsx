@@ -8,25 +8,23 @@ import AdminLayout from '../../layouts/AdminLayout';
 import DocumentList from '../../components/admin/DocumentProcessing/DocumentList';
 import UploadForm from '../../components/admin/DocumentProcessing/UploadForm';
 import ProcessingQueue from '../../components/admin/DocumentProcessing/ProcessingQueue';
+import { Document } from '../../types/document';
 import { useWebSocket } from '../../hooks/useWebSocket';
 
-// Interface for tab panel props
 interface TabPanelProps {
   children: React.ReactNode;
   value: number;
   index: number;
-  role: string;
-  id: string;
-  'aria-labelledby': string;
+  role?: string;
+  id?: string;
+  'aria-labelledby'?: string;
 }
 
-// Interface for Documents component props
 interface DocumentsProps {
   className?: string;
   analyticsEnabled?: boolean;
 }
 
-// Tab panel component with accessibility support
 const TabPanel = React.memo<TabPanelProps>(({
   children,
   value,
@@ -36,8 +34,9 @@ const TabPanel = React.memo<TabPanelProps>(({
   <div
     role="tabpanel"
     hidden={value !== index}
+    id={`documents-tabpanel-${index}`}
+    aria-labelledby={`documents-tab-${index}`}
     {...props}
-    style={{ width: '100%' }}
   >
     {value === index && (
       <Box sx={{ p: 3 }}>
@@ -47,55 +46,38 @@ const TabPanel = React.memo<TabPanelProps>(({
   </div>
 ));
 
-TabPanel.displayName = 'TabPanel';
-
-// Main Documents component
 const Documents = React.memo<DocumentsProps>(({
   className,
   analyticsEnabled = true
 }) => {
-  // State management
   const [activeTab, setActiveTab] = useState(0);
   const [refreshTrigger, setRefreshTrigger] = useState(false);
   const { enqueueSnackbar } = useSnackbar();
 
-  // WebSocket connection for real-time updates
-  const { addListener, removeListener } = useWebSocket({
+  // WebSocket setup for real-time updates
+  const { isConnected, addListener, removeListener } = useWebSocket({
     baseUrl: `${process.env.VITE_WS_URL}/documents`,
     autoConnect: true,
     monitoringEnabled: true
   });
 
-  // Track component mount for analytics
-  useEffect(() => {
-    if (analyticsEnabled) {
-      Analytics.track('admin_documents_view', {
-        timestamp: new Date().toISOString()
-      });
-    }
-  }, [analyticsEnabled]);
-
   // Handle document upload success
-  const handleUploadSuccess = useCallback((document) => {
-    enqueueSnackbar(`Document "${document.filename}" uploaded successfully`, {
-      variant: 'success'
-    });
+  const handleUploadSuccess = useCallback((document: Document) => {
+    enqueueSnackbar('Document uploaded successfully', { variant: 'success' });
     setRefreshTrigger(prev => !prev);
 
     if (analyticsEnabled) {
-      Analytics.track('document_upload_success', {
+      Analytics.track('document_uploaded', {
         documentId: document.id,
-        filename: document.filename,
-        type: document.type
+        documentType: document.type,
+        timestamp: new Date().toISOString()
       });
     }
   }, [enqueueSnackbar, analyticsEnabled]);
 
   // Handle document upload error
-  const handleUploadError = useCallback((error) => {
-    enqueueSnackbar(`Upload failed: ${error.message}`, {
-      variant: 'error'
-    });
+  const handleUploadError = useCallback((error: Error) => {
+    enqueueSnackbar(error.message || 'Failed to upload document', { variant: 'error' });
 
     if (analyticsEnabled) {
       Analytics.track('document_upload_error', {
@@ -106,17 +88,16 @@ const Documents = React.memo<DocumentsProps>(({
   }, [enqueueSnackbar, analyticsEnabled]);
 
   // Handle document processing completion
-  const handleProcessingComplete = useCallback((document) => {
-    enqueueSnackbar(`Document "${document.filename}" processing completed`, {
-      variant: 'success'
-    });
+  const handleProcessingComplete = useCallback((document: Document) => {
+    enqueueSnackbar(`Document "${document.filename}" processing completed`, { variant: 'success' });
     setRefreshTrigger(prev => !prev);
 
     if (analyticsEnabled) {
-      Analytics.track('document_processing_complete', {
+      Analytics.track('document_processing_completed', {
         documentId: document.id,
-        filename: document.filename,
-        processingTime: document.processed_at
+        processingTime: document.processed_at ? 
+          new Date(document.processed_at).getTime() - new Date(document.createdAt).getTime() : 
+          null
       });
     }
   }, [enqueueSnackbar, analyticsEnabled]);
@@ -126,19 +107,18 @@ const Documents = React.memo<DocumentsProps>(({
     setActiveTab(newValue);
 
     if (analyticsEnabled) {
-      Analytics.track('documents_tab_change', {
+      Analytics.track('document_tab_changed', {
         tabIndex: newValue,
         tabName: ['upload', 'documents', 'queue'][newValue]
       });
     }
   }, [analyticsEnabled]);
 
-  // Clean up WebSocket listeners
-  useEffect(() => {
-    return () => {
-      removeListener('document.processing', handleProcessingComplete);
-    };
-  }, [removeListener, handleProcessingComplete]);
+  // Tab accessibility props
+  const a11yProps = useCallback((index: number) => ({
+    id: `documents-tab-${index}`,
+    'aria-controls': `documents-tabpanel-${index}`,
+  }), []);
 
   return (
     <AdminLayout>
@@ -155,63 +135,39 @@ const Documents = React.memo<DocumentsProps>(({
               aria-label="Document management tabs"
               sx={{ borderBottom: 1, borderColor: 'divider' }}
             >
-              <Tab 
-                label="Upload" 
-                id="documents-tab-0"
-                aria-controls="documents-tabpanel-0"
-              />
-              <Tab 
-                label="Documents" 
-                id="documents-tab-1"
-                aria-controls="documents-tabpanel-1"
-              />
-              <Tab 
-                label="Processing Queue" 
-                id="documents-tab-2"
-                aria-controls="documents-tabpanel-2"
-              />
+              <Tab label="Upload Document" {...a11yProps(0)} />
+              <Tab label="Document List" {...a11yProps(1)} />
+              <Tab label="Processing Queue" {...a11yProps(2)} />
             </Tabs>
 
             <ErrorBoundary
-              fallback={
-                <Box sx={{ p: 3, textAlign: 'center' }}>
+              FallbackComponent={({ error }) => (
+                <Box p={3}>
                   <Typography color="error">
-                    An error occurred while loading the content.
+                    Error: {error.message}
                   </Typography>
                 </Box>
-              }
+              )}
               onError={(error) => {
                 if (analyticsEnabled) {
-                  Analytics.track('documents_error', {
+                  Analytics.track('document_error', {
                     error: error.message,
                     timestamp: new Date().toISOString()
                   });
                 }
               }}
             >
-              <TabPanel 
-                value={activeTab} 
-                index={0}
-                role="tabpanel"
-                id="documents-tabpanel-0"
-                aria-labelledby="documents-tab-0"
-              >
+              <TabPanel value={activeTab} index={0}>
                 <UploadForm
+                  clientId={process.env.VITE_CLIENT_ID || ''}
                   onUploadSuccess={handleUploadSuccess}
                   onUploadError={handleUploadError}
-                  allowMultiple={false}
+                  allowMultiple={true}
                   maxFileSize={10 * 1024 * 1024} // 10MB
-                  allowedTypes={['pdf', 'docx', 'xlsx', 'txt']}
                 />
               </TabPanel>
 
-              <TabPanel 
-                value={activeTab} 
-                index={1}
-                role="tabpanel"
-                id="documents-tabpanel-1"
-                aria-labelledby="documents-tab-1"
-              >
+              <TabPanel value={activeTab} index={1}>
                 <DocumentList
                   autoRefresh={true}
                   refreshInterval={30000}
@@ -224,13 +180,7 @@ const Documents = React.memo<DocumentsProps>(({
                 />
               </TabPanel>
 
-              <TabPanel 
-                value={activeTab} 
-                index={2}
-                role="tabpanel"
-                id="documents-tabpanel-2"
-                aria-labelledby="documents-tab-2"
-              >
+              <TabPanel value={activeTab} index={2}>
                 <ProcessingQueue
                   autoRefresh={true}
                   refreshInterval={30000}

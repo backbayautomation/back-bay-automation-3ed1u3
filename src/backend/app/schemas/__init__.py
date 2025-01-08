@@ -1,14 +1,14 @@
 """
-Schema module initialization file that exports all Pydantic models for data validation and serialization.
-Provides a centralized access point for all schema models with comprehensive type safety, security validation,
-and multi-tenant data isolation.
+Schema module initialization file for the AI-powered Product Catalog Search System.
+Provides centralized access to all Pydantic models with comprehensive type safety,
+security validation, and multi-tenant data isolation.
 
 Version: 1.0.0
 """
 
 from typing import List
 
-# Organization schemas
+# Import organization schemas
 from .organization import (
     OrganizationBase,
     OrganizationCreate,
@@ -17,7 +17,7 @@ from .organization import (
     Organization
 )
 
-# User schemas
+# Import user schemas
 from .user import (
     UserBase,
     UserCreate,
@@ -26,7 +26,7 @@ from .user import (
     User
 )
 
-# Document schemas
+# Import document schemas
 from .document import (
     DocumentBase,
     DocumentCreate,
@@ -35,48 +35,29 @@ from .document import (
     Document
 )
 
-# Client schemas
-from .client import (
-    ClientBase,
-    ClientCreate,
-    ClientUpdate,
-    ClientInDB,
-    Client
-)
-
-# Schema version for API compatibility tracking
-__version__ = '1.0.0'
-
 # Define explicit public API
 __all__: List[str] = [
     # Organization schemas
-    'OrganizationBase',
-    'OrganizationCreate',
-    'OrganizationUpdate',
-    'OrganizationInDB',
-    'Organization',
+    "OrganizationBase",
+    "OrganizationCreate", 
+    "OrganizationUpdate",
+    "OrganizationInDB",
+    "Organization",
     
     # User schemas
-    'UserBase',
-    'UserCreate',
-    'UserUpdate',
-    'UserInDB',
-    'User',
+    "UserBase",
+    "UserCreate",
+    "UserUpdate", 
+    "UserInDB",
+    "User",
     
     # Document schemas
-    'DocumentBase',
-    'DocumentCreate',
-    'DocumentUpdate',
-    'DocumentInDB',
-    'Document',
-    
-    # Client schemas
-    'ClientBase',
-    'ClientCreate',
-    'ClientUpdate',
-    'ClientInDB',
-    'Client',
-    
-    # Module metadata
-    '__version__'
+    "DocumentBase",
+    "DocumentCreate",
+    "DocumentUpdate",
+    "DocumentInDB", 
+    "Document"
 ]
+
+# Schema version for API compatibility tracking
+__version__ = "1.0.0"

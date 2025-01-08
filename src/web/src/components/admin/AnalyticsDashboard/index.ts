@@ -14,18 +14,3 @@ export { default as PieChart } from './Charts/PieChart';
 
 // Metrics display component
 export { default as MetricsCard } from './MetricsCard';
-
-// Re-export types from analytics for convenience
-export type {
-  UsageMetrics,
-  DocumentMetrics,
-  PerformanceMetrics,
-  TimeSeriesData,
-  MetricTrend,
-  AnalyticsDashboard as DashboardData
-} from '../../../types/analytics';
-
-export {
-  MetricPeriod,
-  TrendDirection
-} from '../../../types/analytics';

@@ -17,8 +17,9 @@ const ERROR_MESSAGES = {
     NETWORK_ERROR: 'Network error occurred while fetching documents',
     PERMISSION_ERROR: 'Permission denied to access documents',
     GENERAL_ERROR: 'An error occurred while processing your request'
-};
+} as const;
 
+// Interface for component props
 interface DocumentListProps {
     clientId?: string;
     documentType?: DocumentType;
@@ -33,7 +34,17 @@ interface DocumentListProps {
     };
 }
 
-export const DocumentList: React.FC<DocumentListProps> = ({
+// Status chip colors mapping
+const statusColors: Record<ProcessingStatus, 'default' | 'primary' | 'success' | 'error' | 'warning'> = {
+    pending: 'default',
+    queued: 'primary',
+    processing: 'warning',
+    completed: 'success',
+    failed: 'error',
+    cancelled: 'error'
+};
+
+const DocumentList: React.FC<DocumentListProps> = ({
     clientId,
     documentType,
     autoRefresh = true,
@@ -48,35 +59,36 @@ export const DocumentList: React.FC<DocumentListProps> = ({
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [page, setPage] = useState(paginationConfig.initialPage || 1);
-    const [totalItems, setTotalItems] = useState(0);
-    const [selectedItems, setSelectedItems] = useState<string[]>([]);
+    const [total, setTotal] = useState(0);
+    const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
 
     // Refs for cleanup and optimization
-    const refreshIntervalRef = useRef<NodeJS.Timeout>();
+    const refreshTimeoutRef = useRef<NodeJS.Timeout>();
     const abortControllerRef = useRef<AbortController>();
 
     // Memoized fetch function with debouncing
     const fetchDocuments = useCallback(
-        debounce(async (pageNumber: number, signal?: AbortSignal) => {
+        debounce(async (currentPage: number) => {
             try {
+                // Cancel previous request if exists
+                abortControllerRef.current?.abort();
+                abortControllerRef.current = new AbortController();
+
                 setLoading(true);
                 setError(null);
 
                 const response = await getDocumentList({
-                    page: pageNumber,
+                    cursor: undefined,
                     limit: paginationConfig.pageSize || PAGE_SIZE,
                     clientId,
                     type: documentType,
                     sortBy: 'created_at',
-                    order: 'desc',
-                    filters: {}
+                    order: 'desc'
                 });
 
                 setDocuments(response.items);
-                setTotalItems(response.total_count);
+                setTotal(response.total_count);
             } catch (err) {
-                if (signal?.aborted) return;
-
                 const errorMessage = err instanceof Error ? err.message : ERROR_MESSAGES.GENERAL_ERROR;
                 setError(errorMessage);
                 onError?.(err as Error);
@@ -87,50 +99,60 @@ export const DocumentList: React.FC<DocumentListProps> = ({
         [clientId, documentType, paginationConfig.pageSize, onError]
     );
 
-    // Handle document deletion with optimistic updates
-    const handleDelete = async (documentId: string, skipConfirmation = false) => {
+    // Setup auto-refresh
+    useEffect(() => {
+        if (autoRefresh) {
+            const setupRefresh = () => {
+                refreshTimeoutRef.current = setTimeout(() => {
+                    fetchDocuments(page);
+                    setupRefresh();
+                }, refreshInterval);
+            };
+
+            setupRefresh();
+        }
+
+        return () => {
+            if (refreshTimeoutRef.current) {
+                clearTimeout(refreshTimeoutRef.current);
+            }
+            abortControllerRef.current?.abort();
+        };
+    }, [autoRefresh, refreshInterval, fetchDocuments, page]);
+
+    // Initial fetch and page change handler
+    useEffect(() => {
+        fetchDocuments(page);
+    }, [fetchDocuments, page]);
+
+    // Handle document deletion with retry logic
+    const handleDelete = useCallback(async (documentId: string, skipConfirmation = false) => {
         if (!skipConfirmation && !window.confirm('Are you sure you want to delete this document?')) {
             return;
         }
 
-        const originalDocuments = [...documents];
-        try {
-            // Optimistic update
-            setDocuments(docs => docs.filter(doc => doc.id !== documentId));
-            
-            await removeDocument(documentId);
-            onDocumentDeleted?.();
-        } catch (err) {
-            // Revert on failure
-            setDocuments(originalDocuments);
-            setError(ERROR_MESSAGES.GENERAL_ERROR);
-            onError?.(err as Error);
-        }
-    };
+        let retryCount = 0;
+        let success = false;
 
-    // Setup auto-refresh interval
-    useEffect(() => {
-        if (autoRefresh) {
-            refreshIntervalRef.current = setInterval(() => {
-                fetchDocuments(page);
-            }, refreshInterval);
-        }
-
-        return () => {
-            if (refreshIntervalRef.current) {
-                clearInterval(refreshIntervalRef.current);
+        while (!success && retryCount < MAX_RETRY_ATTEMPTS) {
+            try {
+                await removeDocument(documentId);
+                success = true;
+                
+                // Optimistic update
+                setDocuments(prev => prev.filter(doc => doc.id !== documentId));
+                onDocumentDeleted?.();
+            } catch (err) {
+                retryCount++;
+                if (retryCount === MAX_RETRY_ATTEMPTS) {
+                    const errorMessage = err instanceof Error ? err.message : ERROR_MESSAGES.GENERAL_ERROR;
+                    setError(errorMessage);
+                    onError?.(err as Error);
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
             }
-        };
-    }, [autoRefresh, refreshInterval, page, fetchDocuments]);
-
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            if (abortControllerRef.current) {
-                abortControllerRef.current.abort();
-            }
-        };
-    }, []);
+        }
+    }, [onDocumentDeleted, onError]);
 
     // Table columns configuration
     const columns = [
@@ -138,62 +160,51 @@ export const DocumentList: React.FC<DocumentListProps> = ({
             id: 'filename',
             label: 'Document Name',
             sortable: true,
-            render: (doc: Document) => (
-                <Tooltip title={doc.filename} arrow>
-                    <span>{doc.filename}</span>
-                </Tooltip>
-            )
+            render: (document: Document) => document.filename,
+            ariaLabel: 'Document filename'
         },
         {
             id: 'type',
             label: 'Type',
             sortable: true,
-            render: (doc: Document) => (
-                <Chip
-                    label={doc.type.toUpperCase()}
-                    size="small"
-                    color="primary"
-                    variant="outlined"
-                />
-            )
+            render: (document: Document) => document.type.toUpperCase(),
+            ariaLabel: 'Document type'
         },
         {
             id: 'status',
             label: 'Status',
             sortable: true,
-            render: (doc: Document) => (
+            render: (document: Document) => (
                 <Chip
-                    icon={doc.status === 'completed' ? <CheckCircle /> : 
-                          doc.status === 'failed' ? <Error /> : undefined}
-                    label={doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
-                    color={doc.status === 'completed' ? 'success' :
-                           doc.status === 'failed' ? 'error' : 'default'}
-                    size="small"
+                    label={document.status}
+                    color={statusColors[document.status]}
+                    icon={document.status === 'completed' ? <CheckCircle /> : 
+                          document.status === 'failed' ? <Error /> : undefined}
+                    aria-label={`Status: ${document.status}`}
                 />
             )
         },
         {
             id: 'actions',
             label: 'Actions',
-            render: (doc: Document) => (
-                <div style={{ display: 'flex', gap: '8px' }}>
-                    <Tooltip title="Download">
+            render: (document: Document) => (
+                <div>
+                    <Tooltip title="Delete document">
                         <IconButton
-                            size="small"
-                            onClick={() => window.open(`/api/documents/${doc.id}/download`)}
-                            aria-label={`Download ${doc.filename}`}
-                        >
-                            <Download />
-                        </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Delete">
-                        <IconButton
-                            size="small"
-                            onClick={() => handleDelete(doc.id)}
-                            aria-label={`Delete ${doc.filename}`}
-                            color="error"
+                            onClick={() => handleDelete(document.id)}
+                            aria-label="Delete document"
+                            disabled={loading}
                         >
                             <Delete />
+                        </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Download document">
+                        <IconButton
+                            onClick={() => {/* Download implementation */}}
+                            aria-label="Download document"
+                            disabled={loading}
+                        >
+                            <Download />
                         </IconButton>
                     </Tooltip>
                 </div>
@@ -222,18 +233,28 @@ export const DocumentList: React.FC<DocumentListProps> = ({
                     columns={columns}
                     page={page}
                     pageSize={paginationConfig.pageSize || PAGE_SIZE}
-                    total={totalItems}
+                    total={total}
+                    onPageChange={({ page: newPage }) => setPage(newPage)}
                     loading={loading}
-                    onPageChange={({ page: newPage }) => {
-                        setPage(newPage);
-                        fetchDocuments(newPage);
-                    }}
-                    className="document-list-table"
-                    enableVirtualization
+                    emptyMessage="No documents found"
+                    enableVirtualization={true}
                     virtualRowHeight={52}
-                    ariaLabel="Document list table"
-                    getRowAriaLabel={(doc) => `Document ${doc.filename}`}
+                    ariaLabel="Documents table"
+                    getRowAriaLabel={(document) => `Document: ${document.filename}`}
                 />
+
+                {loading && (
+                    <CircularProgress
+                        size={24}
+                        sx={{
+                            position: 'absolute',
+                            top: '50%',
+                            left: '50%',
+                            marginTop: '-12px',
+                            marginLeft: '-12px'
+                        }}
+                    />
+                )}
             </div>
         </ErrorBoundary>
     );

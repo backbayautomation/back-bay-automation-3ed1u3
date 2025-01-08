@@ -14,7 +14,7 @@ metadata:
     component: backend
     security-monitoring: enabled
 rules:
-  # Access to core resources required by backend service
+  # Access to core resources needed by backend service
   - apiGroups: [""]
     resources: ["secrets", "configmaps", "services"]
     verbs: ["get", "list", "watch"]
@@ -52,7 +52,7 @@ metadata:
     component: worker
     security-monitoring: enabled
 rules:
-  # Access to resources required for task processing
+  # Access to resources needed for task processing
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["get", "list", "watch"]

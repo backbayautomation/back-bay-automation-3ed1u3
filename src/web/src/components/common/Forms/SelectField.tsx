@@ -39,19 +39,23 @@ const SelectField: React.FC<SelectFieldProps> = ({
   onChange,
   onBlur,
 }) => {
-  // Handle change events and propagate the selected value(s)
+  // Handle change event and propagate the selected value(s) to parent
   const handleChange = (
     event: React.ChangeEvent<{ value: unknown }>
   ) => {
     onChange(event.target.value as string | number | Array<string | number>);
   };
 
-  // Handle blur events if provided
+  // Handle blur event if provided
   const handleBlur = () => {
     if (onBlur) {
       onBlur();
     }
   };
+
+  // Generate unique ID for accessibility
+  const labelId = `${name}-label`;
+  const helperTextId = `${name}-helper-text`;
 
   return (
     <FormControl
@@ -69,7 +73,9 @@ const SelectField: React.FC<SelectFieldProps> = ({
       }}
     >
       <InputLabel
-        id={`${name}-label`}
+        id={labelId}
+        error={!!error}
+        required={required}
         sx={{
           fontFamily: 'Roboto, sans-serif',
           '&.Mui-error': {
@@ -79,19 +85,22 @@ const SelectField: React.FC<SelectFieldProps> = ({
       >
         {label}
       </InputLabel>
+      
       <Select
-        labelId={`${name}-label`}
+        labelId={labelId}
         id={name}
+        name={name}
         value={value}
         multiple={multiple}
         onChange={handleChange}
         onBlur={handleBlur}
         label={label}
-        aria-describedby={`${name}-helper-text`}
+        error={!!error}
+        aria-describedby={helperTextId}
         MenuProps={{
           PaperProps: {
             sx: {
-              maxHeight: 300, // Reasonable max height for dropdown
+              maxHeight: 300, // Limit dropdown height for better UX
             },
           },
           // Improve keyboard navigation
@@ -100,7 +109,8 @@ const SelectField: React.FC<SelectFieldProps> = ({
         sx={{
           fontFamily: 'Roboto, sans-serif',
           '& .MuiSelect-select': {
-            minHeight: '1.4375em', // Consistent height with other form fields
+            minHeight: '1.4375em',
+            padding: '16.5px 14px', // Consistent with other form fields
           },
         }}
       >
@@ -111,7 +121,10 @@ const SelectField: React.FC<SelectFieldProps> = ({
             sx={{
               fontFamily: 'Roboto, sans-serif',
               '&.Mui-selected': {
-                backgroundColor: 'rgba(0, 102, 204, 0.08)', // Light primary color for selected state
+                backgroundColor: 'rgba(0, 102, 204, 0.08)', // Primary color with opacity
+              },
+              '&.Mui-selected:hover': {
+                backgroundColor: 'rgba(0, 102, 204, 0.12)',
               },
             }}
           >
@@ -119,14 +132,14 @@ const SelectField: React.FC<SelectFieldProps> = ({
           </MenuItem>
         ))}
       </Select>
+
       {(error || helperText) && (
         <FormHelperText
-          id={`${name}-helper-text`}
+          id={helperTextId}
+          error={!!error}
           sx={{
             fontFamily: 'Roboto, sans-serif',
-            '&.Mui-error': {
-              color: '#DC3545', // Error color from design system
-            },
+            margin: '4px 14px 0',
           }}
         >
           {error || helperText}

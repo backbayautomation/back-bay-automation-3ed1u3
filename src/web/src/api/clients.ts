@@ -1,12 +1,12 @@
 /**
- * API client module for handling client-related HTTP requests in the frontend application.
- * Implements CRUD operations for client management with enhanced security, reliability,
- * monitoring, and comprehensive error handling features.
+ * API client module for handling client-related HTTP requests.
+ * Implements CRUD operations for client management with enhanced security,
+ * reliability, monitoring, and comprehensive error handling features.
  * @version 1.0.0
  */
 
 import { AxiosInstance } from 'axios'; // v1.5.0
-import { retry } from 'axios-retry'; // v3.8.0
+import retry from 'axios-retry'; // v3.8.0
 
 import { ApiResponse } from './types';
 import { Client } from '../types/client';
@@ -18,8 +18,8 @@ import { API_ENDPOINTS } from '../config/api';
  * Interface for client list request parameters
  */
 interface GetClientsParams {
-  page?: number;
-  limit?: number;
+  page: number;
+  limit: number;
   sortBy?: string;
   order?: 'asc' | 'desc';
   searchQuery?: string;
@@ -39,10 +39,11 @@ interface ClientPayload {
     features: Record<string, unknown>;
     theme: {
       mode: 'light' | 'dark';
-      fontFamily: string;
-      spacing: number;
-      borderRadius: number;
-      shadows: Record<string, string>;
+      colors: Record<string, string>;
+      typography: {
+        fontFamily: string;
+        fontSize: string;
+      };
     };
   };
   branding: {
@@ -54,34 +55,35 @@ interface ClientPayload {
 }
 
 /**
- * Retrieves a paginated list of clients with enhanced error handling and monitoring
+ * Retrieves paginated list of clients with enhanced error handling and monitoring
  */
 export const getClients = async (
-  params: GetClientsParams = {},
-  options: RequestOptions = {}
-): Promise<ApiResponse<Client[]>> => {
-  const api: AxiosInstance = createApiInstance({
+  params: GetClientsParams,
+  options: { skipCache?: boolean; priority?: 'high' | 'normal' } = {}
+): Promise<ApiResponse<{ items: Client[]; total: number }>> => {
+  const api = createApiInstance({
     useCircuitBreaker: true,
-    customTimeout: 30000,
-    ...options
+    customTimeout: options.priority === 'high' ? 15000 : 30000,
   });
 
-  try {
-    const response = await api.get(API_ENDPOINTS.CLIENTS.LIST, {
-      params: {
-        page: params.page || 1,
-        limit: params.limit || 10,
-        sortBy: params.sortBy,
-        order: params.order,
-        searchQuery: params.searchQuery,
-        ...params.filters
-      }
-    });
+  const queryParams = new URLSearchParams({
+    page: params.page.toString(),
+    limit: params.limit.toString(),
+    ...(params.sortBy && { sortBy: params.sortBy }),
+    ...(params.order && { order: params.order }),
+    ...(params.searchQuery && { search: params.searchQuery }),
+    ...(params.filters && { filters: JSON.stringify(params.filters) }),
+  });
 
-    return response.data;
-  } catch (error) {
-    throw error;
+  const cacheKey = `clients_${queryParams.toString()}`;
+  if (!options.skipCache) {
+    const cached = await getCachedResponse(cacheKey);
+    if (cached) return cached;
   }
+
+  const response = await api.get(`${API_ENDPOINTS.CLIENTS.LIST}?${queryParams}`);
+  await cacheResponse(cacheKey, response.data);
+  return response.data;
 };
 
 /**
@@ -89,122 +91,106 @@ export const getClients = async (
  */
 export const getClientById = async (
   clientId: string,
-  options: RequestOptions = {}
+  options: { includeMetadata?: boolean } = {}
 ): Promise<ApiResponse<Client>> => {
-  if (!clientId) {
-    throw new Error('Client ID is required');
-  }
+  const validator = new RequestValidator();
+  validator.validate({ clientId }, { clientId: 'uuid' });
 
-  const api: AxiosInstance = createApiInstance({
-    useCircuitBreaker: true,
-    customTimeout: 20000,
-    ...options
-  });
-
-  try {
-    const response = await api.get(`${API_ENDPOINTS.CLIENTS.LIST}/${clientId}`);
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
+  const api = createApiInstance({ useCircuitBreaker: true });
+  const response = await api.get(
+    `${API_ENDPOINTS.CLIENTS.LIST}/${clientId}${options.includeMetadata ? '?include=metadata' : ''}`
+  );
+  return response.data;
 };
 
 /**
  * Creates a new client with comprehensive validation and security checks
  */
 export const createClient = async (
-  payload: ClientPayload,
-  options: RequestOptions = {}
+  payload: ClientPayload
 ): Promise<ApiResponse<Client>> => {
   const validator = new RequestValidator();
-  const validationErrors = validator.validate(payload, {
-    'name': { required: true, type: 'string', maxLength: 100 },
-    'orgId': { required: true, type: 'string', format: 'uuid' },
-    'config': { required: true, type: 'object' },
-    'branding': { required: true, type: 'object' }
+  validator.validate(payload, {
+    name: 'string|required|min:2|max:100',
+    orgId: 'uuid|required',
+    config: 'object|required',
+    branding: 'object|required',
   });
 
-  if (validationErrors.length > 0) {
-    throw new Error(`Validation failed: ${validationErrors.join(', ')}`);
-  }
-
-  const api: AxiosInstance = createApiInstance({
+  const api = createApiInstance({
     useCircuitBreaker: true,
-    customTimeout: 40000,
-    ...options
+    customHeaders: {
+      'X-Operation-Type': 'client-creation',
+    },
   });
 
-  try {
-    const response = await api.post(API_ENDPOINTS.CLIENTS.CREATE, payload);
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
+  const response = await api.post(API_ENDPOINTS.CLIENTS.CREATE, payload);
+  return response.data;
 };
 
 /**
- * Updates an existing client with validation and security checks
+ * Updates an existing client with validation and optimistic updates
  */
 export const updateClient = async (
   clientId: string,
-  payload: Partial<ClientPayload>,
-  options: RequestOptions = {}
+  payload: Partial<ClientPayload>
 ): Promise<ApiResponse<Client>> => {
-  if (!clientId) {
-    throw new Error('Client ID is required');
-  }
-
   const validator = new RequestValidator();
-  const validationErrors = validator.validate(payload, {
-    'name': { type: 'string', maxLength: 100 },
-    'config': { type: 'object' },
-    'branding': { type: 'object' }
-  });
+  validator.validate(
+    { clientId, ...payload },
+    { clientId: 'uuid|required' }
+  );
 
-  if (validationErrors.length > 0) {
-    throw new Error(`Validation failed: ${validationErrors.join(', ')}`);
-  }
-
-  const api: AxiosInstance = createApiInstance({
+  const api = createApiInstance({
     useCircuitBreaker: true,
-    customTimeout: 30000,
-    ...options
+    customHeaders: {
+      'X-Operation-Type': 'client-update',
+      'If-Match': await getClientEtag(clientId),
+    },
   });
 
-  try {
-    const response = await api.put(
-      `${API_ENDPOINTS.CLIENTS.UPDATE.replace('{id}', clientId)}`,
-      payload
-    );
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
+  const response = await api.put(
+    `${API_ENDPOINTS.CLIENTS.UPDATE.replace('{id}', clientId)}`,
+    payload
+  );
+  return response.data;
 };
 
 /**
- * Deletes a client with confirmation and security checks
+ * Deletes a client with safety checks and cascade options
  */
 export const deleteClient = async (
   clientId: string,
-  options: RequestOptions = {}
+  options: { cascade?: boolean } = {}
 ): Promise<ApiResponse<void>> => {
-  if (!clientId) {
-    throw new Error('Client ID is required');
-  }
+  const validator = new RequestValidator();
+  validator.validate({ clientId }, { clientId: 'uuid|required' });
 
-  const api: AxiosInstance = createApiInstance({
+  const api = createApiInstance({
     useCircuitBreaker: true,
-    customTimeout: 20000,
-    ...options
+    customHeaders: {
+      'X-Operation-Type': 'client-deletion',
+      'X-Cascade-Delete': options.cascade ? 'true' : 'false',
+    },
   });
 
-  try {
-    const response = await api.delete(
-      `${API_ENDPOINTS.CLIENTS.DELETE.replace('{id}', clientId)}`
-    );
-    return response.data;
-  } catch (error) {
-    throw error;
-  }
+  const response = await api.delete(
+    `${API_ENDPOINTS.CLIENTS.DELETE.replace('{id}', clientId)}`
+  );
+  return response.data;
+};
+
+// Helper functions
+const getCachedResponse = async (key: string): Promise<ApiResponse<any> | null> => {
+  // Implementation would use a caching mechanism
+  return null;
+};
+
+const cacheResponse = async (key: string, data: ApiResponse<any>): Promise<void> => {
+  // Implementation would cache the response
+};
+
+const getClientEtag = async (clientId: string): Promise<string> => {
+  // Implementation would fetch the current ETag for optimistic locking
+  return '';
 };

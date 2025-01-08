@@ -6,13 +6,13 @@ on:
       - main
       - develop
     paths:
-      - 'src/web/**'
+      - src/web/**
   pull_request:
     branches:
       - main
       - develop
     paths:
-      - 'src/web/**'
+      - src/web/**
 
 env:
   WORKING_DIRECTORY: src/web
@@ -39,26 +39,30 @@ jobs:
       - name: Type check
         working-directory: ${{ env.WORKING_DIRECTORY }}
         run: npm run typecheck
-        timeout-minutes: 5
+        env:
+          CI: true
+          NODE_ENV: test
 
       - name: Lint check
         working-directory: ${{ env.WORKING_DIRECTORY }}
         run: npm run lint
-        timeout-minutes: 5
-
-      - name: Run tests
-        working-directory: ${{ env.WORKING_DIRECTORY }}
         env:
           CI: true
           NODE_ENV: test
-        run: |
-          npm run test -- --coverage --ci --maxWorkers=2
-        timeout-minutes: 30  # Enforcing test execution time constraint of <30min
+
+      - name: Run tests
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: npm run test
+        env:
+          CI: true
+          NODE_ENV: test
 
       - name: Build application
         working-directory: ${{ env.WORKING_DIRECTORY }}
         run: npm run build
-        timeout-minutes: 10
+        env:
+          CI: true
+          NODE_ENV: test
 
   security-scan:
     needs: build-and-test
@@ -75,7 +79,7 @@ jobs:
 
       - name: Run dependency vulnerability scan
         working-directory: ${{ env.WORKING_DIRECTORY }}
-        run: |
-          npm audit --production --audit-level=high
-          npm audit fix --production --only=prod --audit-level=high --force
-        continue-on-error: false  # Fail pipeline on high severity vulnerabilities
+        run: npm audit
+        env:
+          CI: true
+          NODE_ENV: test

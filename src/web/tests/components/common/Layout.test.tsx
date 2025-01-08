@@ -7,11 +7,12 @@ import { ErrorBoundary } from 'react-error-boundary';
 import MainLayout from '../../../src/components/common/Layout/MainLayout';
 import Header from '../../../src/components/common/Layout/Header';
 import Sidebar from '../../../src/components/common/Layout/Sidebar';
+import { AuthProvider } from '../../../src/contexts/AuthContext';
 
 // Add jest-axe matchers
 expect.extend(toHaveNoViolations);
 
-// Mock hooks and providers
+// Mock hooks and components
 jest.mock('@mui/material/styles', () => ({
   ...jest.requireActual('@mui/material/styles'),
   useTheme: jest.fn(),
@@ -38,92 +39,143 @@ jest.mock('../../../src/hooks/useAuth', () => ({
 // Test data
 const navigationItems = {
   admin: [
-    { id: 'dashboard', label: 'Dashboard', path: '/admin/dashboard', icon: 'DashboardIcon', roles: ['admin'] },
-    { id: 'clients', label: 'Clients', path: '/admin/clients', icon: 'GroupIcon', roles: ['admin'] },
-    { id: 'documents', label: 'Documents', path: '/admin/documents', icon: 'DocumentIcon', roles: ['admin'] }
+    {
+      id: 'dashboard',
+      label: 'Dashboard',
+      path: '/admin/dashboard',
+      icon: 'DashboardIcon',
+      roles: ['admin'],
+    },
+    {
+      id: 'clients',
+      label: 'Clients',
+      path: '/admin/clients',
+      icon: 'GroupIcon',
+      roles: ['admin'],
+    },
   ],
   client: [
-    { id: 'search', label: 'Search', path: '/search', icon: 'SearchIcon', roles: ['user'] },
-    { id: 'history', label: 'History', path: '/history', icon: 'HistoryIcon', roles: ['user'] },
-    { id: 'settings', label: 'Settings', path: '/settings', icon: 'SettingsIcon', roles: ['user'] }
-  ]
+    {
+      id: 'search',
+      label: 'Search',
+      path: '/search',
+      icon: 'SearchIcon',
+      roles: ['user'],
+    },
+    {
+      id: 'history',
+      label: 'History',
+      path: '/history',
+      icon: 'HistoryIcon',
+      roles: ['user'],
+    },
+  ],
 };
 
-// Utility function for rendering with theme
-const renderWithTheme = (component: React.ReactElement) => {
+// Utility function to render components with providers
+const renderWithProviders = (component: React.ReactElement) => {
   return render(
-    <ThemeProvider theme={{ palette: { mode: 'light' } }}>
-      <ErrorBoundary fallback={<div>Error</div>}>
-        {component}
-      </ErrorBoundary>
-    </ThemeProvider>
+    <ErrorBoundary fallback={<div>Error</div>}>
+      <AuthProvider>
+        <ThemeProvider theme={{}}>
+          {component}
+        </ThemeProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 };
 
 describe('MainLayout Component', () => {
   beforeEach(() => {
-    (useMediaQuery as jest.Mock).mockImplementation(() => false);
-    (useTheme as jest.Mock).mockImplementation(() => ({
-      palette: { mode: 'light' },
-      breakpoints: { down: () => false },
-      spacing: (value: number) => value * 8,
-    }));
-  });
-
-  afterEach(() => {
+    // Reset all mocks
     jest.clearAllMocks();
-  });
-
-  it('renders admin portal layout correctly', () => {
-    renderWithTheme(
-      <MainLayout portalType="admin">
-        <div>Admin Content</div>
-      </MainLayout>
-    );
-
-    expect(screen.getByText('Admin Content')).toBeInTheDocument();
-    expect(screen.getByRole('banner')).toBeInTheDocument();
-    expect(screen.getByRole('navigation')).toBeInTheDocument();
-  });
-
-  it('renders client portal layout correctly', () => {
-    renderWithTheme(
-      <MainLayout portalType="client">
-        <div>Client Content</div>
-      </MainLayout>
-    );
-
-    expect(screen.getByText('Client Content')).toBeInTheDocument();
-    expect(screen.getByRole('banner')).toBeInTheDocument();
-    expect(screen.getByRole('navigation')).toBeInTheDocument();
-  });
-
-  it('handles responsive sidebar behavior', async () => {
-    (useMediaQuery as jest.Mock).mockImplementation(() => true);
-
-    renderWithTheme(
-      <MainLayout portalType="admin">
-        <div>Content</div>
-      </MainLayout>
-    );
-
-    const toggleButton = screen.getByLabelText('Toggle sidebar navigation');
-    fireEvent.click(toggleButton);
-
-    await waitFor(() => {
-      expect(screen.getByRole('navigation')).toHaveStyle({ transform: 'translateX(0)' });
+    // Default theme mock
+    (useTheme as jest.Mock).mockReturnValue({
+      palette: { mode: 'light' },
+      breakpoints: { down: () => {} },
     });
   });
 
-  it('meets accessibility standards', async () => {
-    const { container } = renderWithTheme(
-      <MainLayout portalType="admin">
-        <div>Content</div>
-      </MainLayout>
-    );
+  describe('Portal Type Rendering', () => {
+    it('should render admin portal with correct structure', () => {
+      renderWithProviders(
+        <MainLayout portalType="admin">
+          <div>Admin Content</div>
+        </MainLayout>
+      );
 
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
+      expect(screen.getByText('Admin Portal')).toBeInTheDocument();
+      expect(screen.getByText('Admin Content')).toBeInTheDocument();
+    });
+
+    it('should render client portal with correct structure', () => {
+      renderWithProviders(
+        <MainLayout portalType="client">
+          <div>Client Content</div>
+        </MainLayout>
+      );
+
+      expect(screen.getByText('Product Search')).toBeInTheDocument();
+      expect(screen.getByText('Client Content')).toBeInTheDocument();
+    });
+  });
+
+  describe('Responsive Behavior', () => {
+    it('should collapse sidebar on mobile viewport', () => {
+      (useMediaQuery as jest.Mock).mockReturnValue(true); // Mobile viewport
+
+      renderWithProviders(
+        <MainLayout portalType="admin">
+          <div>Content</div>
+        </MainLayout>
+      );
+
+      const sidebar = screen.getByRole('complementary');
+      expect(sidebar).toHaveStyle({ transform: 'translateX(-240px)' });
+    });
+
+    it('should show sidebar on desktop viewport', () => {
+      (useMediaQuery as jest.Mock).mockReturnValue(false); // Desktop viewport
+
+      renderWithProviders(
+        <MainLayout portalType="admin">
+          <div>Content</div>
+        </MainLayout>
+      );
+
+      const sidebar = screen.getByRole('complementary');
+      expect(sidebar).toHaveStyle({ transform: 'none' });
+    });
+  });
+
+  describe('Accessibility', () => {
+    it('should have no accessibility violations', async () => {
+      const { container } = renderWithProviders(
+        <MainLayout portalType="admin">
+          <div>Content</div>
+        </MainLayout>
+      );
+
+      const results = await axe(container);
+      expect(results).toHaveNoViolations();
+    });
+
+    it('should support keyboard navigation', () => {
+      renderWithProviders(
+        <MainLayout portalType="admin">
+          <div>Content</div>
+        </MainLayout>
+      );
+
+      const sidebar = screen.getByRole('complementary');
+      const navItems = within(sidebar).getAllByRole('button');
+
+      navItems[0].focus();
+      expect(document.activeElement).toBe(navItems[0]);
+
+      fireEvent.keyDown(navItems[0], { key: 'Tab' });
+      expect(document.activeElement).toBe(navItems[1]);
+    });
   });
 });
 
@@ -134,48 +186,54 @@ describe('Header Component', () => {
     jest.clearAllMocks();
   });
 
-  it('renders admin portal header correctly', () => {
-    renderWithTheme(
-      <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
-    );
+  describe('User Interactions', () => {
+    it('should handle user menu interactions', async () => {
+      renderWithProviders(
+        <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
+      );
 
-    expect(screen.getByText('Admin Portal')).toBeInTheDocument();
-    expect(screen.getByLabelText('Toggle sidebar navigation')).toBeInTheDocument();
-  });
+      const userMenuButton = screen.getByTestId('user-menu-button');
+      fireEvent.click(userMenuButton);
 
-  it('renders user menu and handles interactions', async () => {
-    renderWithTheme(
-      <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
-    );
+      await waitFor(() => {
+        expect(screen.getByText('Logout')).toBeInTheDocument();
+      });
+    });
 
-    const userMenuButton = screen.getByLabelText('Open user menu');
-    fireEvent.click(userMenuButton);
+    it('should handle sidebar toggle', () => {
+      renderWithProviders(
+        <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
+      );
 
-    await waitFor(() => {
-      expect(screen.getByText('Settings')).toBeInTheDocument();
-      expect(screen.getByText('Logout')).toBeInTheDocument();
+      const toggleButton = screen.getByTestId('sidebar-toggle');
+      fireEvent.click(toggleButton);
+
+      expect(mockToggleSidebar).toHaveBeenCalledTimes(1);
     });
   });
 
-  it('handles mobile responsive design', () => {
-    (useMediaQuery as jest.Mock).mockImplementation(() => true);
+  describe('Portal-Specific Features', () => {
+    it('should show settings option only in admin portal', () => {
+      renderWithProviders(
+        <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
+      );
 
-    renderWithTheme(
-      <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
-    );
+      const userMenuButton = screen.getByTestId('user-menu-button');
+      fireEvent.click(userMenuButton);
 
-    expect(screen.getByLabelText('Toggle sidebar navigation')).toHaveStyle({
-      padding: '8px',
+      expect(screen.getByTestId('settings-menu-item')).toBeInTheDocument();
     });
-  });
 
-  it('meets accessibility standards', async () => {
-    const { container } = renderWithTheme(
-      <Header onToggleSidebar={mockToggleSidebar} portalType="admin" />
-    );
+    it('should not show settings option in client portal', () => {
+      renderWithProviders(
+        <Header onToggleSidebar={mockToggleSidebar} portalType="client" />
+      );
 
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
+      const userMenuButton = screen.getByTestId('user-menu-button');
+      fireEvent.click(userMenuButton);
+
+      expect(screen.queryByTestId('settings-menu-item')).not.toBeInTheDocument();
+    });
   });
 });
 
@@ -186,75 +244,80 @@ describe('Sidebar Component', () => {
     jest.clearAllMocks();
   });
 
-  it('renders navigation items based on portal type and role', () => {
-    renderWithTheme(
-      <Sidebar
-        isOpen={true}
-        onClose={mockOnClose}
-        items={navigationItems.admin}
-        variant="persistent"
-      />
-    );
+  describe('Navigation Items', () => {
+    it('should render admin navigation items correctly', () => {
+      renderWithProviders(
+        <Sidebar
+          isOpen={true}
+          onClose={mockOnClose}
+          items={navigationItems.admin}
+          allowedRoles={['admin']}
+        />
+      );
 
-    expect(screen.getByText('Dashboard')).toBeInTheDocument();
-    expect(screen.getByText('Clients')).toBeInTheDocument();
-    expect(screen.getByText('Documents')).toBeInTheDocument();
-  });
+      expect(screen.getByText('Dashboard')).toBeInTheDocument();
+      expect(screen.getByText('Clients')).toBeInTheDocument();
+    });
 
-  it('handles keyboard navigation', () => {
-    renderWithTheme(
-      <Sidebar
-        isOpen={true}
-        onClose={mockOnClose}
-        items={navigationItems.admin}
-        variant="persistent"
-      />
-    );
+    it('should render client navigation items correctly', () => {
+      renderWithProviders(
+        <Sidebar
+          isOpen={true}
+          onClose={mockOnClose}
+          items={navigationItems.client}
+          allowedRoles={['user']}
+        />
+      );
 
-    const dashboardItem = screen.getByText('Dashboard').closest('div');
-    fireEvent.keyDown(dashboardItem!, { key: 'Enter' });
-
-    expect(mockOnClose).toHaveBeenCalled();
-  });
-
-  it('supports nested navigation items', async () => {
-    const nestedItems = [
-      {
-        ...navigationItems.admin[0],
-        children: [
-          { id: 'sub1', label: 'Sub Item 1', path: '/sub1', icon: 'Icon', roles: ['admin'] }
-        ]
-      }
-    ];
-
-    renderWithTheme(
-      <Sidebar
-        isOpen={true}
-        onClose={mockOnClose}
-        items={nestedItems}
-        variant="persistent"
-      />
-    );
-
-    const expandButton = screen.getByLabelText('Expand Submenu');
-    fireEvent.click(expandButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('Sub Item 1')).toBeInTheDocument();
+      expect(screen.getByText('Search')).toBeInTheDocument();
+      expect(screen.getByText('History')).toBeInTheDocument();
     });
   });
 
-  it('meets accessibility standards', async () => {
-    const { container } = renderWithTheme(
-      <Sidebar
-        isOpen={true}
-        onClose={mockOnClose}
-        items={navigationItems.admin}
-        variant="persistent"
-      />
-    );
+  describe('Responsive Behavior', () => {
+    it('should handle touch interactions on mobile', () => {
+      (useMediaQuery as jest.Mock).mockReturnValue(true); // Mobile viewport
 
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
+      renderWithProviders(
+        <Sidebar
+          isOpen={true}
+          onClose={mockOnClose}
+          items={navigationItems.admin}
+          variant="temporary"
+        />
+      );
+
+      const closeButton = screen.getByLabelText('Toggle Navigation');
+      fireEvent.click(closeButton);
+
+      expect(mockOnClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Accessibility', () => {
+    it('should support keyboard navigation in nested menus', () => {
+      const nestedItems = [
+        {
+          ...navigationItems.admin[0],
+          children: [
+            { id: 'sub1', label: 'Sub Item 1', path: '/sub1', roles: ['admin'] },
+          ],
+        },
+      ];
+
+      renderWithProviders(
+        <Sidebar
+          isOpen={true}
+          onClose={mockOnClose}
+          items={nestedItems}
+          allowedRoles={['admin']}
+        />
+      );
+
+      const parentItem = screen.getByText('Dashboard');
+      fireEvent.keyDown(parentItem, { key: 'Enter' });
+
+      expect(screen.getByText('Sub Item 1')).toBeInTheDocument();
+    });
   });
 });

@@ -11,16 +11,17 @@ from fastapi_limiter import RateLimiter  # version: ^0.1.5
 from uuid import uuid4  # version: ^3.11
 import logging
 from datetime import datetime
+from typing import Dict, Any
 
-from .router import router as api_router
+from .router import router as v1_router
 
 # API version prefix
 API_V1_STR = "/api/v1"
 
-# Initialize main v1 router
+# Initialize main router
 router = APIRouter(prefix=API_V1_STR)
 
-# Security headers configuration
+# Security headers based on technical specifications
 SECURITY_HEADERS = {
     'X-Frame-Options': 'DENY',
     'X-Content-Type-Options': 'nosniff',
@@ -30,101 +31,116 @@ SECURITY_HEADERS = {
     'Cache-Control': 'no-store, no-cache, must-revalidate'
 }
 
-# Configure logging
+# Initialize logger
 logger = logging.getLogger(__name__)
 
-def configure_error_handlers():
+def configure_error_handlers() -> None:
     """Configure global error handlers and middleware for the v1 API router."""
     
     @router.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
         """Enhanced global handler for HTTP exceptions with correlation ID and logging."""
-        correlation_id = request.headers.get("X-Correlation-ID", str(uuid4()))
-        tenant_id = request.headers.get("X-Tenant-ID")
-
+        correlation_id = str(uuid4())
+        
         # Log error with context
         logger.error(
-            f"HTTP {exc.status_code} error occurred",
+            "HTTP error occurred",
             extra={
-                "correlation_id": correlation_id,
-                "tenant_id": tenant_id,
-                "path": request.url.path,
-                "method": request.method,
-                "error": exc.detail,
-                "status_code": exc.status_code
+                'correlation_id': correlation_id,
+                'status_code': exc.status_code,
+                'detail': exc.detail,
+                'path': request.url.path,
+                'method': request.method,
+                'client_ip': request.client.host,
+                'tenant_id': request.headers.get('X-Tenant-ID', 'unknown')
             }
         )
 
+        # Format error response
         error_response = {
-            "status": "error",
-            "code": exc.status_code,
-            "message": exc.detail,
-            "correlation_id": correlation_id,
-            "timestamp": datetime.utcnow().isoformat(),
-            "path": request.url.path
+            'status': 'error',
+            'code': exc.status_code,
+            'message': exc.detail,
+            'correlation_id': correlation_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'path': request.url.path
         }
 
-        if tenant_id:
-            error_response["tenant_id"] = tenant_id
-
+        # Add security headers to response
+        headers = {**SECURITY_HEADERS, **(exc.headers or {})}
+        
         return JSONResponse(
             status_code=exc.status_code,
             content=error_response,
-            headers={
-                "X-Correlation-ID": correlation_id,
-                **SECURITY_HEADERS
-            }
+            headers=headers
         )
 
-    @router.middleware("http")
-    async def add_security_headers(request: Request, call_next):
-        """Add security headers to all API responses."""
-        response = await call_next(request)
+    @router.exception_handler(Exception)
+    async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        """Global handler for unhandled exceptions with secure error messages."""
+        correlation_id = str(uuid4())
         
-        # Add security headers
-        for header, value in SECURITY_HEADERS.items():
-            response.headers[header] = value
-
-        # Add correlation ID if not present
-        if "X-Correlation-ID" not in response.headers:
-            response.headers["X-Correlation-ID"] = request.headers.get(
-                "X-Correlation-ID", 
-                str(uuid4())
-            )
-
-        return response
-
-    @router.middleware("http")
-    async def rate_limit_middleware(request: Request, call_next):
-        """Implement rate limiting per client."""
-        client_ip = request.client.host
-        rate_limiter = RateLimiter(
-            key_prefix=f"ratelimit:{client_ip}",
-            max_requests=1000,
-            expire=3600
+        # Log error with full details
+        logger.error(
+            f"Unhandled exception: {str(exc)}",
+            extra={
+                'correlation_id': correlation_id,
+                'path': request.url.path,
+                'method': request.method
+            },
+            exc_info=True
         )
 
-        is_allowed = await rate_limiter.is_allowed(client_ip)
-        if not is_allowed:
-            logger.warning(
-                "Rate limit exceeded",
-                extra={
-                    "client_ip": client_ip,
-                    "path": request.url.path
-                }
-            )
-            raise HTTPException(
-                status_code=429,
-                detail="Too many requests. Please try again later."
-            )
+        # Return sanitized error response
+        error_response = {
+            'status': 'error',
+            'code': 500,
+            'message': 'An internal server error occurred',
+            'correlation_id': correlation_id,
+            'timestamp': datetime.utcnow().isoformat(),
+            'path': request.url.path
+        }
 
-        return await call_next(request)
+        return JSONResponse(
+            status_code=500,
+            content=error_response,
+            headers=SECURITY_HEADERS
+        )
 
-# Configure error handlers and middleware
+def add_security_headers(response: JSONResponse) -> JSONResponse:
+    """Add security headers to all API responses."""
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
+    return response
+
+# Configure rate limiting based on technical specifications
+rate_limiter = RateLimiter(
+    key_func=lambda request: f"{request.client.host}:{request.headers.get('X-Tenant-ID', 'unknown')}",
+    max_requests=1000,
+    time_window=3600  # 1 hour
+)
+
+# Configure middleware
+@router.middleware("http")
+async def add_security_middleware(request: Request, call_next):
+    """Add security middleware with headers and request validation."""
+    # Add correlation ID
+    request.state.correlation_id = str(uuid4())
+    
+    # Apply rate limiting
+    await rate_limiter.check(request)
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Add security headers
+    return add_security_headers(response)
+
+# Include v1 router with all endpoints
+router.include_router(v1_router)
+
+# Configure error handlers
 configure_error_handlers()
 
-# Include API router
-router.include_router(api_router)
-
-# Export router and API version prefix
-__all__ = ["router", "API_V1_STR"]
+# Export configured router and constants
+__all__ = ['router', 'API_V1_STR']

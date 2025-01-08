@@ -33,36 +33,29 @@ spec:
         fsGroup: 65534  # nobody group
         runAsUser: 65534  # nobody user
         runAsNonRoot: true
-      
       serviceAccountName: prometheus
-      
       containers:
       - name: prometheus
         image: prom/prometheus:v2.45.0
         args:
           - --config.file=/etc/prometheus/prometheus.yml
           - --storage.tsdb.path=/prometheus
-          - --storage.tsdb.retention.time=15d  # Retention period for metrics
-          - --web.enable-lifecycle  # Enable runtime configuration reloading
-          - --web.enable-admin-api  # Enable admin API for management
+          - --storage.tsdb.retention.time=15d  # Retention period as per globals
+          - --web.enable-lifecycle
+          - --web.enable-admin-api
           - --web.console.libraries=/usr/share/prometheus/console_libraries
           - --web.console.templates=/usr/share/prometheus/consoles
-        
         ports:
           - containerPort: 9090
             name: web
             protocol: TCP
-        
-        # Resource limits and requests
         resources:
           requests:
-            cpu: 500m
-            memory: 2Gi
+            cpu: "500m"
+            memory: "2Gi"
           limits:
-            cpu: 1000m
-            memory: 4Gi
-        
-        # Volume mounts for configuration and storage
+            cpu: "1000m"
+            memory: "4Gi"
         volumeMounts:
           - name: prometheus-config
             mountPath: /etc/prometheus
@@ -70,23 +63,20 @@ spec:
             mountPath: /prometheus
           - name: rules
             mountPath: /etc/prometheus/rules
-        
-        # Health checks
+        # Health monitoring
         livenessProbe:
           httpGet:
             path: /-/healthy
             port: web
           initialDelaySeconds: 30
           timeoutSeconds: 30
-        
         readinessProbe:
           httpGet:
             path: /-/ready
             port: web
           initialDelaySeconds: 30
           timeoutSeconds: 30
-      
-      # Configuration volumes
+      # Configuration and rules volumes
       volumes:
         - name: prometheus-config
           configMap:
@@ -94,18 +84,14 @@ spec:
         - name: rules
           configMap:
             name: prometheus-rules
-      
-      # Grace period for proper shutdown
-      terminationGracePeriodSeconds: 300
-  
+      terminationGracePeriodSeconds: 300  # 5 minutes for clean shutdown
   # Persistent storage configuration
   volumeClaimTemplates:
     - metadata:
         name: prometheus-storage
       spec:
-        accessModes:
-          - ReadWriteOnce
+        accessModes: ["ReadWriteOnce"]
         storageClassName: managed-premium
         resources:
           requests:
-            storage: 50Gi  # Storage size for metrics retention
+            storage: 50Gi  # Storage size as per globals

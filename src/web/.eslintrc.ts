@@ -47,19 +47,19 @@ module.exports = {
     },
   },
   rules: {
-    // TypeScript specific rules
+    // TypeScript-specific rules
     '@typescript-eslint/explicit-function-return-type': 'error',
     '@typescript-eslint/no-explicit-any': 'error',
     '@typescript-eslint/no-unused-vars': ['error', { 
-      argsIgnorePattern: '^_' 
+      argsIgnorePattern: '^_',
     }],
     '@typescript-eslint/strict-boolean-expressions': 'error',
     '@typescript-eslint/no-floating-promises': 'error',
     '@typescript-eslint/await-thenable': 'error',
     '@typescript-eslint/no-misused-promises': 'error',
 
-    // React specific rules
-    'react/prop-types': 'off', // Using TypeScript for prop validation
+    // React-specific rules
+    'react/prop-types': 'off', // TypeScript handles prop types
     'react/react-in-jsx-scope': 'off', // Not needed in React 17+
     'react-hooks/rules-of-hooks': 'error',
     'react-hooks/exhaustive-deps': 'warn',
@@ -70,7 +70,7 @@ module.exports = {
     'jsx-a11y/aria-unsupported-elements': 'error',
     'jsx-a11y/role-has-required-aria-props': 'error',
 
-    // Import rules
+    // Import/export rules
     'import/order': ['error', {
       groups: [
         'builtin',
@@ -78,13 +78,13 @@ module.exports = {
         'internal',
         'parent',
         'sibling',
-        'index'
+        'index',
       ],
       'newlines-between': 'always',
       alphabetize: {
         order: 'asc',
-        caseInsensitive: true
-      }
+        caseInsensitive: true,
+      },
     }],
     'import/no-unresolved': 'error',
     'import/named': 'error',
@@ -93,8 +93,8 @@ module.exports = {
     'import/export': 'error',
 
     // General code quality rules
-    'no-console': ['warn', { 
-      allow: ['warn', 'error'] 
+    'no-console': ['warn', {
+      allow: ['warn', 'error'],
     }],
     'no-debugger': 'error',
     'no-alert': 'error',
@@ -107,8 +107,8 @@ module.exports = {
       files: ['**/*.test.ts', '**/*.test.tsx'],
       rules: {
         '@typescript-eslint/no-explicit-any': 'off',
-        'no-console': 'off'
-      }
-    }
-  ]
+        'no-console': 'off',
+      },
+    },
+  ],
 };

@@ -8,309 +8,240 @@ import {
   DialogActions,
   Typography,
   Alert,
-  IconButton,
-  Tooltip,
+  useTheme,
 } from '@mui/material'; // v5.14.0
-import { Add as AddIcon, Refresh as RefreshIcon } from '@mui/icons-material'; // v5.14.0
+import { Add as AddIcon, PersonAdd } from '@mui/icons-material'; // v5.14.0
 
-import UserTable from './UserTable';
-import UserForm from './UserForm';
-import { User, UserRole, UserCreateInput, UserUpdateInput } from '../../../types/user';
-import { sanitizeString } from '../../../utils/validation';
+import { UserTable } from './UserTable';
+import { UserForm } from './UserForm';
+import type { User, UserRole, UserCreateInput, UserUpdateInput } from '../../../types/user';
+import { validateUserCreate, validateUserUpdate } from '../../../validators/user';
 import { UI_CONSTANTS } from '../../../config/constants';
 
-interface UserListProps {
+export interface UserListProps {
   clientId?: string;
   onUserUpdate: (user: User) => Promise<void>;
   roles: UserRole[];
 }
 
-interface UserListState {
-  users: User[];
-  loading: boolean;
-  error: string | null;
-  page: number;
-  pageSize: number;
-  total: number;
-  selectedUser: User | null;
-  isFormOpen: boolean;
-  isDeleteDialogOpen: boolean;
-  userToDelete: User | null;
-}
-
+/**
+ * Enterprise-grade user management component with accessibility support and performance optimization
+ * Implements WCAG 2.1 Level AA compliance and role-based access control
+ */
 const UserList: React.FC<UserListProps> = React.memo(({
   clientId,
   onUserUpdate,
   roles
 }) => {
-  // State management with TypeScript safety
-  const [state, setState] = useState<UserListState>({
-    users: [],
-    loading: false,
-    error: null,
-    page: 1,
-    pageSize: 10,
-    total: 0,
-    selectedUser: null,
-    isFormOpen: false,
-    isDeleteDialogOpen: false,
-    userToDelete: null
-  });
+  const theme = useTheme();
 
-  // Memoized handlers for performance optimization
-  const handlePageChange = useCallback(async ({ page, pageSize }) => {
-    setState(prev => ({ ...prev, loading: true }));
-    try {
-      // Implement pagination logic here
-      setState(prev => ({
-        ...prev,
-        page,
-        pageSize,
-        loading: false
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to fetch users'
-      }));
-    }
+  // State management with TypeScript type safety
+  const [users, setUsers] = useState<User[]>([]);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [total, setTotal] = useState(0);
+
+  // Memoized pagination handler for performance
+  const handlePageChange = useCallback(({ page: newPage, pageSize: newPageSize }) => {
+    setPage(newPage);
+    setPageSize(newPageSize);
   }, []);
 
+  // Form handlers with error management
+  const handleFormOpen = useCallback((user?: User) => {
+    setSelectedUser(user || null);
+    setIsFormOpen(true);
+    setError(null);
+  }, []);
+
+  const handleFormClose = useCallback(() => {
+    setIsFormOpen(false);
+    setSelectedUser(null);
+    setError(null);
+  }, []);
+
+  const handleDeleteDialogOpen = useCallback((user: User) => {
+    setSelectedUser(user);
+    setIsDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteDialogClose = useCallback(() => {
+    setIsDeleteDialogOpen(false);
+    setSelectedUser(null);
+  }, []);
+
+  // User management handlers with validation
   const handleCreateUser = useCallback(async (data: UserCreateInput) => {
-    setState(prev => ({ ...prev, loading: true, error: null }));
     try {
-      // Sanitize input data
-      const sanitizedData = {
-        ...data,
-        fullName: sanitizeString(data.fullName),
-        email: sanitizeString(data.email)
-      };
-      await onUserUpdate(sanitizedData as User);
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        isFormOpen: false
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to create user'
-      }));
+      setLoading(true);
+      setError(null);
+
+      const validationResult = await validateUserCreate(data);
+      if (!validationResult.success) {
+        setError('Validation failed. Please check your input.');
+        return;
+      }
+
+      await onUserUpdate({ ...data, id: '', createdAt: '', updatedAt: '' } as User);
+      handleFormClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while creating the user');
+    } finally {
+      setLoading(false);
     }
-  }, [onUserUpdate]);
+  }, [onUserUpdate, handleFormClose]);
 
   const handleUpdateUser = useCallback(async (data: UserUpdateInput) => {
-    setState(prev => ({ ...prev, loading: true, error: null }));
+    if (!selectedUser) return;
+
     try {
-      if (!state.selectedUser) return;
-      
-      const sanitizedData = {
-        ...data,
-        fullName: data.fullName ? sanitizeString(data.fullName) : undefined,
-        email: data.email ? sanitizeString(data.email) : undefined
-      };
-      
-      await onUserUpdate({
-        ...state.selectedUser,
-        ...sanitizedData
-      } as User);
-      
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        isFormOpen: false,
-        selectedUser: null
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to update user'
-      }));
+      setLoading(true);
+      setError(null);
+
+      const validationResult = await validateUserUpdate(data);
+      if (!validationResult.success) {
+        setError('Validation failed. Please check your input.');
+        return;
+      }
+
+      await onUserUpdate({ ...selectedUser, ...data });
+      handleFormClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while updating the user');
+    } finally {
+      setLoading(false);
     }
-  }, [onUserUpdate, state.selectedUser]);
+  }, [selectedUser, onUserUpdate, handleFormClose]);
 
   const handleDeleteUser = useCallback(async () => {
-    setState(prev => ({ ...prev, loading: true, error: null }));
-    try {
-      if (!state.userToDelete) return;
-      
-      await onUserUpdate({
-        ...state.userToDelete,
-        isActive: false
-      });
-      
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        isDeleteDialogOpen: false,
-        userToDelete: null
-      }));
-    } catch (error) {
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: 'Failed to delete user'
-      }));
-    }
-  }, [onUserUpdate, state.userToDelete]);
+    if (!selectedUser) return;
 
-  // Memoized allowed roles based on client context
-  const allowedRoles = useMemo(() => {
-    if (!clientId) return roles;
-    return roles.filter(role => 
-      role !== UserRole.SYSTEM_ADMIN && 
-      role !== UserRole.API_SERVICE
-    );
-  }, [clientId, roles]);
+    try {
+      setLoading(true);
+      setError(null);
+
+      await onUserUpdate({ ...selectedUser, isActive: false });
+      handleDeleteDialogClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred while deleting the user');
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedUser, onUserUpdate, handleDeleteDialogClose]);
+
+  // Memoized styles for performance
+  const styles = useMemo(() => ({
+    root: {
+      padding: theme.spacing(3),
+    },
+    header: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing(3),
+    },
+    addButton: {
+      minWidth: UI_CONSTANTS.MIN_TOUCH_TARGET,
+      minHeight: UI_CONSTANTS.MIN_TOUCH_TARGET,
+    },
+  }), [theme]);
 
   return (
-    <Box
-      role="region"
-      aria-label="User management"
-      sx={{ position: 'relative', minHeight: '400px' }}
-    >
-      {/* Error Alert */}
-      {state.error && (
+    <Box sx={styles.root} role="region" aria-label="User Management">
+      <Box sx={styles.header}>
+        <Typography variant="h5" component="h1" id="user-management-title">
+          User Management
+        </Typography>
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<AddIcon />}
+          onClick={() => handleFormOpen()}
+          sx={styles.addButton}
+          aria-label="Add new user"
+        >
+          Add User
+        </Button>
+      </Box>
+
+      {error && (
         <Alert 
           severity="error" 
-          sx={{ mb: 2 }}
-          onClose={() => setState(prev => ({ ...prev, error: null }))}
+          onClose={() => setError(null)}
+          sx={{ marginBottom: theme.spacing(2) }}
+          role="alert"
         >
-          {state.error}
+          {error}
         </Alert>
       )}
 
-      {/* Action Toolbar */}
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          mb: 2
-        }}
-      >
-        <Typography variant="h6" component="h2">
-          User Management
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Tooltip title="Refresh user list">
-            <IconButton
-              onClick={() => handlePageChange({ page: 1, pageSize: state.pageSize })}
-              disabled={state.loading}
-              aria-label="Refresh user list"
-              sx={{
-                minWidth: UI_CONSTANTS.MIN_TOUCH_TARGET,
-                minHeight: UI_CONSTANTS.MIN_TOUCH_TARGET
-              }}
-            >
-              <RefreshIcon />
-            </IconButton>
-          </Tooltip>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => setState(prev => ({ ...prev, isFormOpen: true }))}
-            disabled={state.loading}
-            sx={{
-              minWidth: UI_CONSTANTS.MIN_TOUCH_TARGET,
-              minHeight: UI_CONSTANTS.MIN_TOUCH_TARGET
-            }}
-          >
-            Add User
-          </Button>
-        </Box>
-      </Box>
-
-      {/* User Table */}
       <UserTable
-        users={state.users}
-        page={state.page}
-        pageSize={state.pageSize}
-        total={state.total}
+        users={users}
+        page={page}
+        pageSize={pageSize}
+        total={total}
         onPageChange={handlePageChange}
-        onEdit={(user) => setState(prev => ({
-          ...prev,
-          selectedUser: user,
-          isFormOpen: true
-        }))}
-        onDelete={(user) => setState(prev => ({
-          ...prev,
-          userToDelete: user,
-          isDeleteDialogOpen: true
-        }))}
-        loading={state.loading}
+        onEdit={handleFormOpen}
+        onDelete={handleDeleteDialogOpen}
+        loading={loading}
         ariaLabel="User management table"
+        ariaDescription="Table displaying user information with sorting and filtering capabilities"
       />
 
-      {/* User Form Dialog */}
       <Dialog
-        open={state.isFormOpen}
-        onClose={() => setState(prev => ({
-          ...prev,
-          isFormOpen: false,
-          selectedUser: null
-        }))}
+        open={isFormOpen}
+        onClose={handleFormClose}
         aria-labelledby="user-form-dialog-title"
         maxWidth="sm"
         fullWidth
       >
         <DialogTitle id="user-form-dialog-title">
-          {state.selectedUser ? 'Edit User' : 'Create User'}
+          {selectedUser ? 'Edit User' : 'Create User'}
         </DialogTitle>
         <DialogContent>
           <UserForm
-            initialData={state.selectedUser}
-            onSubmit={state.selectedUser ? handleUpdateUser : handleCreateUser}
-            onCancel={() => setState(prev => ({
-              ...prev,
-              isFormOpen: false,
-              selectedUser: null
-            }))}
-            isLoading={state.loading}
+            initialData={selectedUser}
+            onSubmit={selectedUser ? handleUpdateUser : handleCreateUser}
+            onCancel={handleFormClose}
+            isLoading={loading}
             clientId={clientId || ''}
-            allowedRoles={allowedRoles}
+            allowedRoles={roles}
           />
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog
-        open={state.isDeleteDialogOpen}
-        onClose={() => setState(prev => ({
-          ...prev,
-          isDeleteDialogOpen: false,
-          userToDelete: null
-        }))}
+        open={isDeleteDialogOpen}
+        onClose={handleDeleteDialogClose}
         aria-labelledby="delete-dialog-title"
         aria-describedby="delete-dialog-description"
       >
         <DialogTitle id="delete-dialog-title">
-          Confirm User Deletion
+          Confirm Delete User
         </DialogTitle>
         <DialogContent>
           <Typography id="delete-dialog-description">
-            Are you sure you want to delete user {state.userToDelete?.fullName}? This action cannot be undone.
+            Are you sure you want to delete {selectedUser?.fullName}? This action cannot be undone.
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button
-            onClick={() => setState(prev => ({
-              ...prev,
-              isDeleteDialogOpen: false,
-              userToDelete: null
-            }))}
-            disabled={state.loading}
+            onClick={handleDeleteDialogClose}
+            disabled={loading}
+            aria-label="Cancel delete user"
           >
             Cancel
           </Button>
           <Button
             onClick={handleDeleteUser}
             color="error"
-            disabled={state.loading}
-            autoFocus
+            disabled={loading}
+            aria-label="Confirm delete user"
           >
             Delete
           </Button>

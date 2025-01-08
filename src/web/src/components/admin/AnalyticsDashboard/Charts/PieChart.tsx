@@ -1,25 +1,10 @@
-import React, { useMemo } from 'react';
-import { Box, Typography, useTheme } from '@mui/material';
-import {
-  PieChart as RechartsChart,
-  Pie,
-  Cell,
-  Legend,
-  Tooltip,
-  ResponsiveContainer
-} from 'recharts';
+import React, { useMemo } from 'react'; // ^18.2.0
+import { Box, Typography, useTheme } from '@mui/material'; // ^5.14.0
+import { PieChart as RechartsChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from 'recharts'; // ^2.7.0
 import ContentLoader from '../../../common/Loaders/ContentLoader';
 
-// Interface for individual data point
-interface DataPoint {
-  name: string;
-  value: number;
-  color?: string;
-}
-
-// Props interface with comprehensive customization options
 interface PieChartProps {
-  data: DataPoint[];
+  data: Array<{ name: string; value: number; color?: string }>;
   title: string;
   loading?: boolean;
   height?: number;
@@ -30,26 +15,15 @@ interface PieChartProps {
   animate?: boolean;
 }
 
-// Default WCAG 2.1 AA compliant colors
-const DEFAULT_COLORS = [
-  '#0066CC', // Primary
-  '#4CAF50', // Secondary
-  '#17A2B8', // Info
-  '#FFC107', // Warning
-  '#DC3545', // Error
-  '#3385D6', // Primary Light
-  '#6FBF73', // Secondary Light
-  '#31B0C6'  // Info Light
-];
-
-// Memoized percentage formatter with internationalization support
-const formatPercentage = (value: number, total: number, options: Intl.NumberFormatOptions = {
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1
-}): string => {
+const formatPercentage = (value: number, total: number, options: Intl.NumberFormatOptions = {}) => {
   if (!total) return '0%';
   const percentage = (value / total) * 100;
-  return new Intl.NumberFormat(undefined, options).format(percentage) + '%';
+  return new Intl.NumberFormat('en-US', {
+    style: 'percent',
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+    ...options
+  }).format(percentage / 100);
 };
 
 const PieChart: React.FC<PieChartProps> = ({
@@ -58,51 +32,61 @@ const PieChart: React.FC<PieChartProps> = ({
   loading = false,
   height = 400,
   minHeight = 300,
-  colors = DEFAULT_COLORS,
+  colors = ['#0066CC', '#4CAF50', '#FFC107', '#DC3545', '#17A2B8'],
   legendPosition = 'right',
-  tooltipFormatter = formatPercentage,
+  tooltipFormatter,
   animate = true
 }) => {
   const theme = useTheme();
 
-  // Calculate total value for percentage calculations
-  const total = useMemo(() => 
-    data.reduce((sum, item) => sum + item.value, 0),
-    [data]
-  );
+  // Calculate total for percentage calculations
+  const total = useMemo(() => data.reduce((sum, item) => sum + item.value, 0), [data]);
 
   // Check for reduced motion preference
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const shouldAnimate = animate && !prefersReducedMotion;
 
-  // Loading state
   if (loading) {
     return (
-      <Box sx={styles.chartContainer}>
-        <ContentLoader
-          height={height}
-          ariaLabel={`Loading ${title} chart`}
-        />
+      <Box sx={{ width: '100%', height, minHeight }} role="progressbar" aria-busy="true">
+        <ContentLoader height={height} ariaLabel="Loading chart data..." />
       </Box>
     );
   }
 
-  // Empty state
-  if (!data.length) {
+  const defaultTooltipFormatter = (value: number) => {
+    return formatPercentage(value, total);
+  };
+
+  const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, value, index }: any) => {
+    const RADIAN = Math.PI / 180;
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+    const percentage = formatPercentage(value, total);
+
     return (
-      <Box sx={styles.chartContainer}>
-        <Typography variant="body1" color="textSecondary" align="center">
-          No data available
-        </Typography>
-      </Box>
+      <text
+        x={x}
+        y={y}
+        fill={theme.palette.background.paper}
+        textAnchor="middle"
+        dominantBaseline="central"
+        style={{ fontSize: '12px', fontWeight: 500 }}
+      >
+        {percentage}
+      </text>
     );
-  }
+  };
 
   return (
     <Box
       sx={{
-        ...styles.chartContainer,
-        minHeight: `${minHeight}px`
+        width: '100%',
+        height,
+        minHeight,
+        padding: 2,
+        position: 'relative'
       }}
       role="region"
       aria-label={title}
@@ -110,27 +94,39 @@ const PieChart: React.FC<PieChartProps> = ({
       <Typography
         variant="h6"
         component="h3"
-        sx={styles.title}
+        sx={{
+          marginBottom: 2,
+          fontWeight: 500,
+          color: theme.palette.text.primary
+        }}
       >
         {title}
       </Typography>
 
-      <ResponsiveContainer width="100%" height={height}>
+      <ResponsiveContainer width="100%" height="100%">
         <RechartsChart>
           <Pie
             data={data}
-            dataKey="value"
-            nameKey="name"
             cx="50%"
             cy="50%"
+            labelLine={false}
+            label={renderCustomizedLabel}
             outerRadius="80%"
-            innerRadius="55%"
-            paddingAngle={2}
+            innerRadius="50%"
+            dataKey="value"
             isAnimationActive={shouldAnimate}
             animationDuration={1000}
             animationBegin={0}
-            label={({ name, value }) => `${name}: ${tooltipFormatter(value, total)}`}
-            labelLine={false}
+            onMouseEnter={(_, index) => {
+              // Accessibility: Announce segment on hover
+              const segment = data[index];
+              const percentage = formatPercentage(segment.value, total);
+              const announcement = `${segment.name}: ${percentage}`;
+              const liveRegion = document.getElementById('chart-live-region');
+              if (liveRegion) {
+                liveRegion.textContent = announcement;
+              }
+            }}
           >
             {data.map((entry, index) => (
               <Cell
@@ -141,78 +137,63 @@ const PieChart: React.FC<PieChartProps> = ({
               />
             ))}
           </Pie>
-
           <Tooltip
             content={({ payload }) => {
-              if (!payload?.[0]) return null;
-              const { name, value } = payload[0].payload;
+              if (!payload || !payload[0]) return null;
+              const value = payload[0].value as number;
+              const name = payload[0].name as string;
+              const formattedValue = tooltipFormatter
+                ? tooltipFormatter(value, total)
+                : defaultTooltipFormatter(value);
+
               return (
-                <Box sx={styles.tooltip}>
-                  <Typography variant="body2">
-                    {name}: {tooltipFormatter(value, total)}
+                <Box
+                  sx={{
+                    backgroundColor: theme.palette.background.paper,
+                    border: `1px solid ${theme.palette.divider}`,
+                    padding: 1,
+                    borderRadius: 1
+                  }}
+                >
+                  <Typography variant="body2" color="textPrimary">
+                    {name}: {formattedValue}
                   </Typography>
                 </Box>
               );
             }}
           />
-
           <Legend
             layout={legendPosition === 'bottom' ? 'horizontal' : 'vertical'}
             align={legendPosition === 'bottom' ? 'center' : 'right'}
             verticalAlign={legendPosition === 'bottom' ? 'bottom' : 'middle'}
-            formatter={(value, entry) => (
-              <Typography
-                variant="body2"
-                component="span"
-                sx={styles.legend}
-              >
-                {value}
-              </Typography>
-            )}
             wrapperStyle={{
-              paddingTop: legendPosition === 'bottom' ? '16px' : '0',
-              paddingLeft: legendPosition === 'right' ? '16px' : '0'
+              fontSize: '12px',
+              color: theme.palette.text.secondary,
+              marginTop: legendPosition === 'bottom' ? '16px' : 0
             }}
           />
         </RechartsChart>
       </ResponsiveContainer>
+
+      {/* Hidden live region for accessibility announcements */}
+      <div
+        id="chart-live-region"
+        role="status"
+        aria-live="polite"
+        style={{
+          position: 'absolute',
+          width: '1px',
+          height: '1px',
+          padding: 0,
+          margin: '-1px',
+          overflow: 'hidden',
+          clip: 'rect(0, 0, 0, 0)',
+          whiteSpace: 'nowrap',
+          border: 0
+        }}
+      />
     </Box>
   );
 };
 
-// Styles with theme integration
-const styles = {
-  chartContainer: {
-    width: '100%',
-    position: 'relative',
-    padding: '16px',
-    '&:focus-within': {
-      outline: '2px solid',
-      outlineColor: 'primary.main',
-      outlineOffset: '2px'
-    }
-  },
-  title: {
-    marginBottom: '16px',
-    fontWeight: 500,
-    color: 'text.primary'
-  },
-  legend: {
-    fontSize: '12px',
-    color: 'text.secondary',
-    '&:focus': {
-      outline: '2px solid',
-      outlineColor: 'primary.main'
-    }
-  },
-  tooltip: {
-    backgroundColor: 'background.paper',
-    border: '1px solid',
-    borderColor: 'divider',
-    padding: '8px',
-    borderRadius: '4px',
-    boxShadow: 1
-  }
-};
-
-export default React.memo(PieChart);
+export default PieChart;

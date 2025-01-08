@@ -1,6 +1,6 @@
 # ServiceMonitor configurations for AI-powered Product Catalog Search System
 # prometheus-operator version: v0.68.0
-
+# Defines monitoring targets and scraping configurations for Prometheus
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -28,7 +28,6 @@ spec:
   namespaceSelector:
     matchNames:
       - default
-
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -52,7 +51,6 @@ spec:
   namespaceSelector:
     matchNames:
       - default
-
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

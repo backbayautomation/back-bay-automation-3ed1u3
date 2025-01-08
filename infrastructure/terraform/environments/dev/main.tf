@@ -10,17 +10,16 @@ terraform {
     resource_group_name  = "rg-terraform-state-dev"
     storage_account_name = "stterraformstatedev001"
     container_name      = "tfstate"
-    key                 = "dev.terraform.tfstate"
-    enable_encryption   = true
-    enable_versioning   = true
+    key                = "dev.terraform.tfstate"
+    enable_encryption  = true
+    enable_versioning  = true
   }
 }
 
-# Import core infrastructure module
+# Import main module with development environment configuration
 module "main" {
   source = "../../"
 
-  # Environment configuration
   environment         = "dev"
   location           = "eastus"
   resource_group_name = "rg-aicatalog-dev-001"
@@ -39,7 +38,7 @@ module "main" {
     log_analytics_workspace_id = "log-aicatalog-dev-001"
   }
 
-  # Database configuration with development-appropriate sizing
+  # Database configuration for development environment
   database_config = {
     sql_server_name       = "sql-aicatalog-dev-001"
     sql_database_name     = "sqldb-aicatalog-dev-001"
@@ -50,7 +49,7 @@ module "main" {
     backup_retention_days = 7
   }
 
-  # Storage configuration for development environment
+  # Storage configuration with development-appropriate settings
   storage_config = {
     account_name            = "staicatalogdev001"
     account_tier           = "Standard"
@@ -62,7 +61,7 @@ module "main" {
     }
   }
 
-  # Network configuration with development security settings
+  # Network configuration with development security controls
   network_config = {
     vnet_name           = "vnet-aicatalog-dev-001"
     vnet_address_space  = ["10.0.0.0/16"]
@@ -90,11 +89,11 @@ module "main" {
 
   # Security configuration with development-appropriate controls
   security_config = {
-    enable_waf              = true
-    waf_mode               = "Detection"
-    key_vault_enabled      = true
+    enable_waf               = true
+    waf_mode                = "Detection"
+    key_vault_enabled       = true
     enable_diagnostic_settings = true
-    enable_threat_detection = true
+    enable_threat_detection  = true
   }
 
   # Resource tagging for development environment
@@ -107,7 +106,7 @@ module "main" {
   }
 }
 
-# Output development environment resource information
+# Output the development resource group name
 output "resource_group_name" {
   value = {
     name = module.main.resource_group_name
@@ -115,14 +114,16 @@ output "resource_group_name" {
   description = "Development resource group name for reference"
 }
 
+# Output the development AKS cluster endpoint
 output "aks_cluster_endpoint" {
   value = {
-    fqdn = module.main.aks_cluster_details.kube_config.host
+    fqdn = module.main.aks_cluster_details.fqdn
   }
   description = "AKS cluster endpoint for development environment"
   sensitive   = true
 }
 
+# Output the development database connection strings
 output "database_connection_strings" {
   value = {
     sql    = module.main.database_connection_details.sql_connection_string

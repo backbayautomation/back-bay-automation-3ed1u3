@@ -2,46 +2,57 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from '@axe-core/react';
-import { measurePerformance } from 'jest-performance';
-import ChatPage from '../../../../src/pages/client/Chat';
-import { useWebSocket } from '../../../../src/hooks/useWebSocket';
+import { performance } from 'jest-performance';
 import { Provider } from 'react-redux';
+import { ThemeProvider } from '@mui/material/styles';
 import { BrowserRouter } from 'react-router-dom';
-import { ThemeProvider } from '../../../../src/contexts/ThemeContext';
-import { configureStore } from '@reduxjs/toolkit';
-import chatReducer from '../../../../src/redux/slices/chatSlice';
+
+import ChatPage from '../../../../src/pages/client/Chat';
+import { lightTheme } from '../../../../src/config/theme';
+import { VALIDATION_CONSTANTS } from '../../../../src/config/constants';
+import { WebSocketStatus } from '../../../../src/types/chat';
+import { createTestStore } from '../../../utils/testUtils';
 
 // Mock WebSocket hook
 jest.mock('../../../../src/hooks/useWebSocket', () => ({
-  useWebSocket: jest.fn()
+  __esModule: true,
+  default: jest.fn(() => ({
+    isConnected: false,
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+    reconnect: jest.fn(),
+    messageQueue: [],
+    connectionState: 'disconnected',
+    sendMessage: jest.fn(),
+    addListener: jest.fn(),
+    removeListener: jest.fn()
+  }))
 }));
 
-// Performance thresholds
+// Test constants
+const TEST_TIMEOUT = 30000;
 const PERFORMANCE_THRESHOLDS = {
-  renderTime: 100, // ms
-  interactionTime: 50, // ms
-  messageProcessingTime: 30 // ms
+  message_render: 100, // ms
+  message_list_scroll: 16, // ms (60fps)
+  markdown_render: 50 // ms
 };
 
-// Test utilities
+// Helper function to render component with providers
 const renderWithProviders = (
   ui: React.ReactElement,
   {
-    preloadedState = {},
-    store = configureStore({
-      reducer: { chat: chatReducer },
-      preloadedState
-    }),
+    initialState = {},
+    store = createTestStore(initialState),
     ...renderOptions
   } = {}
 ) => {
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
     <Provider store={store}>
-      <BrowserRouter>
-        <ThemeProvider>
+      <ThemeProvider theme={lightTheme}>
+        <BrowserRouter>
           {children}
-        </ThemeProvider>
-      </BrowserRouter>
+        </BrowserRouter>
+      </ThemeProvider>
     </Provider>
   );
 
@@ -52,183 +63,196 @@ const renderWithProviders = (
 };
 
 describe('ChatPage', () => {
-  // Mock setup
-  const mockWebSocket = {
-    isConnected: false,
-    connect: jest.fn(),
-    disconnect: jest.fn(),
-    sendMessage: jest.fn(),
-    connectionState: 'disconnected'
-  };
+  let mockStore: any;
 
   beforeEach(() => {
-    (useWebSocket as jest.Mock).mockReturnValue(mockWebSocket);
-  });
+    mockStore = createTestStore({
+      chat: {
+        currentSession: {
+          id: 'test-session',
+          messages: [],
+          status: 'active'
+        },
+        wsStatus: WebSocketStatus.DISCONNECTED
+      }
+    });
 
-  afterEach(() => {
+    // Reset all mocks
     jest.clearAllMocks();
   });
 
-  // UI Component Tests
-  describe('UI Components', () => {
-    it('renders chat interface with all required elements', async () => {
-      const { container } = renderWithProviders(<ChatPage />);
+  describe('UI Rendering', () => {
+    it('should render chat interface with all required components', () => {
+      const { container } = renderWithProviders(<ChatPage />, { store: mockStore });
       
       expect(screen.getByRole('main')).toBeInTheDocument();
-      expect(screen.getByRole('region', { name: /chat message/i })).toBeInTheDocument();
       expect(screen.getByRole('textbox')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument();
-      
-      // Check for loading state
-      expect(screen.queryByRole('status')).toBeInTheDocument();
+      expect(container.querySelector('.MuiCircularProgress-root')).toBeInTheDocument();
     });
 
-    it('displays loading overlay while initializing', () => {
-      renderWithProviders(<ChatPage />);
-      expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Connecting to chat service');
+    it('should show loading state when connecting', () => {
+      renderWithProviders(<ChatPage />, { store: mockStore });
+      
+      const loadingIndicator = screen.getByRole('status');
+      expect(loadingIndicator).toBeInTheDocument();
+      expect(loadingIndicator).toHaveAttribute('aria-label', expect.stringContaining('connecting'));
     });
 
-    it('handles error states gracefully', async () => {
-      mockWebSocket.connect.mockRejectedValueOnce(new Error('Connection failed'));
-      renderWithProviders(<ChatPage />);
+    it('should handle error states gracefully', async () => {
+      const { store } = renderWithProviders(<ChatPage />, { store: mockStore });
       
-      await waitFor(() => {
-        expect(screen.getByRole('alert')).toBeInTheDocument();
+      // Simulate WebSocket error
+      store.dispatch({
+        type: 'chat/setError',
+        payload: { message: 'Connection failed' }
       });
+
+      const errorAlert = await screen.findByRole('alert');
+      expect(errorAlert).toBeInTheDocument();
+      expect(errorAlert).toHaveTextContent('Connection failed');
     });
   });
 
-  // WebSocket Connection Tests
   describe('WebSocket Connection', () => {
-    it('establishes WebSocket connection on mount', async () => {
-      renderWithProviders(<ChatPage />);
-      expect(mockWebSocket.connect).toHaveBeenCalled();
-    });
-
-    it('handles reconnection attempts', async () => {
-      mockWebSocket.isConnected = false;
-      renderWithProviders(<ChatPage />);
+    it('should establish WebSocket connection on mount', async () => {
+      const { store } = renderWithProviders(<ChatPage />, { store: mockStore });
       
       await waitFor(() => {
-        expect(mockWebSocket.connect).toHaveBeenCalledTimes(1);
+        expect(store.getState().chat.wsStatus).toBe(WebSocketStatus.CONNECTING);
       });
     });
 
-    it('disconnects WebSocket on unmount', () => {
-      const { unmount } = renderWithProviders(<ChatPage />);
+    it('should handle reconnection attempts', async () => {
+      const { store } = renderWithProviders(<ChatPage />, { store: mockStore });
+      
+      // Simulate connection loss
+      store.dispatch({
+        type: 'chat/updateWebSocketStatus',
+        payload: WebSocketStatus.DISCONNECTED
+      });
+
+      await waitFor(() => {
+        expect(store.getState().chat.wsStatus).toBe(WebSocketStatus.CONNECTING);
+      });
+    });
+
+    it('should cleanup WebSocket connection on unmount', () => {
+      const { unmount } = renderWithProviders(<ChatPage />, { store: mockStore });
+      
       unmount();
-      expect(mockWebSocket.disconnect).toHaveBeenCalled();
+      expect(useWebSocket().disconnect).toHaveBeenCalled();
     });
   });
 
-  // Message Handling Tests
   describe('Message Handling', () => {
-    it('processes incoming messages correctly', async () => {
-      const { store } = renderWithProviders(<ChatPage />);
-      
-      const mockMessage = {
-        id: '123',
-        content: 'Test message',
-        role: 'user',
-        timestamp: new Date(),
-        sessionId: '456'
-      };
-
-      // Simulate incoming message
-      await store.dispatch({ 
-        type: 'chat/addMessage', 
-        payload: mockMessage 
-      });
-
-      expect(store.getState().chat.currentSession?.messages).toContainEqual(mockMessage);
-    });
-
-    it('handles message errors appropriately', async () => {
-      mockWebSocket.sendMessage.mockRejectedValueOnce(new Error('Failed to send'));
-      renderWithProviders(<ChatPage />);
+    it('should handle message submission', async () => {
+      const { store } = renderWithProviders(<ChatPage />, { store: mockStore });
       
       const input = screen.getByRole('textbox');
-      await userEvent.type(input, 'Test message{enter}');
+      const sendButton = screen.getByRole('button', { name: /send/i });
+
+      await userEvent.type(input, 'Test message');
+      await userEvent.click(sendButton);
+
+      expect(useWebSocket().sendMessage).toHaveBeenCalledWith(
+        'chat.message',
+        expect.objectContaining({
+          content: 'Test message',
+          sessionId: expect.any(String)
+        })
+      );
+    });
+
+    it('should enforce message length limits', async () => {
+      renderWithProviders(<ChatPage />, { store: mockStore });
       
-      await waitFor(() => {
-        expect(screen.getByRole('alert')).toBeInTheDocument();
+      const input = screen.getByRole('textbox');
+      const longMessage = 'a'.repeat(VALIDATION_CONSTANTS.MAX_CHAT_MESSAGE_LENGTH + 1);
+
+      await userEvent.type(input, longMessage);
+      
+      expect(screen.getByText(/exceeds maximum length/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /send/i })).toBeDisabled();
+    });
+
+    it('should handle markdown rendering', async () => {
+      const { store } = renderWithProviders(<ChatPage />, { store: mockStore });
+      
+      // Add message with markdown
+      store.dispatch({
+        type: 'chat/addMessage',
+        payload: {
+          id: 'test',
+          content: '**Bold text**',
+          role: 'assistant',
+          metadata: { hasMarkdown: true }
+        }
       });
+
+      const message = await screen.findByText('Bold text');
+      expect(message.tagName).toBe('STRONG');
     });
   });
 
-  // Accessibility Tests
   describe('Accessibility', () => {
-    it('meets WCAG 2.1 accessibility standards', async () => {
-      const { container } = renderWithProviders(<ChatPage />);
+    it('should pass accessibility audit', async () => {
+      const { container } = renderWithProviders(<ChatPage />, { store: mockStore });
       const results = await axe(container);
       expect(results).toHaveNoViolations();
     });
 
-    it('supports keyboard navigation', async () => {
-      renderWithProviders(<ChatPage />);
+    it('should support keyboard navigation', async () => {
+      renderWithProviders(<ChatPage />, { store: mockStore });
       
       const input = screen.getByRole('textbox');
-      const sendButton = screen.getByRole('button', { name: /send/i });
-      
       await userEvent.tab();
       expect(input).toHaveFocus();
+
+      await userEvent.keyboard('{Enter}');
+      expect(screen.getByRole('button', { name: /send/i })).toHaveFocus();
+    });
+
+    it('should announce message status changes', async () => {
+      renderWithProviders(<ChatPage />, { store: mockStore });
       
-      await userEvent.tab();
-      expect(sendButton).toHaveFocus();
+      const statusRegion = screen.getByRole('status');
+      expect(statusRegion).toHaveAttribute('aria-live', 'polite');
     });
   });
 
-  // Performance Tests
   describe('Performance', () => {
-    it('renders within performance budget', async () => {
-      const { rerender } = renderWithProviders(<ChatPage />);
+    it('should render messages within performance budget', async () => {
+      const { store } = renderWithProviders(<ChatPage />, { store: mockStore });
       
-      const renderMetrics = await measurePerformance(
-        () => rerender(<ChatPage />),
-        { timeout: PERFORMANCE_THRESHOLDS.renderTime }
-      );
-      
-      expect(renderMetrics.duration).toBeLessThan(PERFORMANCE_THRESHOLDS.renderTime);
-    });
-
-    it('handles message processing within performance thresholds', async () => {
-      const { store } = renderWithProviders(<ChatPage />);
-      
-      const processingMetrics = await measurePerformance(
-        async () => {
-          await store.dispatch({ 
-            type: 'chat/addMessage', 
+      const renderTime = await performance(async () => {
+        // Add 50 messages
+        for (let i = 0; i < 50; i++) {
+          store.dispatch({
+            type: 'chat/addMessage',
             payload: {
-              id: '123',
-              content: 'Performance test message',
-              role: 'user',
-              timestamp: new Date(),
-              sessionId: '456'
+              id: `test-${i}`,
+              content: `Message ${i}`,
+              role: 'user'
             }
           });
-        },
-        { timeout: PERFORMANCE_THRESHOLDS.messageProcessingTime }
-      );
-      
-      expect(processingMetrics.duration).toBeLessThan(PERFORMANCE_THRESHOLDS.messageProcessingTime);
+        }
+      });
+
+      expect(renderTime).toBeLessThan(PERFORMANCE_THRESHOLDS.message_render);
     });
-  });
 
-  // Error Boundary Tests
-  describe('Error Boundary', () => {
-    it('catches and handles rendering errors', async () => {
-      const ErrorComponent = () => {
-        throw new Error('Test error');
-      };
+    it('should handle scroll performance efficiently', async () => {
+      const { container } = renderWithProviders(<ChatPage />, { store: mockStore });
+      
+      const scrollTime = await performance(async () => {
+        const messageList = container.querySelector('[role="log"]');
+        if (messageList) {
+          fireEvent.scroll(messageList, { target: { scrollTop: 1000 } });
+        }
+      });
 
-      const { container } = renderWithProviders(
-        <ChatPage>
-          <ErrorComponent />
-        </ChatPage>
-      );
-
-      expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(container).toHaveTextContent('Chat Error');
+      expect(scrollTime).toBeLessThan(PERFORMANCE_THRESHOLDS.message_list_scroll);
     });
   });
 });

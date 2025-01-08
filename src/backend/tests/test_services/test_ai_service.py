@@ -1,254 +1,261 @@
 """
-Comprehensive test suite for the AI service module implementing GPT-4 based natural language 
+Comprehensive test suite for the AI service module implementing GPT-4 based natural language
 processing and response generation functionality.
 
 Version: 1.0.0
 """
 
-import pytest  # version: ^7.4.0
-import pytest_asyncio  # version: ^0.21.0
+import pytest  # version: 7.4.0
+import pytest_asyncio  # version: 0.21.0
 import numpy as np
 from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch
-import json
-import time
-from typing import Dict, List
 
 from app.services.ai_service import AIService
 from app.services.vector_search import VectorSearchService
 from app.services.cache_service import CacheService
 from app.core.config import settings
+from app.constants import VectorSearchConfig
 
-# Test data constants
+# Test constants
 TEST_TENANT_ID = "test-tenant-123"
+TEST_VECTOR_DIMENSION = VectorSearchConfig.VECTOR_DIMENSION.value
 TEST_QUERY = "What are the specifications of pump model A123?"
-TEST_EMBEDDING_DIMENSION = 1536
-TEST_CHAT_HISTORY = "Previous chat context"
+TEST_CONTEXT = "Model A123 Specifications: Flow rate: 500 GPM, Pressure: 150 PSI"
 
 @pytest.fixture
-async def mock_vector_search():
-    """Fixture providing mocked vector search service with security validation."""
+def mock_openai():
+    """Fixture providing mocked OpenAI client with security validation."""
+    with patch("openai.Embedding.acreate") as mock_embed:
+        with patch("openai.ChatCompletion.acreate") as mock_chat:
+            # Configure embedding mock
+            mock_embed.return_value = {
+                "data": [{
+                    "embedding": np.random.rand(TEST_VECTOR_DIMENSION).tolist()
+                }]
+            }
+            
+            # Configure chat completion mock
+            mock_chat.return_value = AsyncMock(
+                choices=[
+                    Mock(
+                        message=Mock(
+                            content="The pump model A123 has the following specifications:\n- Flow rate: 500 GPM\n- Pressure: 150 PSI"
+                        )
+                    )
+                ]
+            )
+            
+            yield {
+                "embedding": mock_embed,
+                "chat": mock_chat
+            }
+
+@pytest.fixture
+def mock_vector_search():
+    """Fixture providing mocked vector search service."""
     mock = AsyncMock(spec=VectorSearchService)
     mock.search.return_value = [
         {
-            'chunk_id': 'chunk-1',
-            'document_id': 'doc-1',
-            'content': 'Pump A123 specifications: Flow rate 500 GPM, Pressure 150 PSI',
-            'similarity_score': 0.95,
-            'metadata': {'section': 'specifications'}
+            "chunk_id": "chunk-123",
+            "content": TEST_CONTEXT,
+            "similarity_score": 0.95,
+            "metadata": {"document_id": "doc-123"}
         }
     ]
     return mock
 
 @pytest.fixture
-async def mock_cache_service():
-    """Fixture providing mocked cache service with tenant isolation."""
+def mock_cache():
+    """Fixture providing mocked cache service."""
     mock = AsyncMock(spec=CacheService)
     mock.get.return_value = None
     mock.set.return_value = True
     return mock
 
 @pytest.fixture
-async def mock_openai():
-    """Fixture providing mocked OpenAI client with rate limiting."""
-    mock = AsyncMock()
-    mock.Embedding.acreate.return_value = {
-        'data': [{
-            'embedding': np.random.rand(TEST_EMBEDDING_DIMENSION).tolist()
-        }]
+def test_security_context():
+    """Fixture providing security context for tests."""
+    return {
+        "tenant_id": TEST_TENANT_ID,
+        "user_context": {
+            "user_id": "user-123",
+            "role": "regular_user",
+            "permissions": ["read"]
+        }
     }
-    mock.ChatCompletion.acreate.return_value = Mock(
-        choices=[Mock(message=Mock(content="Test response"))]
-    )
-    return mock
 
 class TestAIService:
     """Test class for AIService functionality including security and performance."""
 
-    @pytest.fixture(autouse=True)
-    async def setup_method(self, mock_vector_search, mock_cache_service, mock_openai):
-        """Set up test environment with security context and monitoring."""
-        self._vector_search = mock_vector_search
-        self._cache = mock_cache_service
-        
-        # Initialize service with test configuration
+    def setup_method(self):
+        """Set up test fixtures and security context."""
+        self._vector_search_mock = Mock(spec=VectorSearchService)
+        self._cache_mock = Mock(spec=CacheService)
         self._ai_service = AIService(
-            vector_search_service=self._vector_search,
-            cache_service=self._cache,
+            vector_search_service=self._vector_search_mock,
+            cache_service=self._cache_mock,
             tenant_id=TEST_TENANT_ID
         )
-        
-        # Patch OpenAI client
-        with patch('app.services.ai_service.openai', mock_openai):
-            yield
+
+    def teardown_method(self):
+        """Clean up test environment and security context."""
+        self._vector_search_mock.reset_mock()
+        self._cache_mock.reset_mock()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_generate_embeddings(self):
-        """Test embedding generation with security validation and monitoring."""
+    async def test_generate_embeddings(self, mock_openai):
+        """Test embedding generation with security validation."""
         # Test input
         test_text = "Sample text for embedding generation"
-        test_metadata = {'request_type': 'test', 'user_id': 'test-user'}
+        test_metadata = {"type": "test", "source": "unit_test"}
 
         # Generate embeddings
         embedding = await self._ai_service.generate_embeddings(test_text, test_metadata)
 
-        # Verify embedding shape and type
+        # Verify embedding shape
         assert isinstance(embedding, np.ndarray)
-        assert embedding.shape == (TEST_EMBEDDING_DIMENSION,)
-        
-        # Verify OpenAI API called correctly
-        self._ai_service._openai.Embedding.acreate.assert_called_once_with(
+        assert embedding.shape == (TEST_VECTOR_DIMENSION,)
+
+        # Verify OpenAI API call
+        mock_openai["embedding"].assert_called_once_with(
             input=test_text,
             model="text-embedding-ada-002",
-            headers={
-                'X-Tenant-ID': TEST_TENANT_ID,
-                'X-Request-ID': test_metadata.get('request_id')
-            }
+            user=TEST_TENANT_ID
         )
 
-        # Verify metrics updated
-        assert self._ai_service._metrics['requests'] == 1
-        assert self._ai_service._metrics['errors'] == 0
+        # Test input validation
+        with pytest.raises(ValueError):
+            await self._ai_service.generate_embeddings("", test_metadata)
+        with pytest.raises(ValueError):
+            await self._ai_service.generate_embeddings(None, test_metadata)
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_process_query(self):
-        """Test query processing with context retrieval and response generation."""
-        # Test input
-        user_context = {'user_id': 'test-user'}
+    async def test_process_query(self, mock_openai, mock_vector_search, mock_cache, test_security_context):
+        """Test query processing with context retrieval."""
+        # Configure mocks
+        self._ai_service._vector_search = mock_vector_search
+        self._ai_service._cache = mock_cache
 
-        # Process query
+        # Test query processing
         result = await self._ai_service.process_query(
             TEST_QUERY,
-            TEST_CHAT_HISTORY,
-            user_context
+            chat_history="",
+            user_context=test_security_context["user_context"]
         )
 
         # Verify result structure
         assert isinstance(result, dict)
-        assert 'response' in result
-        assert 'context' in result
-        assert 'metrics' in result
+        assert "answer" in result
+        assert "context" in result
+        assert "metadata" in result
 
-        # Verify vector search called correctly
-        self._vector_search.search.assert_called_once()
-        search_args = self._vector_search.search.call_args[0]
+        # Verify vector search call
+        mock_vector_search.search.assert_called_once()
+        search_args = mock_vector_search.search.call_args[0]
         assert isinstance(search_args[0], np.ndarray)
         assert search_args[1] == TEST_TENANT_ID
 
         # Verify cache interaction
-        cache_key = f"query:{TEST_TENANT_ID}:{hash(TEST_QUERY)}"
-        self._cache.get.assert_called_once_with(cache_key)
-        self._cache.set.assert_called_once()
+        mock_cache.get.assert_called_once()
+        mock_cache.set.assert_called_once()
 
-        # Verify metrics
-        metrics = result['metrics']
-        assert 'processing_time' in metrics
-        assert 'context_chunks' in metrics
-        assert 'token_count' in metrics
+        # Test error handling
+        mock_vector_search.search.side_effect = Exception("Search failed")
+        with pytest.raises(Exception):
+            await self._ai_service.process_query(
+                TEST_QUERY,
+                chat_history="",
+                user_context=test_security_context["user_context"]
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.security
+    async def test_tenant_isolation(self, mock_openai, test_security_context):
+        """Test multi-tenant data isolation and security."""
+        # Test cross-tenant access attempt
+        different_tenant = "different-tenant"
+        with pytest.raises(ValueError):
+            await self._ai_service.generate_embeddings(
+                "Test text",
+                {"tenant_id": different_tenant}
+            )
+
+        # Verify tenant ID in API calls
+        await self._ai_service.generate_embeddings(
+            "Test text",
+            {"tenant_id": TEST_TENANT_ID}
+        )
+        mock_openai["embedding"].assert_called_with(
+            input="Test text",
+            model="text-embedding-ada-002",
+            user=TEST_TENANT_ID
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_generate_response(self):
-        """Test response generation with security headers and monitoring."""
+    async def test_generate_response(self, mock_openai, test_security_context):
+        """Test response generation with security context."""
         # Test input
-        test_prompt = "Test prompt"
-        test_context = [{'content': 'Test context'}]
-        security_context = {'user_id': 'test-user'}
+        test_prompt = "Generate response for test"
+        test_context = [{"content": TEST_CONTEXT, "similarity_score": 0.95}]
 
         # Generate response
         response = await self._ai_service.generate_response(
             test_prompt,
             test_context,
-            security_context
+            test_security_context
         )
 
         # Verify response
         assert isinstance(response, str)
         assert len(response) > 0
 
-        # Verify OpenAI API called correctly
-        self._ai_service._openai.ChatCompletion.acreate.assert_called_once()
-        completion_args = self._ai_service._openai.ChatCompletion.acreate.call_args[1]
-        assert completion_args['model'] == "gpt-4"
-        assert len(completion_args['messages']) == 2
-        assert completion_args['temperature'] == 0.7
+        # Verify GPT-4 API call
+        mock_openai["chat"].assert_called_once()
+        call_args = mock_openai["chat"].call_args[1]
+        assert call_args["user"] == TEST_TENANT_ID
+        assert call_args["temperature"] == 0.7
+        assert call_args["max_tokens"] == 4096
 
-        # Verify security headers
-        headers = completion_args['headers']
-        assert headers['X-Tenant-ID'] == TEST_TENANT_ID
-        assert headers['X-User-ID'] == security_context['user_id']
-        assert 'X-Request-ID' in headers
-
-    @pytest.mark.asyncio
-    @pytest.mark.security
-    async def test_tenant_isolation(self):
-        """Test multi-tenant data isolation and security measures."""
-        # Test with different tenant IDs
-        tenant_1 = "tenant-1"
-        tenant_2 = "tenant-2"
-
-        # Create services for different tenants
-        service_1 = AIService(self._vector_search, self._cache, tenant_1)
-        service_2 = AIService(self._vector_search, self._cache, tenant_2)
-
-        # Generate embeddings for both tenants
-        text = "Test text"
-        metadata = {'user_id': 'test-user'}
-
-        embedding_1 = await service_1.generate_embeddings(text, metadata)
-        embedding_2 = await service_2.generate_embeddings(text, metadata)
-
-        # Verify tenant headers in API calls
-        api_calls = self._ai_service._openai.Embedding.acreate.call_args_list
-        assert len(api_calls) == 2
-        assert api_calls[0][1]['headers']['X-Tenant-ID'] == tenant_1
-        assert api_calls[1][1]['headers']['X-Tenant-ID'] == tenant_2
-
-        # Verify vector search tenant isolation
-        search_calls = self._vector_search.search.call_args_list
-        for call in search_calls:
-            assert call[0][1] in [tenant_1, tenant_2]
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_error_handling(self):
-        """Test error handling and retry mechanisms."""
-        # Configure mock to raise exception
-        self._ai_service._openai.Embedding.acreate.side_effect = Exception("API Error")
-
-        # Attempt to generate embeddings
-        with pytest.raises(Exception):
-            await self._ai_service.generate_embeddings(
-                "Test text",
-                {'user_id': 'test-user'}
+        # Test security validation
+        with pytest.raises(ValueError):
+            await self._ai_service.generate_response(
+                test_prompt,
+                test_context,
+                {}  # Invalid security context
             )
 
-        # Verify error metrics
-        assert self._ai_service._metrics['errors'] == 1
-        assert self._ai_service._metrics['last_error'] is not None
-
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_health_check(self):
-        """Test health check functionality and metrics."""
-        # Configure mock responses
-        self._vector_search.health_check.return_value = {'status': 'healthy'}
-        self._cache.get_stats.return_value = {'hit_ratio': 0.95}
-
+    async def test_health_check(self, mock_openai):
+        """Test health check functionality."""
         # Perform health check
         health_status = await self._ai_service.health_check()
 
-        # Verify health check response
+        # Verify health status
         assert isinstance(health_status, dict)
-        assert health_status['status'] == 'healthy'
-        assert 'openai_api' in health_status
-        assert 'vector_search' in health_status
-        assert 'cache' in health_status
-        assert 'metrics' in health_status
-        assert 'timestamp' in health_status
+        assert "status" in health_status
+        assert "components" in health_status
+        assert "metrics" in health_status
+        assert "timestamp" in health_status
 
-        # Verify service calls
-        self._vector_search.health_check.assert_called_once()
-        self._cache.get_stats.assert_called_once()
+        # Test component status
+        assert all(
+            component in health_status["components"]
+            for component in ["openai", "vector_search", "cache"]
+        )
+
+        # Test metrics
+        assert all(
+            metric in health_status["metrics"]
+            for metric in ["requests", "errors", "cache_hits", "avg_latency"]
+        )
+
+        # Test error handling
+        mock_openai["embedding"].side_effect = Exception("API error")
+        error_status = await self._ai_service.health_check()
+        assert error_status["status"] == "unhealthy"
+        assert "error" in error_status

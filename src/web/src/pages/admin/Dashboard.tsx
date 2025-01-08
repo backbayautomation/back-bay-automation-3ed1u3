@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Grid, Box, Paper, Typography, Alert, Skeleton } from '@mui/material';
-import { ErrorBoundary } from 'react-error-boundary';
+import { 
+  Grid, 
+  Box, 
+  Typography, 
+  Paper, 
+  Skeleton, 
+  Alert,
+  useTheme 
+} from '@mui/material';
+import { withErrorBoundary } from 'react-error-boundary';
 import { ApplicationInsights } from '@microsoft/applicationinsights-web';
 
 import MainLayout from '../../components/common/Layout/MainLayout';
@@ -8,10 +16,6 @@ import AnalyticsDashboard from '../../components/admin/AnalyticsDashboard/Analyt
 import ProcessingQueue from '../../components/admin/DocumentProcessing/ProcessingQueue';
 import { useAuth } from '../../hooks/useAuth';
 import { useWebSocket } from '../../hooks/useWebSocket';
-
-// Constants for dashboard configuration
-const REFRESH_INTERVAL = 300000; // 5 minutes
-const WS_BASE_URL = process.env.VITE_WS_URL || 'wss://api.example.com';
 
 // Initialize Application Insights
 const appInsights = new ApplicationInsights({
@@ -22,6 +26,7 @@ const appInsights = new ApplicationInsights({
     enableRequestTrackingTelemetry: true
   }
 });
+appInsights.loadAppInsights();
 
 interface DashboardProps {
   refreshInterval?: number;
@@ -29,105 +34,109 @@ interface DashboardProps {
 }
 
 interface DashboardState {
-  error: Error | null;
+  metrics: {
+    activeClients: number;
+    totalDocuments: number;
+    processingQueue: number;
+    systemUptime: number;
+  };
   isLoading: boolean;
+  error: Error | null;
 }
 
+const INITIAL_STATE: DashboardState = {
+  metrics: {
+    activeClients: 0,
+    totalDocuments: 0,
+    processingQueue: 0,
+    systemUptime: 0
+  },
+  isLoading: true,
+  error: null
+};
+
 const Dashboard: React.FC<DashboardProps> = ({
-  refreshInterval = REFRESH_INTERVAL,
+  refreshInterval = 30000,
   enableRealtime = true
 }) => {
+  const theme = useTheme();
   const { isAuthenticated, user } = useAuth();
-  const [state, setState] = useState<DashboardState>({
-    error: null,
-    isLoading: true
-  });
+  const [state, setState] = useState<DashboardState>(INITIAL_STATE);
 
-  // Initialize WebSocket connection for real-time updates
-  const { addListener, removeListener } = useWebSocket({
-    baseUrl: WS_BASE_URL,
+  // WebSocket connection for real-time updates
+  const { isConnected, addListener, removeListener } = useWebSocket({
+    baseUrl: `${process.env.VITE_WS_URL}/admin`,
     autoConnect: enableRealtime,
     monitoringEnabled: true
   });
 
-  // Handle real-time updates
-  const handleRealtimeUpdate = useCallback((data: any) => {
-    // Track telemetry for real-time updates
-    appInsights.trackEvent({
-      name: 'DashboardRealtimeUpdate',
+  // Track page view
+  useEffect(() => {
+    appInsights.trackPageView({
+      name: 'Admin Dashboard',
       properties: {
         userId: user?.id,
-        updateType: data.type,
-        timestamp: new Date().toISOString()
+        clientId: user?.clientId
       }
     });
   }, [user]);
+
+  // Handle real-time metric updates
+  const handleMetricUpdate = useCallback((data: Partial<DashboardState['metrics']>) => {
+    setState(prev => ({
+      ...prev,
+      metrics: {
+        ...prev.metrics,
+        ...data
+      }
+    }));
+  }, []);
 
   // Set up WebSocket listeners
   useEffect(() => {
     if (enableRealtime) {
-      addListener('dashboard.update', handleRealtimeUpdate);
-      
-      return () => {
-        removeListener('dashboard.update', handleRealtimeUpdate);
-      };
+      addListener('metrics.update', handleMetricUpdate);
+      return () => removeListener('metrics.update', handleMetricUpdate);
     }
-  }, [enableRealtime, addListener, removeListener, handleRealtimeUpdate]);
-
-  // Initialize Application Insights
-  useEffect(() => {
-    appInsights.loadAppInsights();
-    appInsights.trackPageView({
-      name: 'Admin Dashboard',
-      uri: window.location.pathname
-    });
-  }, []);
+  }, [enableRealtime, addListener, removeListener, handleMetricUpdate]);
 
   // Error handler for child components
   const handleError = useCallback((error: Error) => {
     setState(prev => ({ ...prev, error }));
-    appInsights.trackException({
-      error,
-      severityLevel: 2,
-      properties: {
-        component: 'AdminDashboard',
-        userId: user?.id
-      }
-    });
-  }, [user]);
-
-  // Memoized error fallback component
-  const ErrorFallback = useMemo(() => {
-    return ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => (
-      <Box sx={{ p: 3 }}>
-        <Alert 
-          severity="error" 
-          onClose={resetErrorBoundary}
-          sx={{ mb: 2 }}
-        >
-          {error.message}
-        </Alert>
-        <Typography variant="body2" color="text.secondary">
-          Please try refreshing the page or contact support if the issue persists.
-        </Typography>
-      </Box>
-    );
+    appInsights.trackException({ error });
   }, []);
 
-  // Loading state component
-  const LoadingSkeleton = () => (
-    <Box sx={{ p: 3 }}>
-      <Skeleton variant="rectangular" height={200} sx={{ mb: 2 }} />
-      <Grid container spacing={3}>
-        <Grid item xs={12} md={6}>
-          <Skeleton variant="rectangular" height={400} />
-        </Grid>
-        <Grid item xs={12} md={6}>
-          <Skeleton variant="rectangular" height={400} />
-        </Grid>
-      </Grid>
-    </Box>
-  );
+  // Styles
+  const styles = {
+    dashboard: {
+      padding: theme.spacing(3),
+      height: '100%',
+      overflow: 'auto',
+      position: 'relative' as const
+    },
+    title: {
+      marginBottom: theme.spacing(2),
+      color: theme.palette.text.primary
+    },
+    section: {
+      marginBottom: theme.spacing(3),
+      position: 'relative' as const
+    },
+    paper: {
+      padding: theme.spacing(2),
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column' as const
+    },
+    skeleton: {
+      margin: theme.spacing(1, 0),
+      borderRadius: theme.shape.borderRadius
+    },
+    error: {
+      margin: theme.spacing(2, 0),
+      padding: theme.spacing(2)
+    }
+  };
 
   if (!isAuthenticated) {
     return null;
@@ -135,85 +144,66 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <MainLayout portalType="admin">
-      <ErrorBoundary
-        FallbackComponent={ErrorFallback}
-        onError={(error) => {
-          handleError(error);
-          appInsights.trackException({ error });
-        }}
-      >
-        <Box
-          sx={{
-            p: 3,
-            height: '100%',
-            overflow: 'auto',
-            backgroundColor: 'background.default'
-          }}
-        >
-          {state.error && (
-            <Alert 
-              severity="error" 
-              onClose={() => setState(prev => ({ ...prev, error: null }))}
-              sx={{ mb: 3 }}
-            >
-              {state.error.message}
-            </Alert>
-          )}
+      <Box sx={styles.dashboard}>
+        {state.error && (
+          <Alert 
+            severity="error" 
+            sx={styles.error}
+            onClose={() => setState(prev => ({ ...prev, error: null }))}
+          >
+            {state.error.message}
+          </Alert>
+        )}
 
-          <Grid container spacing={3}>
-            {/* Analytics Dashboard Section */}
-            <Grid item xs={12}>
-              <Paper 
-                elevation={2}
-                sx={{ 
-                  p: 2,
-                  height: '100%',
-                  backgroundColor: 'background.paper'
-                }}
-              >
-                <AnalyticsDashboard
-                  refreshInterval={refreshInterval}
-                  onExport={(format) => {
-                    appInsights.trackEvent({
-                      name: 'DashboardExport',
-                      properties: { format, userId: user?.id }
-                    });
-                  }}
-                />
-              </Paper>
-            </Grid>
+        <Typography variant="h4" component="h1" sx={styles.title}>
+          Admin Dashboard
+        </Typography>
 
-            {/* Processing Queue Section */}
-            <Grid item xs={12}>
-              <Paper 
-                elevation={2}
-                sx={{ 
-                  p: 2,
-                  height: '100%',
-                  backgroundColor: 'background.paper'
-                }}
-              >
-                <ProcessingQueue
-                  refreshInterval={refreshInterval}
-                  autoRefresh={enableRealtime}
-                  onProcessingComplete={(document) => {
-                    appInsights.trackEvent({
-                      name: 'DocumentProcessingComplete',
-                      properties: {
-                        documentId: document.id,
-                        userId: user?.id
-                      }
-                    });
-                  }}
-                  onError={handleError}
-                />
-              </Paper>
-            </Grid>
+        {!isConnected && enableRealtime && (
+          <Alert severity="warning" sx={styles.error}>
+            Real-time updates disconnected. Attempting to reconnect...
+          </Alert>
+        )}
+
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <Paper sx={styles.paper}>
+              <AnalyticsDashboard
+                refreshInterval={refreshInterval}
+                onError={handleError}
+              />
+            </Paper>
           </Grid>
-        </Box>
-      </ErrorBoundary>
+
+          <Grid item xs={12}>
+            <Paper sx={styles.paper}>
+              <ProcessingQueue
+                refreshInterval={refreshInterval}
+                autoRefresh={enableRealtime}
+                onError={handleError}
+              />
+            </Paper>
+          </Grid>
+        </Grid>
+      </Box>
     </MainLayout>
   );
 };
 
-export default React.memo(Dashboard);
+// Error boundary wrapper
+const DashboardWithErrorBoundary = withErrorBoundary(Dashboard, {
+  FallbackComponent: ({ error }) => (
+    <Box p={3}>
+      <Alert severity="error">
+        <Typography variant="h6">Dashboard Error</Typography>
+        <Typography variant="body2">{error.message}</Typography>
+      </Alert>
+    </Box>
+  ),
+  onError: (error) => {
+    appInsights.trackException({ error });
+    console.error('Dashboard Error:', error);
+  }
+});
+
+export default DashboardWithErrorBoundary;

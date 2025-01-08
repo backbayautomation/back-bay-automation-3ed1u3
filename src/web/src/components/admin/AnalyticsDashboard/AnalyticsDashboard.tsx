@@ -1,34 +1,35 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'; // v18.2.0
-import {
-  Grid,
-  Box,
+import React, { useState, useEffect, useCallback, useMemo } from 'react'; // ^18.2.0
+import { 
+  Grid, 
+  Box, 
   Paper,
   Typography,
   FormControl,
   Select,
   MenuItem,
-  Button,
-  useTheme,
-  SelectChangeEvent,
-} from '@mui/material'; // v5.14.0
-import { DateRangePicker } from '@mui/x-date-pickers-pro'; // v6.11.0
-import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
-import { Download, Refresh } from '@mui/icons-material';
+  IconButton,
+  Tooltip,
+  useTheme
+} from '@mui/material'; // ^5.14.0
+import { DateRangePicker } from '@mui/x-date-pickers-pro'; // ^6.11.0
+import { 
+  FileDownload as ExportIcon,
+  Refresh as RefreshIcon
+} from '@mui/icons-material'; // ^5.14.0
+import { ErrorBoundary } from 'react-error-boundary'; // ^4.0.11
 
 import LineChart from './Charts/LineChart';
 import PieChart from './Charts/PieChart';
 import MetricsCard from './MetricsCard';
 import { analyticsService } from '../../../services/analytics';
-import {
+import { 
   AnalyticsDashboard as DashboardData,
   MetricPeriod,
-  TimeSeriesData,
   TrendDirection,
-  UsageMetrics,
-  DocumentMetrics,
-  PerformanceMetrics,
+  TimeSeriesData,
   MetricTrend
 } from '../../../types/analytics';
+import ContentLoader from '../../common/Loaders/ContentLoader';
 
 interface AnalyticsDashboardProps {
   refreshInterval?: number;
@@ -37,36 +38,22 @@ interface AnalyticsDashboardProps {
 }
 
 interface DateRange {
-  start: Date;
-  end: Date;
+  startDate: Date;
+  endDate: Date;
 }
 
 interface DashboardState {
-  metrics: {
-    usage: UsageMetrics | null;
-    documents: DocumentMetrics | null;
-    performance: PerformanceMetrics | null;
-  };
-  trends: TimeSeriesData[];
-  loading: {
-    usage: boolean;
-    documents: boolean;
-    performance: boolean;
-    trends: boolean;
-  };
-  error: {
-    usage: Error | null;
-    documents: Error | null;
-    performance: Error | null;
-    trends: Error | null;
-  };
+  data: DashboardData | null;
+  loading: boolean;
+  error: Error | null;
   dateRange: DateRange;
+  period: MetricPeriod;
 }
 
 const DEFAULT_REFRESH_INTERVAL = 300000; // 5 minutes
-const DEFAULT_DATE_RANGE: DateRange = {
-  start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000), // 30 days ago
-  end: new Date()
+const DEFAULT_DATE_RANGE = {
+  startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000), // Last 7 days
+  endDate: new Date()
 };
 
 const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
@@ -75,86 +62,47 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   onExport
 }) => {
   const theme = useTheme();
-  const [period, setPeriod] = useState<MetricPeriod>(MetricPeriod.DAILY);
   const [state, setState] = useState<DashboardState>({
-    metrics: {
-      usage: null,
-      documents: null,
-      performance: null
-    },
-    trends: [],
-    loading: {
-      usage: true,
-      documents: true,
-      performance: true,
-      trends: true
-    },
-    error: {
-      usage: null,
-      documents: null,
-      performance: null,
-      trends: null
-    },
-    dateRange: DEFAULT_DATE_RANGE
+    data: null,
+    loading: true,
+    error: null,
+    dateRange: DEFAULT_DATE_RANGE,
+    period: MetricPeriod.DAILY
   });
 
+  // Fetch dashboard data with error handling
   const fetchDashboardData = useCallback(async () => {
-    setState(prev => ({
-      ...prev,
-      loading: { usage: true, documents: true, performance: true, trends: true }
-    }));
-
     try {
-      const [usage, documents, performance, trends] = await Promise.all([
-        analyticsService.getUsageMetrics(period),
-        analyticsService.getDocumentMetrics(),
-        analyticsService.getPerformanceMetrics(),
-        analyticsService.getMetricTrends(
-          ['queries', 'processing', 'response_time'],
-          period
-        )
-      ]);
-
-      setState(prev => ({
-        ...prev,
-        metrics: { usage, documents, performance },
-        trends,
-        loading: { usage: false, documents: false, performance: false, trends: false },
-        error: { usage: null, documents: null, performance: null, trends: null }
-      }));
+      setState(prev => ({ ...prev, loading: true, error: null }));
+      const dashboard = await analyticsService.getDashboardMetrics();
+      setState(prev => ({ ...prev, data: dashboard, loading: false }));
     } catch (error) {
-      setState(prev => ({
-        ...prev,
-        loading: { usage: false, documents: false, performance: false, trends: false },
-        error: {
-          usage: error as Error,
-          documents: error as Error,
-          performance: error as Error,
-          trends: error as Error
-        }
+      setState(prev => ({ 
+        ...prev, 
+        error: error as Error, 
+        loading: false 
       }));
     }
-  }, [period]);
-
-  const handleDateRangeChange = useCallback((newRange: DateRange) => {
-    setState(prev => ({ ...prev, dateRange: newRange }));
-    // Trigger data refresh with new date range
-    fetchDashboardData();
-  }, [fetchDashboardData]);
-
-  const handlePeriodChange = useCallback((event: SelectChangeEvent<MetricPeriod>) => {
-    setPeriod(event.target.value as MetricPeriod);
   }, []);
 
-  const handleExport = useCallback(() => {
-    if (onExport) {
-      onExport('csv');
-    }
-  }, [onExport]);
-
-  const handleRefresh = useCallback(() => {
+  // Handle date range changes
+  const handleDateRangeChange = useCallback((newRange: DateRange) => {
+    setState(prev => ({ ...prev, dateRange: newRange }));
     fetchDashboardData();
   }, [fetchDashboardData]);
+
+  // Handle period changes
+  const handlePeriodChange = useCallback((event: React.ChangeEvent<{ value: unknown }>) => {
+    setState(prev => ({ ...prev, period: event.target.value as MetricPeriod }));
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Handle data export
+  const handleExport = useCallback(() => {
+    if (state.data && onExport) {
+      onExport('csv');
+    }
+  }, [state.data, onExport]);
 
   // Set up automatic refresh interval
   useEffect(() => {
@@ -167,166 +115,145 @@ const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     fetchDashboardData();
   }, [fetchDashboardData]);
 
-  const renderErrorFallback = ({ error }: { error: Error }) => (
-    <Paper
-      sx={{
-        p: 3,
-        backgroundColor: theme.palette.error.light,
-        color: theme.palette.error.contrastText
-      }}
-    >
-      <Typography variant="h6">Error Loading Dashboard</Typography>
-      <Typography variant="body1">{error.message}</Typography>
-      <Button
-        variant="contained"
-        onClick={() => fetchDashboardData()}
-        sx={{ mt: 2 }}
+  // Memoized metrics cards data
+  const metricsCards = useMemo(() => {
+    if (!state.data) return [];
+    
+    return [
+      {
+        title: 'Total Queries',
+        value: state.data.usage.totalQueries,
+        trend: state.data.keyMetrics.find(m => m.metricName === 'totalQueries') as MetricTrend
+      },
+      {
+        title: 'Active Users',
+        value: state.data.usage.activeUsers,
+        trend: state.data.keyMetrics.find(m => m.metricName === 'activeUsers') as MetricTrend
+      },
+      {
+        title: 'Processing Queue',
+        value: state.data.documents.processingQueue,
+        trend: state.data.keyMetrics.find(m => m.metricName === 'processingQueue') as MetricTrend
+      },
+      {
+        title: 'System Uptime',
+        value: state.data.performance.uptime,
+        trend: state.data.keyMetrics.find(m => m.metricName === 'uptime') as MetricTrend
+      }
+    ];
+  }, [state.data]);
+
+  if (state.error) {
+    return (
+      <Paper 
+        sx={{ p: 3, textAlign: 'center', color: 'error.main' }}
+        role="alert"
       >
-        Retry
-      </Button>
-    </Paper>
-  );
+        <Typography variant="h6">Error loading dashboard</Typography>
+        <Typography variant="body2">{state.error.message}</Typography>
+      </Paper>
+    );
+  }
 
   return (
-    <ErrorBoundary FallbackComponent={renderErrorFallback}>
+    <ErrorBoundary
+      FallbackComponent={({ error }) => (
+        <Paper sx={{ p: 3, textAlign: 'center', color: 'error.main' }}>
+          <Typography variant="h6">Dashboard Error</Typography>
+          <Typography variant="body2">{error.message}</Typography>
+        </Paper>
+      )}
+    >
       <Box sx={{ p: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
-          <Typography variant="h4" component="h1">
-            Analytics Dashboard
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 2 }}>
+        <Box 
+          sx={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            mb: 3 
+          }}
+        >
+          <Typography variant="h5" component="h1">Analytics Dashboard</Typography>
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+            <FormControl size="small">
+              <DateRangePicker
+                value={state.dateRange}
+                onChange={handleDateRangeChange}
+                renderInput={(startProps, endProps) => (
+                  <>
+                    <input {...startProps} />
+                    <Box sx={{ mx: 1 }}>to</Box>
+                    <input {...endProps} />
+                  </>
+                )}
+              />
+            </FormControl>
             <FormControl size="small">
               <Select
-                value={period}
+                value={state.period}
                 onChange={handlePeriodChange}
                 aria-label="Select time period"
               >
-                <MenuItem value={MetricPeriod.DAILY}>Daily</MenuItem>
-                <MenuItem value={MetricPeriod.WEEKLY}>Weekly</MenuItem>
-                <MenuItem value={MetricPeriod.MONTHLY}>Monthly</MenuItem>
+                {Object.values(MetricPeriod).map(period => (
+                  <MenuItem key={period} value={period}>
+                    {period.toLowerCase()}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
-            <DateRangePicker
-              value={[state.dateRange.start, state.dateRange.end]}
-              onChange={(newValue) => {
-                if (newValue[0] && newValue[1]) {
-                  handleDateRangeChange({
-                    start: newValue[0],
-                    end: newValue[1]
-                  });
-                }
-              }}
-            />
-            <Button
-              startIcon={<Refresh />}
-              onClick={handleRefresh}
-              aria-label="Refresh dashboard"
-            >
-              Refresh
-            </Button>
-            <Button
-              startIcon={<Download />}
-              onClick={handleExport}
-              aria-label="Export dashboard data"
-            >
-              Export
-            </Button>
+            <Tooltip title="Refresh data">
+              <IconButton 
+                onClick={fetchDashboardData}
+                aria-label="Refresh dashboard data"
+              >
+                <RefreshIcon />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Export data">
+              <IconButton 
+                onClick={handleExport}
+                aria-label="Export dashboard data"
+                disabled={!state.data}
+              >
+                <ExportIcon />
+              </IconButton>
+            </Tooltip>
           </Box>
         </Box>
 
         <Grid container spacing={3}>
-          {/* Key Metrics Cards */}
-          <Grid item xs={12} container spacing={2}>
-            <Grid item xs={12} sm={6} md={3}>
+          {metricsCards.map((metric, index) => (
+            <Grid item xs={12} sm={6} md={3} key={index}>
               <MetricsCard
-                title="Total Queries"
-                value={state.metrics.usage?.totalQueries || 0}
-                trend={{
-                  currentValue: state.metrics.usage?.totalQueries || 0,
-                  previousValue: 0,
-                  percentageChange: 0,
-                  direction: TrendDirection.STABLE,
-                  metricName: 'queries',
-                  unit: 'count',
-                  meetsSLA: true
-                }}
-                loading={state.loading.usage}
+                title={metric.title}
+                value={metric.value}
+                trend={metric.trend}
+                loading={state.loading}
               />
             </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <MetricsCard
-                title="Active Users"
-                value={state.metrics.usage?.activeUsers || 0}
-                trend={{
-                  currentValue: state.metrics.usage?.activeUsers || 0,
-                  previousValue: 0,
-                  percentageChange: 0,
-                  direction: TrendDirection.STABLE,
-                  metricName: 'users',
-                  unit: 'count',
-                  meetsSLA: true
-                }}
-                loading={state.loading.usage}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <MetricsCard
-                title="Processing Queue"
-                value={state.metrics.documents?.processingQueue || 0}
-                trend={{
-                  currentValue: state.metrics.documents?.processingQueue || 0,
-                  previousValue: 0,
-                  percentageChange: 0,
-                  direction: TrendDirection.STABLE,
-                  metricName: 'queue',
-                  unit: 'count',
-                  meetsSLA: true
-                }}
-                loading={state.loading.documents}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6} md={3}>
-              <MetricsCard
-                title="System Uptime"
-                value={state.metrics.performance?.uptime || 0}
-                trend={{
-                  currentValue: state.metrics.performance?.uptime || 0,
-                  previousValue: 0,
-                  percentageChange: 0,
-                  direction: TrendDirection.STABLE,
-                  metricName: 'uptime',
-                  unit: 'percentage',
-                  meetsSLA: true
-                }}
-                loading={state.loading.performance}
-              />
-            </Grid>
-          </Grid>
+          ))}
 
-          {/* Charts */}
           <Grid item xs={12} md={8}>
-            <Paper sx={{ p: 2 }}>
+            <Paper sx={{ p: 2, height: '100%' }}>
               <LineChart
-                data={state.trends}
-                title="System Metrics Trends"
-                loading={state.loading.trends}
+                data={state.data?.trends || []}
+                title="Performance Trends"
+                loading={state.loading}
                 height={400}
-                ariaLabel="System metrics trends chart"
               />
             </Paper>
           </Grid>
 
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 2 }}>
+            <Paper sx={{ p: 2, height: '100%' }}>
               <PieChart
                 data={[
-                  { name: 'Successful Queries', value: state.metrics.usage?.querySuccessRate || 0 },
-                  { name: 'Failed Queries', value: 100 - (state.metrics.usage?.querySuccessRate || 0) }
+                  { name: 'Success', value: state.data?.usage.querySuccessRate || 0 },
+                  { name: 'Error', value: 100 - (state.data?.usage.querySuccessRate || 0) }
                 ]}
                 title="Query Success Rate"
-                loading={state.loading.usage}
+                loading={state.loading}
                 height={400}
-                legendPosition="bottom"
               />
             </Paper>
           </Grid>

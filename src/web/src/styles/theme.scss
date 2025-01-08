@@ -1,37 +1,39 @@
 // =============================================================================
 // Core Theme Stylesheet
-// Implements design system with WCAG 2.1 AA compliance, dark mode,
-// and responsive design patterns
+// Implements design system with WCAG 2.1 AA compliance and dark mode support
+// Version: 1.0.0
 // =============================================================================
 
 @import './variables';
 
-// Root Custom Properties
 // -----------------------------------------------------------------------------
+// Root Variables & Global Settings
+// -----------------------------------------------------------------------------
+
 :root {
-  // Animation
-  --transition-speed: #{$animation-duration-base};
-  --transition-timing: #{$animation-timing-base};
-  
-  // Focus Management
-  --focus-ring-color: #{$focus-ring-color};
+  // Global transition settings
+  --transition-speed: 0.3s;
+  --focus-ring-color: #{$primary};
   --focus-ring-width: 3px;
-  
-  // Colors - Light Theme Defaults
+
+  // Light mode default colors
   --background-color: #{$background-color};
-  --background-secondary: #{$background-secondary};
   --text-primary: #{$text-primary};
   --text-secondary: #{$text-secondary};
-  --surface-color: #{$background-color};
+  --surface-color: #{$background-secondary};
+  --button-bg: #{$primary};
+  --button-text: #{$background-color};
   --card-shadow: #{$shadow-md};
 }
 
+// -----------------------------------------------------------------------------
 // Base Styles
 // -----------------------------------------------------------------------------
+
 html {
   box-sizing: border-box;
-  height: 100%;
-  font-size: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 *, *::before, *::after {
@@ -41,21 +43,19 @@ html {
 }
 
 body {
-  min-height: 100%;
   font-family: $font-family-primary;
-  font-size: clamp(#{$font-size-base}, 1vw + 0.5rem, #{$font-size-lg});
+  font-size: clamp(16px, 1vw + 0.5rem, 18px);
   line-height: $line-height-base;
   color: var(--text-primary);
   background-color: var(--background-color);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transition: 
-    background-color var(--transition-speed) var(--transition-timing),
-    color var(--transition-speed) var(--transition-timing);
+  transition: background-color var(--transition-speed),
+              color var(--transition-speed);
 }
 
+// -----------------------------------------------------------------------------
 // Fluid Typography Function
 // -----------------------------------------------------------------------------
+
 @function generateFluidType($minSize, $maxSize, $minWidth, $maxWidth) {
   $slope: ($maxSize - $minSize) / ($maxWidth - $minWidth);
   $yAxisIntersection: -$minWidth * $slope + $minSize;
@@ -67,12 +67,14 @@ body {
   );
 }
 
+// -----------------------------------------------------------------------------
 // Container Query Mixin
 // -----------------------------------------------------------------------------
+
 @mixin generateContainerQueries($containerName, $breakpoints) {
   container-type: inline-size;
   container-name: $containerName;
-  
+
   @each $name, $size in $breakpoints {
     @container #{$containerName} (min-width: #{$size}) {
       @content($name, $size);
@@ -80,8 +82,10 @@ body {
   }
 }
 
+// -----------------------------------------------------------------------------
 // Accessibility Utilities
 // -----------------------------------------------------------------------------
+
 .a11y {
   &-sr-only {
     position: absolute;
@@ -105,37 +109,40 @@ body {
     top: -100px;
     left: 50%;
     transform: translateX(-50%);
-    padding: $spacing-sm $spacing-md;
     background: var(--background-color);
-    color: var(--text-primary);
-    text-decoration: none;
+    padding: $spacing-sm $spacing-md;
+    border: 1px solid var(--text-primary);
+    border-radius: $border-radius-sm;
     z-index: $z-index-tooltip;
-    
+
     &:focus {
       top: $spacing-sm;
     }
   }
 }
 
+// -----------------------------------------------------------------------------
 // Layout System
 // -----------------------------------------------------------------------------
+
 .layout {
   &-container {
     @include generateContainerQueries(main-content, (
-      'mobile': $breakpoint-mobile,
-      'tablet': $breakpoint-tablet,
-      'desktop': $breakpoint-desktop
+      mobile: $breakpoint-mobile,
+      tablet: $breakpoint-tablet,
+      desktop: $breakpoint-desktop,
+      large: $breakpoint-large
     ));
     max-width: $container-max-width;
     margin: 0 auto;
-    padding: 0 $container-padding;
+    padding: 0 max(#{$container-padding}, 5%);
   }
 
   &-grid {
     display: grid;
     grid-template-columns: repeat(var(--cols, #{$grid-columns}), 1fr);
     gap: var(--gap, #{$grid-gutter});
-    
+
     @container main-content (width < #{$breakpoint-tablet}) {
       --cols: 6;
       --gap: #{$grid-gutter / 2};
@@ -143,120 +150,99 @@ body {
   }
 }
 
+// -----------------------------------------------------------------------------
 // Enhanced Component Styles
 // -----------------------------------------------------------------------------
+
 .components {
   &-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     padding: $spacing-sm $spacing-md;
-    border: none;
-    border-radius: $border-radius-md;
-    background-color: $primary;
-    color: white;
+    border-radius: $border-radius-sm;
     font-family: $font-family-primary;
     font-weight: $font-weight-medium;
-    text-decoration: none;
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    border: none;
     cursor: pointer;
-    transition: all var(--transition-speed) var(--transition-timing);
-    
-    &:hover {
-      background-color: $primary-dark;
-    }
-    
+    transition: all var(--transition-speed);
+
     &:focus-visible {
       @extend .a11y-focus-visible;
     }
-    
+
     &:disabled {
-      background-color: $text-disabled;
+      opacity: 0.6;
       cursor: not-allowed;
     }
   }
 
   &-card {
     background-color: var(--surface-color);
-    border-radius: $border-radius-lg;
+    border-radius: $border-radius-md;
     padding: $spacing-md;
     box-shadow: var(--card-shadow);
-    transition: box-shadow var(--transition-speed) var(--transition-timing);
-    
+    transition: box-shadow var(--transition-speed);
+
     &:hover {
       box-shadow: $shadow-lg;
     }
   }
 }
 
+// -----------------------------------------------------------------------------
 // Dark Mode Support
 // -----------------------------------------------------------------------------
+
 @media (prefers-color-scheme: dark) {
   :root {
     --background-color: #{$dark-background-color};
-    --background-secondary: #{$dark-background-secondary};
     --text-primary: #{$dark-text-primary};
     --text-secondary: #{$dark-text-secondary};
     --surface-color: #{$dark-background-secondary};
+    --button-bg: #{$primary-light};
+    --button-text: #{$dark-text-primary};
     --card-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-  }
-  
-  .components-button {
-    &:disabled {
-      background-color: $dark-text-secondary;
-    }
   }
 }
 
+// -----------------------------------------------------------------------------
 // High Contrast Mode Support
 // -----------------------------------------------------------------------------
+
 @media (forced-colors: active) {
   :root {
     --focus-ring-color: CanvasText;
+    --button-bg: ButtonText;
+    --button-text: ButtonFace;
+    --card-shadow: none;
   }
-  
+
   .components-button {
     border: 1px solid ButtonText;
   }
-  
+
   .components-card {
     border: 1px solid CanvasText;
   }
 }
 
-// Responsive Breakpoints
 // -----------------------------------------------------------------------------
-@media screen and (max-width: $breakpoint-mobile) {
-  :root {
-    --container-padding: #{$spacing-sm};
-  }
-  
-  body {
-    font-size: $font-size-base;
-  }
-}
-
-@media screen and (min-width: $breakpoint-tablet) {
-  :root {
-    --container-padding: #{$spacing-md};
-  }
-}
-
-@media screen and (min-width: $breakpoint-desktop) {
-  :root {
-    --container-padding: #{$spacing-lg};
-  }
-}
-
 // Print Styles
 // -----------------------------------------------------------------------------
+
 @media print {
   body {
-    background: white;
+    background-color: white;
     color: black;
   }
-  
+
   .components-card {
     box-shadow: none;
     border: 1px solid black;
+  }
+
+  .a11y-skip-link,
+  .components-button {
+    display: none;
   }
 }

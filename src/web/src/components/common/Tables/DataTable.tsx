@@ -50,10 +50,8 @@ const useSortDirection = (
   currentSortOrder: 'asc' | 'desc'
 ): 'asc' | 'desc' | false => {
   return useMemo(() => {
-    if (columnId === currentSortBy) {
-      return currentSortOrder;
-    }
-    return false;
+    if (columnId !== currentSortBy) return false;
+    return currentSortOrder;
   }, [columnId, currentSortBy, currentSortOrder]);
 };
 
@@ -62,7 +60,7 @@ const DataTable = <T extends Record<string, any>>({
   columns,
   page = 1,
   pageSize = 10,
-  total,
+  total = 0,
   onPageChange,
   className = '',
   loading = false,
@@ -71,128 +69,133 @@ const DataTable = <T extends Record<string, any>>({
   virtualRowHeight = 52,
   ariaLabel = 'Data table',
   ariaLabelledBy,
-  getRowAriaLabel = (item: T) => `Row ${item.id || ''}`,
+  getRowAriaLabel = () => '',
 }: DataTableProps<T>): JSX.Element => {
   const [sortBy, setSortBy] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
 
-  // Virtualization setup
+  // Virtual scroll setup
   const parentRef = React.useRef<HTMLDivElement>(null);
-  const rowVirtualizer = enableVirtualization
-    ? useVirtual({
-        size: data.length,
-        parentRef,
-        estimateSize: React.useCallback(() => virtualRowHeight, [virtualRowHeight]),
-        overscan: 5,
-      })
-    : null;
+  const rowVirtualizer = useVirtual({
+    size: data.length,
+    parentRef: enableVirtualization ? parentRef : null,
+    estimateSize: React.useCallback(() => virtualRowHeight, [virtualRowHeight]),
+    overscan: 5,
+  });
 
-  const handleSort = useCallback(
-    (columnId: string) => {
-      const newSortOrder =
-        columnId === sortBy && sortOrder === 'asc' ? 'desc' : 'asc';
-      setSortBy(columnId);
-      setSortOrder(newSortOrder);
-      onPageChange({
-        page,
-        pageSize,
-        sortBy: columnId,
-        sortOrder: newSortOrder,
-        filters: {},
-      });
-    },
-    [sortBy, sortOrder, page, pageSize, onPageChange]
-  );
-
-  const handleKeyboardSort = useCallback(
-    (event: React.KeyboardEvent<HTMLSpanElement>, columnId: string) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        handleSort(columnId);
+  const handleSort = useCallback((columnId: string) => {
+    setSortBy(prevSortBy => {
+      if (prevSortBy === columnId) {
+        setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortOrder('asc');
       }
-    },
-    [handleSort]
-  );
+      return columnId;
+    });
+
+    onPageChange({
+      page,
+      pageSize,
+      sortBy: columnId,
+      sortOrder: sortBy === columnId && sortOrder === 'asc' ? 'desc' : 'asc',
+      filters: {},
+    });
+  }, [page, pageSize, sortBy, sortOrder, onPageChange]);
+
+  const handleKeyboardSort = useCallback((
+    event: React.KeyboardEvent<HTMLSpanElement>,
+    columnId: string
+  ) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleSort(columnId);
+    }
+  }, [handleSort]);
 
   const handleRowFocus = useCallback((index: number) => {
     setFocusedRowIndex(index);
   }, []);
 
-  const handleRowKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLTableRowElement>, index: number) => {
-      switch (event.key) {
-        case 'ArrowDown':
-          event.preventDefault();
-          if (index < data.length - 1) {
-            setFocusedRowIndex(index + 1);
-          }
-          break;
-        case 'ArrowUp':
-          event.preventDefault();
-          if (index > 0) {
-            setFocusedRowIndex(index - 1);
-          }
-          break;
-      }
+  const styles = {
+    tableContainer: {
+      width: '100%',
+      overflow: 'auto',
+      position: 'relative',
+      backgroundColor: '#ffffff',
     },
-    [data.length]
-  );
+    headerCell: {
+      fontWeight: 600,
+      backgroundColor: '#f5f5f5',
+      '&[aria-sort]:hover': {
+        backgroundColor: '#e0e0e0',
+      },
+    },
+    cell: {
+      padding: '16px',
+      '&[data-focus-visible]': {
+        outline: '2px solid #0066CC',
+      },
+    },
+    sortLabel: {
+      marginLeft: '8px',
+      '&[aria-sort]:focus': {
+        outline: '2px solid #0066CC',
+      },
+    },
+    loadingOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(255, 255, 255, 0.7)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    virtualizedContent: {
+      position: 'relative',
+      height: `${data.length * virtualRowHeight}px`,
+      overflow: 'auto',
+    },
+  };
 
   return (
-    <div className={className}>
+    <Paper elevation={0} className={className}>
       <TableContainer
         component={Paper}
-        sx={{
-          width: '100%',
-          overflow: 'auto',
-          position: 'relative',
-          '& .MuiTableCell-root': {
-            padding: '16px',
-          },
-        }}
+        elevation={0}
+        sx={styles.tableContainer}
+        ref={parentRef}
       >
         <Table
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledBy}
           aria-busy={loading}
+          role="grid"
         >
-          <TableHead>
-            <TableRow>
-              {columns.map((column) => {
-                const sortDirection = useSortDirection(
-                  column.id,
-                  sortBy,
-                  sortOrder
-                );
+          <TableHead role="rowgroup">
+            <TableRow role="row">
+              {columns.map(column => {
+                const sortDirection = useSortDirection(column.id, sortBy, sortOrder);
                 return (
                   <TableCell
                     key={column.id}
+                    sx={styles.headerCell}
                     className={column.headerClassName}
-                    sx={{
-                      fontWeight: 600,
-                      backgroundColor: '#f5f5f5',
-                      '&:hover': {
-                        backgroundColor: column.sortable ? '#e0e0e0' : undefined,
-                      },
-                    }}
+                    role="columnheader"
+                    aria-sort={sortDirection ? sortDirection : undefined}
                   >
                     {column.sortable ? (
                       <TableSortLabel
-                        active={sortDirection !== false}
+                        active={sortBy === column.id}
                         direction={sortDirection || 'asc'}
                         onClick={() => handleSort(column.id)}
-                        onKeyDown={(e) => handleKeyboardSort(e, column.id)}
                         IconComponent={ArrowUpward}
+                        sx={styles.sortLabel}
                         aria-label={`Sort by ${column.ariaLabel || column.label}`}
-                        sx={{
-                          '&.MuiTableSortLabel-root': {
-                            '&:focus': {
-                              outline: '2px solid #0066CC',
-                              outlineOffset: '2px',
-                            },
-                          },
-                        }}
+                        onKeyDown={(e) => handleKeyboardSort(e, column.id)}
                       >
                         {column.label}
                       </TableSortLabel>
@@ -204,107 +207,78 @@ const DataTable = <T extends Record<string, any>>({
               })}
             </TableRow>
           </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={columns.length} align="center">
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      padding: '2rem',
+
+          <TableBody role="rowgroup">
+            {data.length > 0 ? (
+              enableVirtualization ? (
+                rowVirtualizer.virtualItems.map(virtualRow => (
+                  <TableRow
+                    key={virtualRow.index}
+                    role="row"
+                    aria-rowindex={virtualRow.index + 1}
+                    aria-label={getRowAriaLabel(data[virtualRow.index])}
+                    onFocus={() => handleRowFocus(virtualRow.index)}
+                    tabIndex={focusedRowIndex === virtualRow.index ? 0 : -1}
+                    style={{
+                      height: `${virtualRow.size}px`,
+                      transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    <CircularProgress aria-label="Loading data" />
-                  </Box>
-                </TableCell>
-              </TableRow>
-            ) : data.length === 0 ? (
-              <TableRow>
+                    {columns.map(column => (
+                      <TableCell
+                        key={column.id}
+                        sx={styles.cell}
+                        className={column.cellClassName}
+                        role="gridcell"
+                      >
+                        {column.render(data[virtualRow.index])}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : (
+                data.map((item, index) => (
+                  <TableRow
+                    key={index}
+                    role="row"
+                    aria-rowindex={index + 1}
+                    aria-label={getRowAriaLabel(item)}
+                    onFocus={() => handleRowFocus(index)}
+                    tabIndex={focusedRowIndex === index ? 0 : -1}
+                  >
+                    {columns.map(column => (
+                      <TableCell
+                        key={column.id}
+                        sx={styles.cell}
+                        className={column.cellClassName}
+                        role="gridcell"
+                      >
+                        {column.render(item)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              )
+            ) : (
+              <TableRow role="row">
                 <TableCell
                   colSpan={columns.length}
                   align="center"
-                  sx={{
-                    padding: '2rem',
-                    color: 'rgba(0, 0, 0, 0.6)',
-                  }}
+                  role="gridcell"
+                  aria-label={emptyMessage}
                 >
-                  <Box role="status">{emptyMessage}</Box>
+                  {emptyMessage}
                 </TableCell>
               </TableRow>
-            ) : enableVirtualization && rowVirtualizer ? (
-              <React.Fragment>
-                {rowVirtualizer.virtualItems.map((virtualRow) => {
-                  const item = data[virtualRow.index];
-                  return (
-                    <TableRow
-                      key={virtualRow.index}
-                      tabIndex={
-                        focusedRowIndex === virtualRow.index ? 0 : -1
-                      }
-                      onFocus={() => handleRowFocus(virtualRow.index)}
-                      onKeyDown={(e) =>
-                        handleRowKeyDown(e, virtualRow.index)
-                      }
-                      aria-label={getRowAriaLabel(item)}
-                      sx={{
-                        height: `${virtualRow.size}px`,
-                        transform: `translateY(${virtualRow.start}px)`,
-                        '&:hover': {
-                          backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                        },
-                        '&:focus-within': {
-                          backgroundColor: 'rgba(0, 102, 204, 0.08)',
-                          outline: '2px solid #0066CC',
-                          outlineOffset: '-2px',
-                        },
-                      }}
-                    >
-                      {columns.map((column) => (
-                        <TableCell
-                          key={column.id}
-                          className={column.cellClassName}
-                        >
-                          {column.render(item)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })}
-              </React.Fragment>
-            ) : (
-              data.map((item, index) => (
-                <TableRow
-                  key={index}
-                  tabIndex={focusedRowIndex === index ? 0 : -1}
-                  onFocus={() => handleRowFocus(index)}
-                  onKeyDown={(e) => handleRowKeyDown(e, index)}
-                  aria-label={getRowAriaLabel(item)}
-                  sx={{
-                    '&:hover': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                    '&:focus-within': {
-                      backgroundColor: 'rgba(0, 102, 204, 0.08)',
-                      outline: '2px solid #0066CC',
-                      outlineOffset: '-2px',
-                    },
-                  }}
-                >
-                  {columns.map((column) => (
-                    <TableCell
-                      key={column.id}
-                      className={column.cellClassName}
-                    >
-                      {column.render(item)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
             )}
           </TableBody>
         </Table>
+
+        {loading && (
+          <Box sx={styles.loadingOverlay} role="status" aria-label="Loading data">
+            <CircularProgress />
+          </Box>
+        )}
       </TableContainer>
 
       <TablePagination
@@ -313,9 +287,9 @@ const DataTable = <T extends Record<string, any>>({
         total={total}
         onPageChange={onPageChange}
         loading={loading}
-        ariaLabel="Table pagination controls"
+        ariaLabel="Table navigation"
       />
-    </div>
+    </Paper>
   );
 };
 

@@ -25,8 +25,7 @@ export const formatNumber = (value: number | string, format: string = '0,0'): st
     return '0';
   }
 
-  const formatted = numeral(numValue).format(format);
-  return formatted === 'NaN' ? '0' : formatted;
+  return numeral(numValue).format(format);
 };
 
 /**
@@ -40,7 +39,7 @@ export const formatFileSize = (bytes: number): string => {
   }
 
   if (bytes > VALIDATION_CONSTANTS.MAX_FILE_SIZE) {
-    return `>${formatNumber(VALIDATION_CONSTANTS.MAX_FILE_SIZE / 1024 / 1024)} MB`;
+    return `>${formatNumber(VALIDATION_CONSTANTS.MAX_FILE_SIZE / (1024 * 1024))} MB`;
   }
 
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -71,14 +70,14 @@ export const truncateText = (text: string, maxLength: number): string => {
   }
 
   // Preserve word boundaries when possible
-  const truncated = text.substring(0, maxLength - 1);
+  const truncated = text.substring(0, maxLength);
   const lastSpace = truncated.lastIndexOf(' ');
   
-  if (lastSpace > maxLength * 0.8) {
-    return `${truncated.substring(0, lastSpace)}…`;
+  if (lastSpace > maxLength * 0.8) { // Only break at word if it's near the end
+    return `${truncated.substring(0, lastSpace)}...`;
   }
 
-  return `${truncated}…`;
+  return `${truncated}...`;
 };
 
 /**
@@ -93,8 +92,9 @@ export const formatPercentage = (value: number, decimalPlaces: number = 2): stri
   }
 
   const percentage = value * 100;
-  const format = `0,0.${'0'.repeat(decimalPlaces)}`;
-  return `${formatNumber(percentage, format)}%`;
+  const format = `0,0.${'0'.repeat(decimalPlaces)}%`;
+  
+  return numeral(percentage).format(format);
 };
 
 /**

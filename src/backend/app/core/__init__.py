@@ -6,7 +6,7 @@ security, authentication, and event handling.
 Version: 1.0.0
 """
 
-# Import configuration management
+# Configuration imports
 from .config import (
     settings,
     get_database_settings,
@@ -14,7 +14,7 @@ from .config import (
     get_vector_search_settings
 )
 
-# Import security utilities
+# Security imports
 from .security import (
     verify_password,
     get_password_hash,
@@ -22,14 +22,14 @@ from .security import (
     verify_token
 )
 
-# Import authentication utilities
+# Authentication imports
 from .auth import (
     authenticate_user,
     get_current_user,
     get_current_active_user
 )
 
-# Import event handlers
+# Event handling imports
 from .events import register_event_handlers
 
 # Export core functionality
@@ -51,22 +51,13 @@ __all__ = [
     'get_current_user',
     'get_current_active_user',
     
-    # Event handler exports
+    # Event handling exports
     'register_event_handlers'
 ]
 
 # Module metadata
-__version__ = '1.0.0'
-__author__ = 'AI-Powered Product Catalog Search System Team'
-__description__ = 'Core functionality for the AI-powered Product Catalog Search System'
+__version__ = "1.0.0"
+__author__ = "AI-Powered Product Catalog Search System Team"
 
-# Initialize logging for core module
-import logging
-logger = logging.getLogger(__name__)
-logger.info(
-    "Core module initialized",
-    extra={
-        'version': __version__,
-        'exports': __all__
-    }
-)
+# Initialize logging configuration
+settings.configure_logging()

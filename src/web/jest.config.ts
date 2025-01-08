@@ -9,7 +9,7 @@ const config: Config.InitialOptions = {
   // Use jsdom environment for DOM manipulation testing
   testEnvironment: 'jsdom',
 
-  // Configure test setup file containing global mocks and custom matchers
+  // Configure test setup file containing global mocks and matchers
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
 
   // Test file patterns
@@ -72,16 +72,10 @@ const config: Config.InitialOptions = {
   testTimeout: 10000,
   verbose: true,
   
-  // Supported file extensions
-  moduleFileExtensions: [
-    'ts',
-    'tsx',
-    'js',
-    'jsx',
-    'json'
-  ],
+  // File extension handling
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
 
-  // TypeScript configuration for ts-jest
+  // TypeScript configuration
   globals: {
     'ts-jest': {
       tsconfig: '<rootDir>/tsconfig.json',

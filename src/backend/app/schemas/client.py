@@ -1,4 +1,3 @@
-# pydantic v2.0.0
 from datetime import datetime
 from typing import Optional, Any
 from pydantic import BaseModel, UUID4, constr, Field, ConfigDict
@@ -25,7 +24,6 @@ class ClientBase(BaseModel):
         default_factory=dict,
         description="Client portal branding configuration",
         examples=[{
-            "theme": "light",
             "logo_url": "https://example.com/logo.png",
             "primary_color": "#0066CC",
             "secondary_color": "#4CAF50"
@@ -40,11 +38,13 @@ class ClientBase(BaseModel):
                 "name": "Tech Solutions Inc",
                 "config": {
                     "features_enabled": ["chat", "export"],
-                    "user_limit": 100
+                    "user_limit": 100,
+                    "storage_quota": "10GB"
                 },
                 "branding": {
-                    "theme": "light",
-                    "logo_url": "https://example.com/logo.png"
+                    "logo_url": "https://example.com/logo.png",
+                    "primary_color": "#0066CC",
+                    "secondary_color": "#4CAF50"
                 }
             }
         }
@@ -82,6 +82,9 @@ class ClientUpdate(BaseModel):
                 "config": {
                     "features_enabled": ["chat", "export", "analytics"],
                     "user_limit": 150
+                },
+                "branding": {
+                    "primary_color": "#1E88E5"
                 }
             }
         }
@@ -129,26 +132,28 @@ class Client(ClientInDB):
             Client: Validated Client schema instance
             
         Raises:
-            ValueError: If ORM model is invalid or missing required fields
+            ValueError: If invalid or missing required fields
+            TypeError: If invalid ORM model type
         """
-        if not orm_model:
-            raise ValueError("Invalid ORM model provided")
+        if not hasattr(orm_model, '__table__'):
+            raise TypeError("Invalid ORM model provided")
 
         try:
             # Convert ORM model to dictionary with relationship handling
             data = {
-                "id": orm_model.id,
-                "org_id": orm_model.org_id,
-                "name": orm_model.name,
-                "config": orm_model.config,
-                "branding": orm_model.branding,
-                "created_at": orm_model.created_at,
-                "updated_at": orm_model.updated_at,
-                "organization": orm_model.organization if hasattr(orm_model, "organization") else None
+                'id': orm_model.id,
+                'org_id': orm_model.org_id,
+                'name': orm_model.name,
+                'config': orm_model.config,
+                'branding': orm_model.branding,
+                'created_at': orm_model.created_at,
+                'updated_at': orm_model.updated_at,
+                'organization': orm_model.organization if hasattr(orm_model, 'organization') else None
             }
             
             # Create and validate Client instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Client from ORM model: {str(e)}")
 
@@ -158,15 +163,17 @@ class Client(ClientInDB):
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
-                "org_id": "987fcdeb-51a2-43f7-9876-543210987654",
+                "org_id": "987fcdeb-51a2-43f7-9012-345678901234",
                 "name": "Tech Solutions Inc",
                 "config": {
                     "features_enabled": ["chat", "export"],
-                    "user_limit": 100
+                    "user_limit": 100,
+                    "storage_quota": "10GB"
                 },
                 "branding": {
-                    "theme": "light",
-                    "logo_url": "https://example.com/logo.png"
+                    "logo_url": "https://example.com/logo.png",
+                    "primary_color": "#0066CC",
+                    "secondary_color": "#4CAF50"
                 },
                 "created_at": "2024-01-20T12:00:00Z",
                 "updated_at": "2024-01-20T12:00:00Z",

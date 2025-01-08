@@ -1,21 +1,19 @@
-# Terraform outputs file for Azure infrastructure deployment
-# Provider versions:
 # terraform ~> 1.0
 # azurerm ~> 3.0
 
-# Resource Group
+# Resource Group Outputs
 output "resource_group_name" {
   description = "Name of the Azure resource group containing all deployed resources"
   value       = azurerm_resource_group.main.name
 }
 
-# Monitoring
+# Monitoring Outputs
 output "monitoring_workspace_id" {
   description = "Resource ID of the Log Analytics workspace for monitoring"
   value       = module.monitoring.workspace_id
 }
 
-# AKS Cluster
+# AKS Cluster Outputs
 output "aks_cluster_name" {
   description = "Name of the AKS cluster"
   value       = module.aks.cluster_name
@@ -32,7 +30,7 @@ output "aks_kube_config" {
   sensitive   = true
 }
 
-# Networking
+# Network Outputs
 output "vnet_name" {
   description = "Name of the virtual network"
   value       = module.network.vnet_name
@@ -43,7 +41,7 @@ output "subnet_ids" {
   value       = module.network.subnet_ids
 }
 
-# Storage
+# Storage Outputs
 output "storage_account_name" {
   description = "Name of the storage account for document storage"
   value       = module.storage.account_name
@@ -55,7 +53,7 @@ output "storage_account_key" {
   sensitive   = true
 }
 
-# Database
+# Database Outputs
 output "sql_server_name" {
   description = "Name of the Azure SQL Server"
   value       = module.database.server_name
@@ -67,7 +65,7 @@ output "sql_connection_string" {
   sensitive   = true
 }
 
-# Security
+# Security Outputs
 output "key_vault_uri" {
   description = "URI of the Azure Key Vault"
   value       = module.security.key_vault_uri

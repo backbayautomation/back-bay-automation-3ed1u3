@@ -7,150 +7,173 @@ Create Date: ${create_date}
 Enhanced migration script with transaction management, tenant isolation,
 and comprehensive error handling for the AI-powered Product Catalog Search System.
 """
-import logging
 from typing import Optional, List, Dict, Any
+import logging
+from datetime import datetime
 
 from alembic import op  # version: 1.12.0
 import sqlalchemy as sa  # version: 2.0.0
-from sqlalchemy.engine import Connection
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.dialects import postgresql
 
-from app.db.base import Base, metadata
+# Import metadata for schema validation
+from app.db.base import Base
 
-# Configure migration logger
+# Configure logging
 logger = logging.getLogger('alembic.migration')
 
 # Revision identifiers
-revision: str = ${repr(up_revision)}
-down_revision: Optional[str] = ${repr(down_revision)}
-branch_labels: Optional[List[str]] = ${repr(branch_labels)}
-depends_on: Optional[List[str]] = ${repr(depends_on)}
+revision = ${repr(up_revision)}
+down_revision = ${repr(down_revision)}
+branch_labels = ${repr(branch_labels)}
+depends_on = ${repr(depends_on)}
 
-def validate_tenant_isolation(connection: Connection) -> bool:
+def verify_tenant_isolation() -> bool:
     """
-    Validate tenant isolation boundaries before migration.
-    
-    Args:
-        connection: SQLAlchemy connection object
+    Verifies tenant isolation boundaries before migration operations.
     
     Returns:
-        bool: True if tenant isolation is valid
+        bool: True if tenant isolation is properly configured
     """
     try:
+        connection = op.get_bind()
         # Check tenant schema exists
-        tenant_exists = connection.execute(
+        result = connection.execute(
             "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'tenant'"
         ).scalar()
-        
-        if not tenant_exists:
-            logger.error("Tenant schema not found")
-            return False
+        if not result:
+            raise Exception("Tenant schema not found")
             
-        # Verify tenant isolation
-        for table in metadata.tables.values():
-            if not table.schema or table.schema != 'tenant':
-                logger.error(f"Table {table.name} missing tenant schema")
-                return False
-                
+        # Verify schema permissions
+        result = connection.execute("""
+            SELECT has_schema_privilege('tenant', 'USAGE') as has_usage,
+                   has_schema_privilege('tenant', 'CREATE') as has_create
+        """).first()
+        if not (result.has_usage and result.has_create):
+            raise Exception("Insufficient schema privileges")
+            
         return True
-        
-    except SQLAlchemyError as e:
-        logger.error(f"Tenant validation error: {str(e)}")
+    except Exception as e:
+        logger.error(f"Tenant isolation verification failed: {str(e)}")
         return False
 
-def verify_data_integrity(connection: Connection, is_upgrade: bool = True) -> bool:
+def validate_migration_state() -> Dict[str, Any]:
     """
-    Verify data integrity before and after migration.
+    Validates database state before migration operations.
     
-    Args:
-        connection: SQLAlchemy connection object
-        is_upgrade: True if upgrade migration, False if downgrade
-        
     Returns:
-        bool: True if data integrity is valid
+        Dict[str, Any]: State validation results
     """
     try:
+        connection = op.get_bind()
+        state = {
+            'timestamp': datetime.utcnow().isoformat(),
+            'checks': {}
+        }
+        
+        # Verify table existence and structure
+        for table in Base.metadata.sorted_tables:
+            exists = connection.dialect.has_table(connection, table.name, schema='tenant')
+            state['checks'][f'table_{table.name}'] = {
+                'exists': exists,
+                'columns': [c.name for c in table.columns] if exists else []
+            }
+            
         # Check foreign key constraints
-        connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+        state['checks']['foreign_keys'] = connection.execute("""
+            SELECT conname, conrelid::regclass AS table_name,
+                   confrelid::regclass AS referenced_table
+            FROM pg_constraint
+            WHERE confrelid IS NOT NULL
+              AND connamespace = 'tenant'::regnamespace
+        """).fetchall()
         
-        # Verify table row counts if downgrading
-        if not is_upgrade:
-            for table in metadata.tables.values():
-                count = connection.execute(
-                    f"SELECT COUNT(*) FROM {table.schema}.{table.name}"
-                ).scalar()
-                logger.info(f"Table {table.name} has {count} rows")
-                
-        return True
-        
-    except SQLAlchemyError as e:
-        logger.error(f"Data integrity error: {str(e)}")
-        return False
+        return state
+    except Exception as e:
+        logger.error(f"Migration state validation failed: {str(e)}")
+        return {'error': str(e)}
+
+def log_migration_event(event_type: str, details: Dict[str, Any]) -> None:
+    """
+    Logs migration events with detailed context.
+    
+    Args:
+        event_type (str): Type of migration event
+        details (Dict[str, Any]): Event details and context
+    """
+    logger.info(
+        "Migration event",
+        extra={
+            'event_type': event_type,
+            'timestamp': datetime.utcnow().isoformat(),
+            'revision': revision,
+            'details': details
+        }
+    )
 
 def upgrade() -> None:
     """
     Implements forward migration with enhanced transaction management and validation.
     """
+    # Verify tenant isolation
+    if not verify_tenant_isolation():
+        raise Exception("Tenant isolation verification failed")
+    
+    # Validate pre-migration state
+    pre_state = validate_migration_state()
+    log_migration_event('pre_upgrade', pre_state)
+    
     try:
-        # Get database connection
+        # Begin transaction with serializable isolation
         connection = op.get_bind()
-        
-        # Set isolation level
         connection.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
         
-        # Validate tenant isolation
-        if not validate_tenant_isolation(connection):
-            raise SQLAlchemyError("Tenant isolation validation failed")
-            
-        # Verify pre-migration integrity
-        if not verify_data_integrity(connection):
-            raise SQLAlchemyError("Pre-migration data integrity check failed")
-            
-        logger.info(f"Starting upgrade migration {revision}")
+        # Execute upgrade operations
+        ${upgrades if upgrades else "pass"}
         
-        # Migration operations go here
+        # Validate post-migration state
+        post_state = validate_migration_state()
+        log_migration_event('post_upgrade', post_state)
         
-        
-        # Verify post-migration integrity
-        if not verify_data_integrity(connection):
-            raise SQLAlchemyError("Post-migration data integrity check failed")
-            
-        logger.info(f"Completed upgrade migration {revision}")
-        
-    except SQLAlchemyError as e:
-        logger.error(f"Migration failed: {str(e)}")
+    except Exception as e:
+        logger.error(
+            "Upgrade failed",
+            extra={
+                'error': str(e),
+                'traceback': logging.traceback.format_exc()
+            }
+        )
         raise
 
 def downgrade() -> None:
     """
     Implements reverse migration with safety checks and data validation.
     """
+    # Verify tenant isolation
+    if not verify_tenant_isolation():
+        raise Exception("Tenant isolation verification failed")
+    
+    # Validate pre-downgrade state
+    pre_state = validate_migration_state()
+    log_migration_event('pre_downgrade', pre_state)
+    
     try:
-        # Get database connection
+        # Begin transaction with serializable isolation
         connection = op.get_bind()
-        
-        # Set isolation level
         connection.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
         
-        # Validate tenant isolation
-        if not validate_tenant_isolation(connection):
-            raise SQLAlchemyError("Tenant isolation validation failed")
-            
-        # Verify pre-downgrade integrity
-        if not verify_data_integrity(connection, is_upgrade=False):
-            raise SQLAlchemyError("Pre-downgrade data integrity check failed")
-            
-        logger.info(f"Starting downgrade migration {revision}")
+        # Execute downgrade operations
+        ${downgrades if downgrades else "pass"}
         
-        # Downgrade operations go here
+        # Validate post-downgrade state
+        post_state = validate_migration_state()
+        log_migration_event('post_downgrade', post_state)
         
-        
-        # Verify post-downgrade integrity
-        if not verify_data_integrity(connection, is_upgrade=False):
-            raise SQLAlchemyError("Post-downgrade data integrity check failed")
-            
-        logger.info(f"Completed downgrade migration {revision}")
-        
-    except SQLAlchemyError as e:
-        logger.error(f"Downgrade failed: {str(e)}")
+    except Exception as e:
+        logger.error(
+            "Downgrade failed",
+            extra={
+                'error': str(e),
+                'traceback': logging.traceback.format_exc()
+            }
+        )
         raise

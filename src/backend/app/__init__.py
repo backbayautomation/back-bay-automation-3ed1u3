@@ -7,7 +7,7 @@ Version: 1.0.0
 """
 
 import structlog  # version: ^21.5.0
-from prometheus_client import Counter, Histogram  # version: ^0.16.0
+import prometheus_client  # version: ^0.16.0
 from fastapi.middleware.cors import CORSMiddleware  # version: ^0.103.0
 from fastapi_correlation_id import RequestIDMiddleware  # version: ^0.3.0
 from fastapi_multitenancy import TenantMiddleware  # version: ^1.0.0
@@ -17,17 +17,12 @@ from prometheus_fastapi_instrumentator import MetricsMiddleware  # version: ^5.9
 from .core.config import settings
 from .main import app
 
-# Package version and name from settings
+# Initialize version and application name
 __version__ = settings.VERSION
 __app_name__ = settings.PROJECT_NAME
 
-# Configure structured logging
+# Initialize structured logging
 logger = structlog.get_logger()
-
-# Prometheus metrics
-REQUEST_LATENCY = Histogram('http_request_latency_seconds', 'HTTP request latency')
-REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP requests')
-ERROR_COUNT = Counter('http_errors_total', 'Total HTTP errors')
 
 def init_monitoring():
     """Initialize monitoring, metrics collection, and structured logging."""
@@ -46,15 +41,25 @@ def init_monitoring():
     )
 
     # Initialize Prometheus metrics
-    REQUEST_LATENCY.observe(0)  # Initialize histogram
-    REQUEST_COUNT.inc(0)  # Initialize counter
-    ERROR_COUNT.inc(0)  # Initialize error counter
+    prometheus_client.REGISTRY.unregister(prometheus_client.GC_COLLECTOR)
+    prometheus_client.REGISTRY.unregister(prometheus_client.PLATFORM_COLLECTOR)
+    prometheus_client.REGISTRY.unregister(prometheus_client.PROCESS_COLLECTOR)
 
-    logger.info(
-        "Monitoring initialized",
-        version=__version__,
-        app_name=__app_name__,
-        environment=settings.ENVIRONMENT
+    # Configure custom metrics
+    prometheus_client.Counter(
+        'app_requests_total',
+        'Total application requests',
+        ['method', 'endpoint', 'tenant_id']
+    )
+    prometheus_client.Histogram(
+        'app_request_latency_seconds',
+        'Request latency in seconds',
+        ['method', 'endpoint']
+    )
+    prometheus_client.Gauge(
+        'app_active_requests',
+        'Number of active requests',
+        ['tenant_id']
     )
 
 def init_middleware():
@@ -63,7 +68,8 @@ def init_middleware():
     app.add_middleware(
         RequestIDMiddleware,
         header_name="X-Correlation-ID",
-        generator=lambda: settings.generate_request_id()
+        generator=lambda: str(uuid.uuid4()),
+        validator=lambda x: bool(x)
     )
 
     # Add security headers middleware
@@ -71,52 +77,51 @@ def init_middleware():
         SecurityMiddleware,
         enable_hsts=True,
         hsts_max_age=31536000,
-        include_subdomains=True,
-        enable_frame_deny=True,
+        enable_frame_options=True,
+        frame_options_allow_from=None,
+        enable_content_type_nosniff=True,
         enable_xss_protection=True,
-        enable_content_type_nosniff=True
+        xss_protection_mode="block"
     )
 
-    # Add CORS middleware with proper configuration
+    # Add CORS middleware with configuration from settings
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.SECURITY_CONFIG["cors_origins"],
+        allow_origins=settings.SECURITY_CONFIG['cors']['allowed_origins'],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["*"],
         allow_headers=["*"],
-        max_age=3600
+        expose_headers=["X-Correlation-ID", "X-Request-ID"]
     )
 
     # Add multi-tenant isolation middleware
     app.add_middleware(
         TenantMiddleware,
         tenant_header="X-Tenant-ID",
-        tenant_model=settings.TENANT_MODEL,
-        tenant_id_field="id"
+        tenant_model=None,  # Using header-based tenant identification
+        tenant_validator=lambda x: bool(x)
     )
 
     # Add metrics collection middleware
     app.add_middleware(
         MetricsMiddleware,
-        enable_metrics=True,
-        metrics_port=9090,
-        metrics_path="/metrics"
-    )
-
-    logger.info(
-        "Middleware initialized",
-        middleware_stack=[
-            "RequestIDMiddleware",
-            "SecurityMiddleware",
-            "CORSMiddleware",
-            "TenantMiddleware",
-            "MetricsMiddleware"
-        ]
+        instrument_requests=True,
+        instrument_responses=True,
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+        should_respect_env_var=True,
+        env_var_name="ENABLE_METRICS",
+        excluded_handlers=["/metrics", "/health"]
     )
 
 # Initialize monitoring and middleware
 init_monitoring()
 init_middleware()
 
-# Export configured application instance
-__all__ = ["app", "__version__", "__app_name__", "logger"]
+# Export core components
+__all__ = [
+    'app',
+    '__version__',
+    '__app_name__',
+    'logger'
+]

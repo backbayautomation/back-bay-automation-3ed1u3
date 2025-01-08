@@ -1,6 +1,3 @@
-# Service manifest for Redis distributed cache layer
-# Version: v1
-# Purpose: Provides headless service discovery for Redis StatefulSet pods
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,23 +12,16 @@ metadata:
     service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
     description: "Headless service for Redis StatefulSet DNS-based discovery"
 spec:
-  # Headless service configuration (clusterIP: None)
-  # Enables DNS-based pod discovery with pattern:
-  # <pod>.<service>.<namespace>.svc.cluster.local
+  # Headless service configuration with no ClusterIP
   clusterIP: None
-  
-  # Allow DNS resolution for pods not yet ready
-  # Important for Redis cluster bootstrap
+  # Allow DNS resolution for pods not ready
   publishNotReadyAddresses: true
-  
-  # Port configuration for Redis
   ports:
     - name: redis
       port: 6379
       targetPort: 6379
       protocol: TCP
-  
-  # Label selector to identify Redis pods managed by StatefulSet
+  # Label selector for Redis pods
   selector:
     app: redis
     tier: cache

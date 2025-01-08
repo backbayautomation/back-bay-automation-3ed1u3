@@ -6,8 +6,8 @@ metadata:
   name: default-deny-all
   namespace: product-search
   labels:
-    app.kubernetes.io/name: product-search
     app.kubernetes.io/component: network-policy
+    app.kubernetes.io/name: default-deny-all
 spec:
   # Empty pod selector matches all pods in namespace
   podSelector: {}
@@ -21,8 +21,8 @@ metadata:
   name: allow-frontend-ingress
   namespace: product-search
   labels:
-    app.kubernetes.io/name: product-search
     app.kubernetes.io/component: network-policy
+    app.kubernetes.io/name: allow-frontend-ingress
 spec:
   podSelector:
     matchLabels:
@@ -40,8 +40,8 @@ metadata:
   name: allow-backend-ingress
   namespace: product-search
   labels:
-    app.kubernetes.io/name: product-search
     app.kubernetes.io/component: network-policy
+    app.kubernetes.io/name: allow-backend-ingress
 spec:
   podSelector:
     matchLabels:
@@ -63,8 +63,8 @@ metadata:
   name: allow-monitoring
   namespace: product-search
   labels:
-    app.kubernetes.io/name: product-search
     app.kubernetes.io/component: network-policy
+    app.kubernetes.io/name: allow-monitoring
 spec:
   podSelector:
     matchLabels:

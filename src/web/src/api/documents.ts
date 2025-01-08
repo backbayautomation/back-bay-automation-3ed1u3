@@ -1,6 +1,6 @@
 /**
- * Document API module implementing secure document operations with comprehensive error handling,
- * monitoring, and performance optimization.
+ * Production-ready API module for document operations with comprehensive security,
+ * monitoring, and error handling capabilities.
  * @version 1.0.0
  */
 
@@ -10,22 +10,18 @@ import {
     DocumentUploadRequest, 
     DocumentListResponse, 
     DocumentType, 
-    ProcessingStatus, 
-    DocumentValidation 
+    ProcessingStatus 
 } from '../types/document';
 import { 
     ApiResponse, 
     ApiRequestConfig, 
     PaginationParams, 
-    ApiError, 
-    ContentType,
-    QueryParams 
+    ContentType 
 } from './types';
 import { 
     createApiInstance, 
     handleApiError, 
-    createCircuitBreaker, 
-    setupRequestMonitoring 
+    RequestOptions 
 } from '../utils/api';
 import { API_CONFIG, API_ENDPOINTS } from '../config/api';
 
@@ -48,23 +44,27 @@ interface DocumentFilterOptions {
 }
 
 /**
- * Document API class implementing secure document operations
+ * Document API class with comprehensive error handling and monitoring
  */
 export class DocumentApi {
     private readonly api: ReturnType<typeof createApiInstance>;
-    private readonly circuitBreaker: ReturnType<typeof createCircuitBreaker>;
+    private readonly maxRetries: number = 3;
+    private readonly maxFileSize: number = API_CONFIG.MAX_REQUEST_SIZE;
+    private readonly allowedTypes: string[] = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain'
+    ];
 
-    constructor() {
+    constructor(options: RequestOptions = {}) {
         this.api = createApiInstance({
+            ...options,
             useCircuitBreaker: true,
-            customTimeout: API_CONFIG.TIMEOUT
+            customHeaders: {
+                'X-API-Version': '1.0'
+            }
         });
-        this.circuitBreaker = createCircuitBreaker({
-            failureThreshold: API_CONFIG.CIRCUIT_BREAKER.FAILURE_THRESHOLD,
-            resetTimeout: API_CONFIG.CIRCUIT_BREAKER.RESET_TIMEOUT
-        });
-
-        setupRequestMonitoring(this.api, 'documents');
     }
 
     /**
@@ -75,10 +75,17 @@ export class DocumentApi {
         onProgress?: ProgressCallback
     ): Promise<ApiResponse<Document>> {
         try {
-            // Validate file size and type
-            await this.validateDocument(request.file);
+            // Validate file size
+            if (request.file.size > this.maxFileSize) {
+                throw new Error(`File size exceeds maximum limit of ${this.maxFileSize / 1024 / 1024}MB`);
+            }
 
-            // Create form data with encryption
+            // Validate file type
+            if (!this.allowedTypes.includes(request.file.type)) {
+                throw new Error('Unsupported file type');
+            }
+
+            // Create form data with metadata
             const formData = new FormData();
             formData.append('file', request.file);
             formData.append('clientId', request.client_id);
@@ -91,24 +98,22 @@ export class DocumentApi {
                 headers: {
                     'Content-Type': ContentType.MULTIPART_FORM_DATA,
                 },
+                timeout: 60000, // Extended timeout for large files
                 onUploadProgress: (progressEvent) => {
                     if (onProgress && progressEvent.total) {
-                        const progress = Math.round(
-                            (progressEvent.loaded * 100) / progressEvent.total
-                        );
+                        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
                         onProgress(progress);
                     }
                 },
-                timeout: API_CONFIG.TIMEOUT * 2, // Extended timeout for uploads
-                validateStatus: (status) => status >= 200 && status < 300
+                requiresAuth: true,
+                skipErrorHandler: false,
+                validateStatus: (status) => status === 201
             };
 
-            const response = await this.circuitBreaker.execute(() =>
-                this.api.post<ApiResponse<Document>>(
-                    API_ENDPOINTS.DOCUMENTS.UPLOAD,
-                    formData,
-                    config
-                )
+            const response = await this.api.post<ApiResponse<Document>>(
+                API_ENDPOINTS.DOCUMENTS.UPLOAD,
+                formData,
+                config
             );
 
             return response.data;
@@ -121,36 +126,54 @@ export class DocumentApi {
     }
 
     /**
-     * Retrieves paginated document list with caching and filtering
+     * Retrieves paginated document list with filtering and caching
      */
     public async getDocuments(
         params: PaginationParams,
         filters?: DocumentFilterOptions
     ): Promise<DocumentListResponse> {
         try {
-            const queryParams: QueryParams = {
-                page: params.page,
-                limit: params.limit,
-                sortBy: params.sortBy,
-                order: params.order,
-                ...this.buildFilterParams(filters)
-            };
+            const queryParams = new URLSearchParams();
 
-            const cacheKey = this.generateCacheKey(queryParams);
-            const cachedResponse = await this.getCachedResponse(cacheKey);
-            
-            if (cachedResponse) {
-                return cachedResponse;
+            // Add pagination parameters
+            queryParams.append('page', params.page.toString());
+            queryParams.append('limit', params.limit.toString());
+            if (params.sortBy) {
+                queryParams.append('sortBy', params.sortBy);
+                queryParams.append('order', params.order || 'DESC');
             }
 
-            const response = await this.circuitBreaker.execute(() =>
-                this.api.get<DocumentListResponse>(
-                    API_ENDPOINTS.DOCUMENTS.LIST,
-                    { params: queryParams }
-                )
+            // Add filter parameters
+            if (filters) {
+                if (filters.types?.length) {
+                    queryParams.append('types', filters.types.join(','));
+                }
+                if (filters.status?.length) {
+                    queryParams.append('status', filters.status.join(','));
+                }
+                if (filters.dateRange) {
+                    queryParams.append('startDate', filters.dateRange.start.toISOString());
+                    queryParams.append('endDate', filters.dateRange.end.toISOString());
+                }
+                if (filters.searchQuery) {
+                    queryParams.append('search', filters.searchQuery);
+                }
+            }
+
+            const config: ApiRequestConfig = {
+                params: queryParams,
+                headers: {
+                    'Cache-Control': 'max-age=300' // 5 minute cache
+                },
+                requiresAuth: true,
+                skipErrorHandler: false
+            };
+
+            const response = await this.api.get<DocumentListResponse>(
+                API_ENDPOINTS.DOCUMENTS.LIST,
+                config
             );
 
-            await this.cacheResponse(cacheKey, response.data);
             return response.data;
         } catch (error) {
             if (axios.isAxiosError(error)) {
@@ -161,77 +184,49 @@ export class DocumentApi {
     }
 
     /**
-     * Validates document before upload
+     * Deletes a document by ID with validation
      */
-    private async validateDocument(file: File): Promise<DocumentValidation> {
-        const maxSize = API_CONFIG.MAX_REQUEST_SIZE;
-        const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/plain'];
+    public async deleteDocument(documentId: string): Promise<ApiResponse<void>> {
+        try {
+            const response = await this.api.delete<ApiResponse<void>>(
+                API_ENDPOINTS.DOCUMENTS.DELETE.replace('{id}', documentId),
+                {
+                    requiresAuth: true,
+                    validateStatus: (status) => status === 204
+                }
+            );
 
-        if (file.size > maxSize) {
-            throw new Error(`File size exceeds maximum limit of ${maxSize / 1024 / 1024}MB`);
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                throw await handleApiError(error);
+            }
+            throw error;
         }
-
-        if (!allowedTypes.includes(file.type)) {
-            throw new Error('File type not supported. Please upload PDF, DOCX, XLSX, or TXT files.');
-        }
-
-        return {
-            isValid: true,
-            size: file.size,
-            type: file.type
-        };
     }
 
     /**
-     * Builds filter parameters for document queries
+     * Retrieves document processing status
      */
-    private buildFilterParams(filters?: DocumentFilterOptions): Record<string, string> {
-        if (!filters) return {};
+    public async getProcessingStatus(documentId: string): Promise<ApiResponse<ProcessingStatus>> {
+        try {
+            const response = await this.api.get<ApiResponse<ProcessingStatus>>(
+                API_ENDPOINTS.DOCUMENTS.PROCESS.replace('{id}', documentId),
+                {
+                    requiresAuth: true,
+                    skipErrorHandler: false
+                }
+            );
 
-        const params: Record<string, string> = {};
-
-        if (filters.types?.length) {
-            params.types = filters.types.join(',');
+            return response.data;
+        } catch (error) {
+            if (axios.isAxiosError(error)) {
+                throw await handleApiError(error);
+            }
+            throw error;
         }
-
-        if (filters.status?.length) {
-            params.status = filters.status.join(',');
-        }
-
-        if (filters.dateRange) {
-            params.startDate = filters.dateRange.start.toISOString();
-            params.endDate = filters.dateRange.end.toISOString();
-        }
-
-        if (filters.searchQuery) {
-            params.q = filters.searchQuery;
-        }
-
-        return params;
-    }
-
-    /**
-     * Generates cache key for document queries
-     */
-    private generateCacheKey(params: QueryParams): string {
-        return `documents:${JSON.stringify(params)}`;
-    }
-
-    /**
-     * Retrieves cached response if available
-     */
-    private async getCachedResponse(key: string): Promise<DocumentListResponse | null> {
-        // Implementation would use a caching solution like Redis
-        return null;
-    }
-
-    /**
-     * Caches API response
-     */
-    private async cacheResponse(key: string, data: DocumentListResponse): Promise<void> {
-        // Implementation would use a caching solution like Redis
-        return;
     }
 }
 
-export default new DocumentApi();
+// Export singleton instance
+export const documentApi = new DocumentApi();

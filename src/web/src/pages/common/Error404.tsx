@@ -1,12 +1,22 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { Box, Typography, Container } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useAnalytics } from '@azure/analytics';
 import { ErrorBoundary } from 'react-error-boundary';
 import MainLayout from '../../components/common/Layout/MainLayout';
 import PrimaryButton from '../../components/common/Buttons/PrimaryButton';
-import { styled } from '@mui/material/styles';
 
-// Styled components for error page layout
+// Constants for analytics and accessibility
+const ERROR_PAGE_VIEW = 'error_404_view';
+const ERROR_PAGE_EXIT = 'error_404_exit';
+const ARIA_LABELS = {
+  MAIN: 'Error 404 - Page Not Found',
+  DESCRIPTION: 'The requested page could not be found',
+  GO_BACK: 'Go back to previous page',
+  GO_HOME: 'Go to home page',
+};
+
+// Styled container for error content with responsive layout
 const ErrorContainer = styled(Container)(({ theme }) => ({
   display: 'flex',
   flexDirection: 'column',
@@ -19,141 +29,144 @@ const ErrorContainer = styled(Container)(({ theme }) => ({
     padding: theme.spacing(2),
   },
   gap: theme.spacing(2),
-  maxWidth: '600px',
-}));
-
-const ErrorHeading = styled(Typography)(({ theme }) => ({
-  color: theme.palette.error.main,
-  marginBottom: theme.spacing(2),
-  fontWeight: theme.typography.fontWeightBold,
-  '&::selection': {
-    backgroundColor: theme.palette.primary.main,
-    color: theme.palette.primary.contrastText,
-  },
-}));
-
-const ErrorText = styled(Typography)(({ theme }) => ({
-  color: theme.palette.text.secondary,
-  marginBottom: theme.spacing(4),
-  '&::selection': {
-    backgroundColor: theme.palette.primary.main,
-    color: theme.palette.primary.contrastText,
-  },
-}));
-
-const ButtonContainer = styled(Box)(({ theme }) => ({
-  display: 'flex',
-  gap: theme.spacing(2),
-  flexWrap: 'wrap',
-  justifyContent: 'center',
-  [theme.breakpoints.down('sm')]: {
-    flexDirection: 'column',
-    width: '100%',
-  },
+  maxWidth: 600,
 }));
 
 // Error boundary fallback component
 const ErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
-  <ErrorContainer>
-    <ErrorHeading variant="h4">Something went wrong</ErrorHeading>
-    <ErrorText>{error.message}</ErrorText>
-  </ErrorContainer>
+  <Box role="alert" p={3} textAlign="center">
+    <Typography variant="h6" color="error" gutterBottom>
+      Something went wrong
+    </Typography>
+    <Typography variant="body2" color="textSecondary">
+      {error.message}
+    </Typography>
+  </Box>
 );
 
-// Main 404 error page component
+/**
+ * 404 Error page component with accessibility features and analytics tracking
+ * Implements WCAG Level AA 2.1 compliance and responsive design
+ */
 const Error404: React.FC = React.memo(() => {
   const navigate = useNavigate();
+  const analytics = useAnalytics();
 
   // Track error page view
   useEffect(() => {
-    try {
-      // Log 404 error occurrence
-      fetch('/api/analytics/error', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: '404',
-          path: window.location.pathname,
-          timestamp: new Date().toISOString(),
-        }),
-      });
-    } catch (error) {
-      console.error('Failed to log 404 error:', error);
-    }
-  }, []);
+    analytics.trackEvent(ERROR_PAGE_VIEW, {
+      path: window.location.pathname,
+      timestamp: new Date().toISOString(),
+    });
 
-  // Navigation handlers with analytics tracking
-  const handleGoBack = useCallback(() => {
+    return () => {
+      analytics.trackEvent(ERROR_PAGE_EXIT, {
+        duration: Date.now() - performance.now(),
+      });
+    };
+  }, [analytics]);
+
+  // Navigation handlers with error boundary
+  const handleGoBack = React.useCallback(() => {
     try {
       navigate(-1);
+      analytics.trackEvent('error_404_go_back');
     } catch (error) {
       console.error('Navigation error:', error);
       navigate('/');
     }
-  }, [navigate]);
+  }, [navigate, analytics]);
 
-  const handleGoHome = useCallback(() => {
+  const handleGoHome = React.useCallback(() => {
     try {
       navigate('/');
+      analytics.trackEvent('error_404_go_home');
     } catch (error) {
       console.error('Navigation error:', error);
     }
-  }, [navigate]);
+  }, [navigate, analytics]);
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <MainLayout portalType="client">
         <ErrorContainer>
-          <Box
-            component="img"
-            src="/assets/images/404.svg"
-            alt=""
-            sx={{
-              width: '100%',
-              maxWidth: '300px',
-              height: 'auto',
-              marginBottom: 4,
-            }}
-            aria-hidden="true"
-          />
-          
-          <ErrorHeading 
-            variant="h1" 
+          {/* Accessible heading hierarchy */}
+          <Typography
+            variant="h1"
             component="h1"
-            aria-label="Page not found"
+            color="error"
+            gutterBottom
+            aria-label={ARIA_LABELS.MAIN}
+            sx={{
+              fontSize: { xs: '2rem', sm: '3rem' },
+              fontWeight: 'bold',
+            }}
           >
-            404: Page Not Found
-          </ErrorHeading>
+            404
+          </Typography>
 
-          <ErrorText variant="body1">
-            We couldn't find the page you're looking for. It might have been moved,
-            deleted, or never existed.
-          </ErrorText>
+          <Typography
+            variant="h2"
+            component="h2"
+            color="textPrimary"
+            gutterBottom
+            aria-label={ARIA_LABELS.DESCRIPTION}
+            sx={{
+              fontSize: { xs: '1.5rem', sm: '2rem' },
+              mb: 3,
+            }}
+          >
+            Page Not Found
+          </Typography>
 
-          <ButtonContainer>
+          <Typography
+            variant="body1"
+            color="textSecondary"
+            paragraph
+            sx={{ mb: 4 }}
+          >
+            The page you are looking for might have been removed, had its name
+            changed, or is temporarily unavailable.
+          </Typography>
+
+          {/* Navigation buttons with keyboard accessibility */}
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: { xs: 'column', sm: 'row' },
+              gap: 2,
+              width: '100%',
+              maxWidth: 400,
+              mx: 'auto',
+            }}
+          >
             <PrimaryButton
               onClick={handleGoBack}
-              aria-label="Go back to previous page"
-              size="large"
+              fullWidth
+              variant="secondary"
+              aria-label={ARIA_LABELS.GO_BACK}
+              data-testid="go-back-button"
             >
               Go Back
             </PrimaryButton>
 
             <PrimaryButton
               onClick={handleGoHome}
-              variant="secondary"
-              aria-label="Go to home page"
-              size="large"
+              fullWidth
+              variant="primary"
+              aria-label={ARIA_LABELS.GO_HOME}
+              data-testid="go-home-button"
             >
               Go to Home
             </PrimaryButton>
-          </ButtonContainer>
+          </Box>
         </ErrorContainer>
       </MainLayout>
     </ErrorBoundary>
   );
 });
 
+// Display name for debugging
 Error404.displayName = 'Error404';
 
 export default Error404;

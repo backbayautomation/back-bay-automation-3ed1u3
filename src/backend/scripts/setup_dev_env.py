@@ -10,10 +10,7 @@ import os  # version: latest
 import shutil  # version: latest
 import logging  # version: latest
 import argparse  # version: latest
-from typing import Dict, Any, Optional
-from pathlib import Path
 from dotenv import load_dotenv  # version: 1.0.0
-from azure.identity import DefaultAzureCredential  # version: 1.8.0
 from azure.mgmt.devtestlabs import DevTestLabsClient  # version: 9.0.0
 from cryptography.fernet import Fernet  # version: 41.0.0
 
@@ -23,7 +20,7 @@ from ..app.config import settings
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Constants
+# Global constants
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
 SECURITY_KEY = os.getenv('SECURITY_KEY')
@@ -32,7 +29,7 @@ class SetupArgumentParser:
     """Enhanced argument parser with security and multi-tenant options."""
 
     def __init__(self):
-        """Initialize parser with security and tenant options."""
+        """Initialize parser with security validation options."""
         self.parser = argparse.ArgumentParser(
             description='Setup development environment with enhanced security'
         )
@@ -48,7 +45,7 @@ class SetupArgumentParser:
         self.parser.add_argument(
             '--tenant-id',
             type=str,
-            help='Tenant identifier for multi-tenant setup'
+            help='Tenant ID for multi-tenant setup'
         )
         self.parser.add_argument(
             '--secure-mode',
@@ -63,156 +60,153 @@ class SetupArgumentParser:
         )
 
     def parse_args(self):
-        """Parse and validate command line arguments."""
+        """Parse and validate arguments with security checks."""
         args = self.parser.parse_args()
         self.validate_security(args)
         return args
 
-    def validate_security(self, args) -> bool:
+    def validate_security(self, args):
         """Validate security-related arguments."""
-        if args.secure_mode:
-            if not SECURITY_KEY:
-                raise ValueError("SECURITY_KEY environment variable is required in secure mode")
-            if args.tenant_id and not args.tenant_id.isalnum():
-                raise ValueError("Tenant ID must be alphanumeric")
-        return True
+        if not SECURITY_KEY and args.secure_mode:
+            raise ValueError("SECURITY_KEY must be set when secure mode is enabled")
+        
+        if args.tenant_id and not args.tenant_id.isalnum():
+            raise ValueError("Tenant ID must be alphanumeric")
 
-def setup_environment(force: bool = False, tenant_id: Optional[str] = None, 
-                     secure_mode: bool = True) -> bool:
+def setup_environment(force: bool, tenant_id: str, secure_mode: bool) -> bool:
     """Set up development environment with Azure DevTest Labs integration."""
     try:
-        logger.info("Starting environment setup", 
-                   extra={'tenant_id': tenant_id, 'secure_mode': secure_mode})
+        logger.info("Starting environment setup")
+        
+        # Initialize Azure DevTest Labs client
+        azure_config = settings.azure
+        devtest_client = DevTestLabsClient(
+            credential=azure_config['client_id'],
+            subscription_id=azure_config['subscription_id']
+        )
 
-        # Initialize Azure credentials
-        if secure_mode:
-            credential = DefaultAzureCredential()
-            devtest_client = DevTestLabsClient(
-                credential=credential,
-                subscription_id=settings.azure['subscription_id']
-            )
+        # Create tenant-specific directories
+        tenant_dir = os.path.join(PROJECT_ROOT, 'tenants', tenant_id) if tenant_id else PROJECT_ROOT
+        dirs_to_create = ['logs', 'data', 'config', 'temp']
+        
+        for dir_name in dirs_to_create:
+            dir_path = os.path.join(tenant_dir, dir_name)
+            if os.path.exists(dir_path) and not force:
+                logger.warning(f"Directory {dir_path} already exists")
+                continue
+                
+            os.makedirs(dir_path, mode=0o750, exist_ok=True)
+            logger.info(f"Created directory: {dir_path}")
 
-        # Create necessary directories
-        dirs = ['logs', 'data', 'temp', 'config']
-        for dir_name in dirs:
-            dir_path = os.path.join(PROJECT_ROOT, dir_name)
-            os.makedirs(dir_path, exist_ok=True)
-            if secure_mode:
-                os.chmod(dir_path, 0o750)  # Secure permissions
-
-        # Setup environment configuration
-        env_config = {
-            'DATABASE_URL': settings.database['url'],
-            'AZURE_TENANT_ID': settings.azure['tenant_id'],
-            'VECTOR_DIMENSION': settings.vector_search['dimension'],
-            'SECURITY_ENABLED': str(secure_mode).lower(),
-            'TENANT_ID': tenant_id or 'default'
-        }
-
-        # Encrypt sensitive configuration if in secure mode
+        # Setup encrypted configuration
         if secure_mode:
             fernet = Fernet(SECURITY_KEY.encode())
-            env_config = {
-                k: fernet.encrypt(v.encode()).decode() 
-                for k, v in env_config.items()
+            config_path = os.path.join(tenant_dir, 'config', '.env')
+            
+            env_vars = {
+                'DB_HOST': settings.database['host'],
+                'DB_PORT': str(settings.database['port']),
+                'DB_NAME': f"{settings.database['database']}_{tenant_id}" if tenant_id else settings.database['database'],
+                'AZURE_TENANT_ID': azure_config['tenant_id'],
+                'AZURE_CLIENT_ID': azure_config['client_id']
             }
+            
+            with open(config_path, 'wb') as f:
+                encrypted_config = fernet.encrypt('\n'.join(f"{k}={v}" for k, v in env_vars.items()).encode())
+                f.write(encrypted_config)
+            
+            os.chmod(config_path, 0o600)
+            logger.info("Encrypted configuration created")
 
-        # Write environment configuration
-        env_path = os.path.join(PROJECT_ROOT, '.env')
-        with open(env_path, 'w') as f:
-            for key, value in env_config.items():
-                f.write(f"{key}={value}\n")
-        if secure_mode:
-            os.chmod(env_path, 0o640)
-
-        # Setup Azure DevTest Lab if enabled
-        if secure_mode and settings.azure.get('devtest_lab_name'):
-            lab_name = settings.azure['devtest_lab_name']
-            devtest_client.labs.create_or_update(
-                resource_group_name=settings.azure['resource_group'],
-                lab_name=lab_name,
-                lab={
-                    'location': settings.azure['location'],
-                    'tags': {
-                        'environment': 'development',
-                        'tenant': tenant_id or 'default'
-                    }
+        # Initialize logging
+        log_config = {
+            'version': 1,
+            'disable_existing_loggers': False,
+            'formatters': {
+                'json': {
+                    'format': '%(asctime)s %(levelname)s %(message)s',
+                    'datefmt': '%Y-%m-%d %H:%M:%S'
                 }
-            )
-
+            },
+            'handlers': {
+                'file': {
+                    'class': 'logging.FileHandler',
+                    'filename': os.path.join(tenant_dir, 'logs', 'setup.log'),
+                    'formatter': 'json'
+                }
+            },
+            'root': {
+                'level': 'INFO',
+                'handlers': ['file']
+            }
+        }
+        logging.config.dictConfig(log_config)
+        
         logger.info("Environment setup completed successfully")
         return True
 
     except Exception as e:
-        logger.error("Environment setup failed", 
-                    extra={'error': str(e), 'tenant_id': tenant_id})
-        cleanup_failed_setup(tenant_id, 'environment')
-        raise
+        logger.error(f"Environment setup failed: {str(e)}", exc_info=True)
+        return False
 
-def setup_database(reset: bool = False, tenant_id: Optional[str] = None,
-                  secure_mode: bool = True) -> bool:
+def setup_database(reset: bool, tenant_id: str, secure_mode: bool) -> bool:
     """Initialize multi-tenant development database with security controls."""
     try:
-        logger.info("Starting database setup", 
-                   extra={'tenant_id': tenant_id, 'reset': reset})
-
+        logger.info("Starting database setup")
+        
+        # Update database settings for tenant
+        if tenant_id:
+            settings.database['database'] = f"{settings.database['database']}_{tenant_id}"
+        
         # Initialize database with tenant isolation
         init_db()
-
-        # Apply security policies if enabled
+        
         if secure_mode:
+            # Setup database security policies
             with settings.get_db() as db:
-                # Create tenant schema
-                if tenant_id:
-                    db.execute(f"CREATE SCHEMA IF NOT EXISTS tenant_{tenant_id}")
-                    db.execute(f"ALTER DEFAULT PRIVILEGES IN SCHEMA tenant_{tenant_id} "
-                             f"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user")
-
+                # Create tenant schema if not exists
+                db.execute(f"CREATE SCHEMA IF NOT EXISTS tenant_{tenant_id}")
+                
                 # Setup row-level security
-                db.execute("ALTER TABLE documents ENABLE ROW LEVEL SECURITY")
-                db.execute("CREATE POLICY tenant_isolation_policy ON documents "
-                         "FOR ALL USING (client_id IN "
-                         "(SELECT id FROM clients WHERE tenant_id = current_tenant))")
-
+                db.execute(f"""
+                    ALTER TABLE tenant.organizations 
+                    ENABLE ROW LEVEL SECURITY;
+                    
+                    CREATE POLICY org_tenant_isolation ON tenant.organizations
+                    FOR ALL
+                    TO PUBLIC
+                    USING (tenant_id = '{tenant_id}');
+                """)
+                
+                db.commit()
+        
         logger.info("Database setup completed successfully")
         return True
 
     except Exception as e:
-        logger.error("Database setup failed", 
-                    extra={'error': str(e), 'tenant_id': tenant_id})
-        cleanup_failed_setup(tenant_id, 'database')
-        raise
+        logger.error(f"Database setup failed: {str(e)}", exc_info=True)
+        return False
 
-def cleanup_failed_setup(tenant_id: Optional[str], setup_stage: str) -> bool:
+def cleanup_failed_setup(tenant_id: str, setup_stage: str) -> bool:
     """Perform cleanup operations after failed setup attempts."""
     try:
-        logger.info("Starting cleanup after failed setup", 
-                   extra={'tenant_id': tenant_id, 'stage': setup_stage})
-
-        if setup_stage == 'environment':
-            # Remove created directories
-            for dir_name in ['logs', 'data', 'temp', 'config']:
-                dir_path = os.path.join(PROJECT_ROOT, dir_name)
-                if os.path.exists(dir_path):
-                    shutil.rmtree(dir_path)
-
-            # Remove environment file
-            env_path = os.path.join(PROJECT_ROOT, '.env')
-            if os.path.exists(env_path):
-                os.remove(env_path)
-
-        elif setup_stage == 'database':
-            # Rollback database changes
+        logger.info(f"Starting cleanup for failed {setup_stage}")
+        
+        if tenant_id:
+            tenant_dir = os.path.join(PROJECT_ROOT, 'tenants', tenant_id)
+            if os.path.exists(tenant_dir):
+                shutil.rmtree(tenant_dir)
+            
+            # Cleanup database
             with settings.get_db() as db:
-                if tenant_id:
-                    db.execute(f"DROP SCHEMA IF EXISTS tenant_{tenant_id} CASCADE")
-
+                db.execute(f"DROP SCHEMA IF EXISTS tenant_{tenant_id} CASCADE")
+                db.commit()
+        
         logger.info("Cleanup completed successfully")
         return True
 
     except Exception as e:
-        logger.error("Cleanup failed", 
-                    extra={'error': str(e), 'tenant_id': tenant_id})
+        logger.error(f"Cleanup failed: {str(e)}", exc_info=True)
         return False
 
 def main() -> int:
@@ -221,30 +215,23 @@ def main() -> int:
         # Parse command line arguments
         parser = SetupArgumentParser()
         args = parser.parse_args()
-
-        # Load environment variables
-        load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
-
-        # Configure logging
-        logging.basicConfig(
-            level=logging.DEBUG if settings.DEBUG else logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-
+        
         # Setup environment
         if not setup_environment(args.force, args.tenant_id, args.secure_mode):
+            cleanup_failed_setup(args.tenant_id, 'environment')
             return 1
-
+        
         # Setup database
         if not setup_database(args.reset_db, args.tenant_id, args.secure_mode):
+            cleanup_failed_setup(args.tenant_id, 'database')
             return 1
-
+        
         logger.info("Development environment setup completed successfully")
         return 0
 
     except Exception as e:
-        logger.error("Setup failed", extra={'error': str(e)})
+        logger.error(f"Setup failed: {str(e)}", exc_info=True)
         return 1
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     exit(main())

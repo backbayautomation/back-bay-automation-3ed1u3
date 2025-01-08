@@ -1,7 +1,6 @@
 // =============================================================================
 // Client Portal Stylesheet
-// Implements enhanced client portal styles with accessibility, RTL support,
-// and responsive design optimizations
+// Implements enhanced client interface styles with accessibility and RTL support
 // Version: 1.0.0
 // =============================================================================
 
@@ -9,9 +8,10 @@
 @import './theme';
 @import './common';
 
-// =============================================================================
+// -----------------------------------------------------------------------------
 // Chat Interface
-// =============================================================================
+// Enhanced with container queries and touch optimization
+// -----------------------------------------------------------------------------
 
 .chat-interface {
   display: grid;
@@ -21,39 +21,45 @@
   padding: $spacing-md;
   container-type: inline-size;
   touch-action: manipulation;
-  background-color: var(--background-color);
 
   @container (max-width: #{$breakpoint-tablet}) {
     grid-template-columns: 1fr;
-    height: calc(100vh - var(--header-height, 60px));
   }
 
   @media (max-width: $breakpoint-mobile) {
     padding: $spacing-sm;
-    gap: $spacing-sm;
+  }
+
+  &__sidebar {
+    background-color: var(--surface-color);
+    border-radius: $border-radius-md;
+    padding: $spacing-md;
+    overflow-y: auto;
+    
+    @container (max-width: #{$breakpoint-tablet}) {
+      display: none;
+      
+      &--active {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: $z-index-modal;
+      }
+    }
+  }
+
+  &__main {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-md;
+    min-height: 0;
   }
 }
 
-.chat-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-md;
-  background-color: var(--background-secondary);
-  border-radius: $border-radius-lg;
-  padding: $spacing-md;
-  overflow-y: auto;
-  
-  @container (max-width: #{$breakpoint-tablet}) {
-    display: none;
-    
-    &.active {
-      display: flex;
-      position: fixed;
-      inset: 0;
-      z-index: $z-index-modal;
-    }
-  }
-}
+// -----------------------------------------------------------------------------
+// Chat Messages
+// Enhanced with accessibility and RTL support
+// -----------------------------------------------------------------------------
 
 .chat-messages {
   display: flex;
@@ -67,41 +73,34 @@
   @media (prefers-reduced-motion: reduce) {
     scroll-behavior: auto;
   }
-}
 
-.message {
-  --message-max-width: min(80%, 600px);
-  
-  &-user, &-system {
-    display: flex;
-    gap: $spacing-sm;
-    max-width: var(--message-max-width);
+  &__message {
+    max-width: 80%;
     padding: $spacing-md;
-    border-radius: $border-radius-lg;
-    animation: messageAppear $animation-duration-base $animation-timing-entrance;
-  }
-
-  &-user {
-    align-self: flex-end;
-    background-color: $primary;
-    color: white;
-    margin-left: auto;
-  }
-
-  &-system {
-    align-self: flex-start;
-    background-color: var(--background-secondary);
-    margin-right: auto;
+    border-radius: $border-radius-md;
+    
+    &--user {
+      align-self: flex-end;
+      background-color: var(--button-bg);
+      color: var(--button-text);
+    }
+    
+    &--system {
+      align-self: flex-start;
+      background-color: var(--surface-color);
+      color: var(--text-primary);
+    }
   }
 }
 
-// =============================================================================
+// -----------------------------------------------------------------------------
 // Document Context View
-// =============================================================================
+// Enhanced with relevance indicators and print optimization
+// -----------------------------------------------------------------------------
 
 .document-context {
-  background-color: var(--background-secondary);
-  border-radius: $border-radius-lg;
+  background-color: var(--surface-color);
+  border-radius: $border-radius-md;
   padding: $spacing-md;
   
   &__header {
@@ -111,51 +110,89 @@
     margin-bottom: $spacing-md;
   }
 
-  &__list {
-    display: grid;
-    gap: $spacing-md;
-  }
-
-  &__item {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: $spacing-sm;
-    padding: $spacing-md;
-    background-color: var(--background-color);
-    border-radius: $border-radius-md;
-    transition: transform $animation-duration-base $animation-timing-base;
-
-    &:hover {
-      transform: translateY(-2px);
-    }
-  }
-
   &__relevance {
     display: flex;
     align-items: center;
-    gap: $spacing-xs;
-    color: var(--text-secondary);
+    gap: $spacing-sm;
     
     &-bar {
       width: 100px;
       height: 4px;
-      background-color: var(--background-secondary);
+      background-color: var(--text-secondary);
       border-radius: $border-radius-pill;
       overflow: hidden;
       
       &-fill {
         height: 100%;
-        background-color: $primary;
-        transform-origin: left;
-        transition: transform $animation-duration-base $animation-timing-base;
+        background-color: var(--button-bg);
+        transition: width $animation-duration-base $animation-timing-base;
       }
+    }
+  }
+
+  &__preview {
+    border: 1px solid var(--text-secondary);
+    border-radius: $border-radius-sm;
+    padding: $spacing-md;
+    margin-top: $spacing-md;
+    
+    img {
+      max-width: 100%;
+      height: auto;
     }
   }
 }
 
-// =============================================================================
-// Print Optimizations
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Input Area
+// Enhanced with touch optimization and accessibility
+// -----------------------------------------------------------------------------
+
+.input-area {
+  display: flex;
+  gap: $spacing-md;
+  padding: $spacing-md;
+  background-color: var(--surface-color);
+  border-radius: $border-radius-md;
+  
+  &__input {
+    flex: 1;
+    min-height: 44px;
+    padding: $spacing-sm $spacing-md;
+    border: 1px solid var(--text-secondary);
+    border-radius: $border-radius-sm;
+    background-color: var(--background-color);
+    color: var(--text-primary);
+    font-family: $font-family-primary;
+    resize: none;
+    
+    &:focus {
+      outline: none;
+      border-color: var(--button-bg);
+      box-shadow: 0 0 0 2px var(--focus-ring-color);
+    }
+  }
+
+  &__button {
+    min-width: 44px;
+    min-height: 44px;
+    padding: $spacing-sm $spacing-md;
+    border-radius: $border-radius-sm;
+    background-color: var(--button-bg);
+    color: var(--button-text);
+    border: none;
+    cursor: pointer;
+    
+    &:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Print Styles
+// -----------------------------------------------------------------------------
 
 @media print {
   .chat-interface {
@@ -164,111 +201,83 @@
     padding: 0;
   }
 
-  .chat-sidebar,
-  .message-input {
+  .chat-interface__sidebar,
+  .input-area {
     display: none;
   }
 
   .chat-messages {
     padding: 0;
-    overflow: visible;
-  }
-
-  .message {
-    page-break-inside: avoid;
-    border: 1px solid #000;
-    margin-bottom: $spacing-md;
     
-    &-user, &-system {
-      max-width: none;
-      animation: none;
+    &__message {
+      break-inside: avoid;
+      border: 1px solid #000;
+      
+      &--user {
+        background-color: #fff;
+        color: #000;
+      }
+      
+      &--system {
+        background-color: #fff;
+        color: #000;
+      }
     }
   }
 
   .document-context {
-    page-break-inside: avoid;
+    break-inside: avoid;
     border: 1px solid #000;
     
-    &__item {
-      break-inside: avoid;
+    &__relevance {
+      display: none;
     }
   }
 }
 
-// =============================================================================
+// -----------------------------------------------------------------------------
 // RTL Support
-// =============================================================================
+// -----------------------------------------------------------------------------
 
 [dir="rtl"] {
-  .message {
-    &-user {
-      margin-left: 0;
-      margin-right: auto;
+  .chat-messages__message {
+    &--user {
+      align-self: flex-start;
     }
-
-    &-system {
-      margin-right: 0;
-      margin-left: auto;
+    
+    &--system {
+      align-self: flex-end;
     }
   }
 
-  .document-context__relevance-bar-fill {
-    transform-origin: right;
+  .document-context__relevance {
+    flex-direction: row-reverse;
   }
 }
 
-// =============================================================================
-// Animations
-// =============================================================================
-
-@keyframes messageAppear {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-// =============================================================================
-// High Contrast Mode
-// =============================================================================
+// -----------------------------------------------------------------------------
+// High Contrast Mode Support
+// -----------------------------------------------------------------------------
 
 @media (forced-colors: active) {
-  .message {
-    &-user, &-system {
-      border: 1px solid CanvasText;
-    }
-  }
-
-  .document-context__relevance-bar {
+  .chat-messages__message {
     border: 1px solid CanvasText;
     
-    &-fill {
-      background-color: CanvasText;
-    }
-  }
-}
-
-// =============================================================================
-// Touch Optimizations
-// =============================================================================
-
-@media (hover: none) {
-  .document-context__item {
-    &:hover {
-      transform: none;
+    &--user {
+      background-color: Highlight;
+      color: HighlightText;
     }
   }
 
-  .message-input {
-    --touch-target-size: 44px;
+  .document-context {
+    border: 1px solid CanvasText;
     
-    button {
-      min-height: var(--touch-target-size);
-      min-width: var(--touch-target-size);
+    &__relevance-bar {
+      border: 1px solid CanvasText;
+      
+      &-fill {
+        background-color: Highlight;
+      }
     }
   }
 }

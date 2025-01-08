@@ -1,7 +1,6 @@
 // =============================================================================
 // Admin Portal Stylesheet
-// Enhanced styles for admin interface with WCAG 2.1 AA compliance,
-// dark mode support, and responsive design patterns
+// Enhanced styles for admin interface with accessibility and responsive features
 // Version: 1.0.0
 // =============================================================================
 
@@ -9,9 +8,10 @@
 @import './theme';
 @import './common';
 
-// =============================================================================
-// Admin Layout
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Admin Layout Container
+// Enhanced with container queries and dark mode support
+// -----------------------------------------------------------------------------
 
 .admin-layout {
   display: grid;
@@ -24,10 +24,19 @@
   @container (width < #{$breakpoint-tablet}) {
     grid-template-columns: 1fr;
   }
+
+  @media print {
+    display: block;
+  }
 }
 
+// -----------------------------------------------------------------------------
+// Admin Sidebar
+// Enhanced with accessibility and motion preferences
+// -----------------------------------------------------------------------------
+
 .admin-sidebar {
-  background-color: var(--background-secondary);
+  background-color: var(--background-color, $background-color);
   border-right: 1px solid var(--border-color, rgba($text-primary, 0.1));
   padding: $spacing-md;
   position: fixed;
@@ -50,11 +59,16 @@
       transform: translateX(0);
     }
   }
+
+  @media print {
+    display: none;
+  }
 }
 
-// =============================================================================
-// Dashboard Grid
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Dashboard Grid Layout
+// Responsive grid system with container queries
+// -----------------------------------------------------------------------------
 
 .dashboard-grid {
   display: grid;
@@ -62,9 +76,18 @@
   padding: $spacing-lg;
   
   @container (width >= #{$breakpoint-tablet}) {
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  @container (width >= #{$breakpoint-desktop}) {
+    grid-template-columns: repeat(3, 1fr);
   }
 }
+
+// -----------------------------------------------------------------------------
+// Metrics Cards
+// Enhanced with high contrast support and print styles
+// -----------------------------------------------------------------------------
 
 .metrics-card {
   @extend .components-card;
@@ -73,40 +96,42 @@
   gap: $spacing-sm;
 
   &__title {
-    color: var(--text-secondary);
-    font-size: $font-size-sm;
-    font-weight: $font-weight-medium;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-size: $font-size-lg;
+    font-weight: $font-weight-bold;
+    color: var(--text-primary);
   }
 
   &__value {
     font-size: $font-size-xxl;
     font-weight: $font-weight-bold;
-    line-height: 1;
+    color: $primary;
   }
 
-  &__trend {
-    display: flex;
-    align-items: center;
-    gap: $spacing-xs;
-    font-size: $font-size-sm;
+  @media (forced-colors: active) {
+    border: 1px solid CanvasText;
+    
+    &__value {
+      color: CanvasText;
+    }
+  }
 
-    &--positive { color: $success; }
-    &--negative { color: $error; }
+  @media print {
+    break-inside: avoid;
+    border: 1px solid #000;
   }
 }
 
-// =============================================================================
-// Client Management
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Client Management Table
+// Enhanced with responsive and accessibility features
+// -----------------------------------------------------------------------------
 
 .client-table {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  background-color: var(--surface-color);
-  border-radius: $border-radius-lg;
+  background-color: var(--table-background, $background-color);
+  border-radius: $border-radius-md;
   overflow: hidden;
 
   th, td {
@@ -116,20 +141,30 @@
   }
 
   th {
-    background-color: var(--background-secondary);
-    font-weight: $font-weight-medium;
-    color: var(--text-secondary);
-    white-space: nowrap;
+    font-weight: $font-weight-bold;
+    background-color: var(--surface-color);
+    color: var(--text-primary);
   }
 
-  tr:last-child td {
-    border-bottom: none;
+  tr {
+    &:hover {
+      background-color: var(--surface-color);
+    }
+
+    &:focus-within {
+      outline: 2px solid var(--focus-ring-color);
+      outline-offset: -2px;
+    }
   }
 
-  @media (max-width: #{$breakpoint-tablet}) {
+  @container (width < #{$breakpoint-tablet}) {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+
+    th, td {
+      white-space: nowrap;
+    }
   }
 
   @media print {
@@ -138,48 +173,17 @@
   }
 }
 
-.client-form {
-  display: grid;
-  gap: $spacing-lg;
-  max-width: 600px;
-  margin: $spacing-lg auto;
-
-  &__group {
-    display: flex;
-    flex-direction: column;
-    gap: $spacing-xs;
-  }
-
-  &__label {
-    font-weight: $font-weight-medium;
-    color: var(--text-secondary);
-  }
-
-  &__input {
-    padding: $spacing-sm;
-    border: 1px solid var(--border-color, rgba($text-primary, 0.2));
-    border-radius: $border-radius-md;
-    background-color: var(--surface-color);
-    color: var(--text-primary);
-    font-family: $font-family-primary;
-    
-    &:focus-visible {
-      outline: 2px solid $primary;
-      outline-offset: 2px;
-    }
-  }
-}
-
-// =============================================================================
+// -----------------------------------------------------------------------------
 // Processing Queue
-// =============================================================================
+// Enhanced with status indicators and accessibility
+// -----------------------------------------------------------------------------
 
 .processing-queue {
   @extend .components-card;
-  
+
   &__item {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: auto 1fr auto;
     gap: $spacing-md;
     padding: $spacing-md;
     border-bottom: 1px solid var(--border-color, rgba($text-primary, 0.1));
@@ -187,93 +191,101 @@
     &:last-child {
       border-bottom: none;
     }
+  }
 
-    @container (width < #{$breakpoint-tablet}) {
-      grid-template-columns: 1fr;
-      gap: $spacing-sm;
+  &__status {
+    display: inline-flex;
+    align-items: center;
+    gap: $spacing-xs;
+    padding: $spacing-xs $spacing-sm;
+    border-radius: $border-radius-sm;
+    font-size: $font-size-sm;
+    font-weight: $font-weight-medium;
+
+    &--complete {
+      background-color: rgba($success, 0.1);
+      color: $success;
+    }
+
+    &--processing {
+      background-color: rgba($info, 0.1);
+      color: $info;
+    }
+
+    &--error {
+      background-color: rgba($error, 0.1);
+      color: $error;
     }
   }
 
-  &__progress {
-    width: 100%;
-    height: 4px;
-    background-color: var(--background-secondary);
-    border-radius: $border-radius-pill;
-    overflow: hidden;
-
-    &-bar {
-      height: 100%;
-      background-color: $primary;
-      transition: width 0.3s ease;
-
-      @media (prefers-reduced-motion: reduce) {
-        transition: none;
-      }
+  @media (forced-colors: active) {
+    .processing-queue__status {
+      border: 1px solid currentColor;
     }
   }
 }
 
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Quick Actions Menu
+// Enhanced with keyboard navigation and focus management
+// -----------------------------------------------------------------------------
+
+.quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: $spacing-md;
+  padding: $spacing-md;
+
+  &__button {
+    @extend .components-button;
+    display: inline-flex;
+    align-items: center;
+    gap: $spacing-sm;
+    min-width: 200px;
+
+    &:focus-visible {
+      outline: var(--focus-ring-width) solid var(--focus-ring-color);
+      outline-offset: 2px;
+    }
+  }
+
+  @container (width < #{$breakpoint-tablet}) {
+    flex-direction: column;
+    
+    &__button {
+      width: 100%;
+    }
+  }
+
+  @media print {
+    display: none;
+  }
+}
+
+// -----------------------------------------------------------------------------
 // Dark Mode Enhancements
-// =============================================================================
+// -----------------------------------------------------------------------------
 
 @media (prefers-color-scheme: dark) {
   .admin-sidebar {
-    --border-color: rgba(#{$dark-text-primary}, 0.1);
+    border-right-color: rgba($dark-text-primary, 0.1);
   }
 
   .client-table {
-    --border-color: rgba(#{$dark-text-primary}, 0.1);
-  }
-
-  .processing-queue {
-    --border-color: rgba(#{$dark-text-primary}, 0.1);
-  }
-}
-
-// =============================================================================
-// Print Styles
-// =============================================================================
-
-@media print {
-  .admin-sidebar,
-  .processing-queue__actions {
-    display: none;
-  }
-
-  .admin-layout {
-    display: block;
-  }
-
-  .dashboard-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .metrics-card {
-    break-inside: avoid;
-  }
-}
-
-// =============================================================================
-// High Contrast Mode
-// =============================================================================
-
-@media (forced-colors: active) {
-  .admin-sidebar {
-    border-right: 1px solid CanvasText;
-  }
-
-  .client-table {
-    th, td {
-      border: 1px solid CanvasText;
+    th {
+      background-color: rgba($dark-text-primary, 0.05);
     }
   }
 
-  .processing-queue__progress {
-    border: 1px solid CanvasText;
-    
-    &-bar {
-      background-color: Highlight;
+  .processing-queue__status {
+    &--complete {
+      background-color: rgba($success, 0.2);
+    }
+    &--processing {
+      background-color: rgba($info, 0.2);
+    }
+    &--error {
+      background-color: rgba($error, 0.2);
     }
   }
 }

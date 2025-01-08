@@ -26,7 +26,7 @@ const ALLOWED_DOCUMENT_TYPES: Record<string, string[]> = {
   docx: ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
   xlsx: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
   txt: ['text/plain']
-} as const;
+};
 
 /**
  * Maximum allowed length for document filenames
@@ -37,23 +37,23 @@ const MAX_FILENAME_LENGTH = 255;
  * Maximum file size in bytes per document type
  */
 const MAX_FILE_SIZE: Record<DocumentType, number> = {
-  pdf: 52428800,    // 50MB
-  docx: 20971520,   // 20MB
-  xlsx: 15728640,   // 15MB
-  txt: 5242880      // 5MB
-} as const;
+  pdf: 50 * 1024 * 1024,    // 50MB
+  docx: 20 * 1024 * 1024,   // 20MB
+  xlsx: 15 * 1024 * 1024,   // 15MB
+  txt: 5 * 1024 * 1024      // 5MB
+};
 
 /**
  * Zod schema for document metadata validation
  */
 export const documentMetadataSchema = z.object({
-  page_count: z.number().positive(),
+  page_count: z.number().int().positive(),
   file_size_bytes: z.number().positive(),
   mime_type: z.string().refine(
     (mime) => Object.values(ALLOWED_DOCUMENT_TYPES).flat().includes(mime),
     { message: 'Invalid MIME type' }
   ),
-  languages: z.array(z.string()),
+  languages: z.array(z.string()).min(1),
   encoding: z.string(),
   has_text_content: z.boolean(),
   requires_ocr: z.boolean(),
@@ -89,29 +89,14 @@ export const validateDocumentMetadata = (
     // Validate schema compliance
     documentMetadataSchema.parse(metadata);
 
-    // Validate page count
-    if (metadata.page_count <= 0) {
-      errors.push('Page count must be a positive number');
-    }
-
-    // Validate file size
-    const maxSize = MAX_FILE_SIZE[metadata.mime_type as DocumentType];
-    if (metadata.file_size_bytes > maxSize) {
-      errors.push(`File size exceeds maximum allowed size of ${maxSize} bytes`);
+    // Validate file size against limits
+    if (metadata.file_size_bytes > MAX_FILE_SIZE[metadata.type as DocumentType]) {
+      errors.push(`File size exceeds maximum allowed for ${metadata.type}`);
     }
 
     // Validate and sanitize MIME type
-    const isValidMimeType = Object.values(ALLOWED_DOCUMENT_TYPES)
-      .flat()
-      .includes(metadata.mime_type);
-    if (!isValidMimeType) {
-      errors.push('Invalid MIME type');
-    }
-
-    // Perform content security validation
-    const securityResult = validateContentSecurity(metadata, securityConfig);
-    if (!securityResult.success) {
-      errors.push(...securityResult.errors);
+    if (!ALLOWED_DOCUMENT_TYPES[metadata.type as string]?.includes(metadata.mime_type)) {
+      errors.push('Invalid MIME type for document type');
     }
 
     // Sanitize string fields
@@ -120,6 +105,12 @@ export const validateDocumentMetadata = (
       languages: metadata.languages.map(lang => sanitizeString(lang)),
       encoding: sanitizeString(metadata.encoding)
     };
+
+    // Perform content security validation
+    const securityResult = validateContentSecurity(metadata, securityConfig);
+    if (!securityResult.success) {
+      errors.push(...securityResult.errors);
+    }
 
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -132,7 +123,7 @@ export const validateDocumentMetadata = (
   return {
     success: errors.length === 0,
     errors,
-    sanitizedMetadata
+    sanitizedData: errors.length === 0 ? sanitizedMetadata : null
   };
 };
 
@@ -156,38 +147,34 @@ export const validateDocumentUpload = (
       errors.push(...fileValidation);
     }
 
-    // Validate file size against type-specific limits
-    const maxSize = MAX_FILE_SIZE[request.type];
-    if (request.file.size > maxSize) {
-      errors.push(`File size exceeds maximum allowed size of ${maxSize} bytes for ${request.type}`);
-    }
-
-    // Validate and sanitize filename
+    // Validate filename length and sanitize
     const sanitizedFilename = sanitizeString(request.file.name);
     if (sanitizedFilename.length > MAX_FILENAME_LENGTH) {
       errors.push(`Filename exceeds maximum length of ${MAX_FILENAME_LENGTH} characters`);
     }
 
-    // Verify MIME type authenticity
-    const allowedMimeTypes = ALLOWED_DOCUMENT_TYPES[request.type];
-    if (!allowedMimeTypes.includes(request.file.type)) {
-      errors.push(`Invalid MIME type for ${request.type}`);
+    // Verify file size against type-specific limits
+    if (request.file.size > MAX_FILE_SIZE[request.type]) {
+      errors.push(`File size exceeds maximum allowed for ${request.type}`);
     }
 
+    // Validate MIME type
+    if (!ALLOWED_DOCUMENT_TYPES[request.type]?.includes(request.file.type)) {
+      errors.push('Invalid file type');
+    }
+
+    // Sanitize tags
+    const sanitizedTags = request.tags.map(tag => sanitizeString(tag));
+
     // Validate metadata if provided
-    if (request.metadata) {
+    if (Object.keys(request.metadata).length > 0) {
       const metadataValidation = validateDocumentMetadata(
         request.metadata as DocumentMetadata,
-        { maxSizeBytes: maxSize }
+        { maxSizeBytes: MAX_FILE_SIZE[request.type] }
       );
       if (!metadataValidation.success) {
         errors.push(...metadataValidation.errors);
       }
-    }
-
-    // Validate tags
-    if (request.tags) {
-      request.tags = request.tags.map(tag => sanitizeString(tag));
     }
 
   } catch (error) {
@@ -201,19 +188,20 @@ export const validateDocumentUpload = (
   return {
     success: errors.length === 0,
     errors,
-    sanitizedRequest: {
+    sanitizedData: errors.length === 0 ? {
       ...request,
-      filename: sanitizeString(request.file.name)
-    }
+      file: request.file,
+      filename: sanitizeString(request.file.name),
+      tags: request.tags.map(tag => sanitizeString(tag))
+    } : null
   };
 };
 
 /**
- * Interface for validation results with error tracking and sanitized data
+ * Interface for validation results
  */
 interface ValidationResult {
   success: boolean;
   errors: string[];
-  sanitizedMetadata?: DocumentMetadata;
-  sanitizedRequest?: DocumentUploadRequest;
+  sanitizedData: any | null;
 }

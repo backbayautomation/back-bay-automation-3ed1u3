@@ -21,7 +21,7 @@ The system is built on a modern tech stack utilizing React for frontend, Python 
 ├── backend/          # Python backend services
 ├── infrastructure/   # Terraform and K8s configs
 ├── docs/            # Documentation
-└── tests/           # Integration and E2E tests
+└── scripts/         # Development utilities
 ```
 
 ### Getting Started Guide
@@ -76,144 +76,140 @@ Branch naming convention: `^(feature|bugfix|hotfix|docs)/[a-z0-9-]+$`
 2. Implement your changes
 3. Ensure all tests pass
 4. Update documentation
-5. Run local security checks
+5. Format and lint your code
 
-### 3. Code Review Process
-- Create a draft pull request early
-- Address automated check failures
-- Request review when ready
-- Respond to feedback promptly
+### 3. Commit Guidelines
+Follow conventional commits:
+```
+feat: add new search filtering capability
+fix: resolve memory leak in vector search
+docs: update API documentation
+style: format code according to standards
+refactor: optimize document processing pipeline
+test: add integration tests for search API
+chore: update dependencies
+```
 
-### 4. Pull Request Submission
-- Follow the pull request template
-- Ensure all checks pass
-- Link related issues
-- Provide comprehensive description
+### 4. Pull Request Process
+1. Update your branch with main
+2. Run all tests locally
+3. Ensure CI/CD pipeline passes
+4. Request review from maintainers
+5. Address review feedback
 
 ## Code Standards
 
 ### Backend Standards
-- Code formatting:
-```bash
-black . --line-length 88
-isort . --profile black
-```
-
-- Linting:
-```bash
-flake8 --config=setup.cfg
-mypy . --strict
-```
-
-- Testing:
-```bash
-pytest --cov=. --cov-report=xml --cov-fail-under=85
-```
+- **Code Formatting**:
+  ```bash
+  black . --line-length 88
+  isort . --profile black
+  ```
+- **Linting**:
+  ```bash
+  flake8 --max-line-length 88
+  mypy . --strict
+  ```
+- **Testing**:
+  ```bash
+  pytest --cov=. --cov-report=xml --cov-fail-under=85
+  ```
 
 ### Frontend Standards
-- Code formatting:
-```bash
-npm run format
-npm run lint
-```
-
-- TypeScript:
-```json
-{
-  "compilerOptions": {
-    "strict": true,
-    "noImplicitAny": true
-  }
-}
-```
-
-- Testing:
-```bash
-npm run test -- --coverage
-```
+- **Code Formatting**:
+  ```bash
+  npm run format
+  npm run lint
+  ```
+- **TypeScript**:
+  - Strict mode enabled
+  - Explicit return types
+  - No any types
+- **Testing**:
+  ```bash
+  npm run test -- --coverage
+  ```
 
 ## Testing Requirements
 
 ### Unit Testing
 - Minimum 85% code coverage
-- Test all edge cases
+- Test isolated components
 - Mock external dependencies
-- Follow AAA pattern (Arrange-Act-Assert)
+- Clear test descriptions
 
 ### Integration Testing
-- Test all API endpoints
-- Verify database operations
-- Check authentication flows
-- Validate business logic
+- API endpoint testing
+- Service integration testing
+- Database interaction testing
+- Authentication flow testing
 
 ### E2E Testing
-- Cover critical user journeys
-- Test cross-service interactions
-- Verify UI workflows
+- Critical user flows
+- Cross-browser compatibility
 - Performance benchmarks
+- Error scenarios
 
 ## Security Guidelines
 
 ### Code Security
-- Follow OWASP top 10 guidelines
-- Use approved cryptographic methods
-- Implement proper input validation
-- Avoid hardcoded secrets
+- Follow OWASP Top 10 guidelines
+- No hardcoded secrets
+- Input validation
+- Output encoding
+- Secure session handling
 
 ### Dependency Management
-- Regular dependency updates
-- Security vulnerability scanning
-- License compliance checks
-- Version pinning
-
-### Security Testing
-- SAST (Static Application Security Testing)
-- DAST (Dynamic Application Security Testing)
-- Dependency auditing
-- Secret scanning
+- Daily dependency scanning
+- Use fixed versions
+- Regular updates
+- Security audit compliance
 
 ### Vulnerability Reporting
 1. **Do not** create public issues for security vulnerabilities
-2. Follow responsible disclosure practices
-3. Report via security@example.com
-4. Provide detailed reproduction steps
+2. Email security@company.com
+3. Include detailed reproduction steps
+4. Wait for acknowledgment
+
+### Data Handling
+- Encrypt sensitive data
+- Use secure communication
+- Implement access controls
+- Follow data retention policies
 
 ## Validation Rules
 
-### Commit Messages
-Format: `^(feat|fix|docs|style|refactor|test|chore): .+`
+All contributions must pass the following checks:
 
-Examples:
-- `feat: add user authentication flow`
-- `fix: resolve memory leak in vector search`
-- `docs: update API documentation`
+### 1. Code Quality
+- [ ] Passes all linters
+- [ ] Meets code coverage requirements
+- [ ] Follows style guidelines
+- [ ] Includes documentation
 
-### Code Coverage
-- Minimum threshold: 85%
-- Includes unit and integration tests
-- Excludes test files
-- Coverage reports in CI/CD
+### 2. Security
+- [ ] SAST scan passed
+- [ ] DAST scan passed
+- [ ] Dependency audit clear
+- [ ] Secret scanning passed
 
-### Security Compliance
-All contributions must pass:
-- SAST scanning
-- DAST scanning
-- Dependency audit
-- Secret scanning
-- Container scanning
+### 3. Testing
+- [ ] Unit tests pass
+- [ ] Integration tests pass
+- [ ] E2E tests pass
+- [ ] Performance benchmarks met
 
-## Additional Resources
-
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-- [Pull Request Template](.github/pull_request_template.md)
-- [Bug Report Template](.github/ISSUE_TEMPLATE/bug_report.md)
-- [Project Documentation](docs/README.md)
+### 4. Documentation
+- [ ] API documentation updated
+- [ ] README updated if needed
+- [ ] Code comments added
+- [ ] Change log updated
 
 ## Questions and Support
 
-- Create a discussion for questions
-- Join our Slack channel
-- Check existing issues and discussions
-- Review documentation first
+- Create an issue for feature requests
+- Join our Slack channel for discussions
+- Check existing documentation
+- Contact maintainers for guidance
 
 Thank you for contributing to the AI-powered Product Catalog Search System!

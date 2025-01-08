@@ -136,21 +136,8 @@ export function isUserProfile(profile: unknown): profile is UserProfile {
 }
 
 /**
- * Helper function to create a branded UserId
+ * Type guard for validating login credentials
  */
-export function createUserId(id: string): UserId {
-    if (!z.string().uuid().safeParse(id).success) {
-        throw new Error('Invalid UserId format');
-    }
-    return id as UserId;
-}
-
-/**
- * Helper function to create a branded EmailAddress
- */
-export function createEmailAddress(email: string): EmailAddress {
-    if (!z.string().email().safeParse(email).success) {
-        throw new Error('Invalid email address format');
-    }
-    return email as EmailAddress;
+export function isLoginCredentials(credentials: unknown): credentials is LoginCredentials {
+    return loginCredentialsSchema.safeParse(credentials).success;
 }

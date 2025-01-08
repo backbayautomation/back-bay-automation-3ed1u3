@@ -16,10 +16,9 @@ A modern, scalable frontend application built with:
 Key features:
 - Intuitive chat interface for product queries
 - Document processing visualization
-- Real-time processing status updates
 - Advanced analytics dashboard
 - Client portal customization
-- Comprehensive audit logging
+- Enterprise-grade security
 
 ## Prerequisites
 
@@ -44,13 +43,6 @@ cp .env.development.example .env.development
 cp .env.production.example .env.production
 ```
 
-Required environment variables:
-- VITE_API_URL: Backend API endpoint URL
-- VITE_WS_URL: WebSocket server URL
-- VITE_APP_ENV: Application environment
-- VITE_AUTH_DOMAIN: Azure AD B2C domain
-- VITE_AUTH_CLIENT_ID: Azure AD B2C client ID
-
 3. Install dependencies:
 ```bash
 npm install
@@ -61,157 +53,150 @@ npm install
 npm run dev
 ```
 
+## Project Structure
+
+```
+src/
+├── assets/          # Static assets and global styles
+├── components/      # Shared UI components
+├── features/        # Feature-based modules
+│   ├── auth/       # Authentication logic
+│   ├── chat/       # Chat interface
+│   ├── documents/  # Document management
+│   └── analytics/  # Analytics dashboard
+├── hooks/          # Custom React hooks
+├── services/       # API integration
+├── store/          # Redux state management
+├── types/          # TypeScript definitions
+└── utils/          # Utility functions
+```
+
 ## Development
 
 ### Available Scripts
 
-- `npm run dev` - Start Vite development server
+- `npm run dev` - Start development server
 - `npm run build` - Create production build
 - `npm run preview` - Preview production build
-- `npm run test` - Run Jest test suite
-- `npm run test:coverage` - Generate test coverage report
+- `npm run test` - Run test suite
+- `npm run test:coverage` - Run tests with coverage
 - `npm run lint` - Run ESLint
-- `npm run lint:fix` - Fix ESLint issues
 - `npm run type-check` - Run TypeScript compiler
 - `npm run format` - Format code with Prettier
-
-### Project Structure
-
-```
-src/
-├── assets/           # Static assets
-├── components/       # Shared components
-├── features/         # Feature-based modules
-├── hooks/           # Custom React hooks
-├── layouts/         # Page layouts
-├── lib/             # Utility functions
-├── routes/          # Route definitions
-├── services/        # API services
-├── store/           # Redux store
-├── styles/          # Global styles
-└── types/           # TypeScript definitions
-```
 
 ### Code Style
 
 - ESLint configuration with TypeScript and React rules
 - Prettier for consistent code formatting
-- Import sorting with `@trivago/prettier-plugin-sort-imports`
-- Strict TypeScript configuration
-- React Testing Library best practices
+- Git hooks with husky for pre-commit checks
+- EditorConfig for consistent IDE settings
 
-### Testing Guidelines
+### Testing
 
-- Unit tests required for all components
-- Integration tests for feature workflows
-- E2E tests for critical user journeys
-- Minimum 85% test coverage
-- Snapshot testing for UI components
+- Jest for unit testing
+- React Testing Library for component testing
+- Cypress for E2E testing
+- Coverage threshold: 85%
+- Accessibility testing with axe-core
 - Performance testing with Lighthouse
 
 ## Docker Development
 
 ### Development Environment
 
-Start the development container:
 ```bash
+# Build and start development container
 docker-compose up --build
-```
 
-The development server will be available at `http://localhost:3000` with hot reload enabled.
+# Stop containers
+docker-compose down
+```
 
 ### Production Build
 
-Build production container:
 ```bash
+# Build production image
 docker build -t catalog-search-web:prod --target production .
-```
 
-Test production build locally:
-```bash
+# Test production build locally
 docker-compose -f docker-compose.prod.yml up
 ```
 
+## Environment Variables
+
+Required environment variables:
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| VITE_API_URL | Backend API endpoint URL | Yes |
+| VITE_WS_URL | WebSocket server URL | Yes |
+| VITE_APP_ENV | Application environment | Yes |
+| VITE_AUTH_DOMAIN | Azure AD B2C domain | Yes |
+| VITE_AUTH_CLIENT_ID | Azure AD B2C client ID | Yes |
+
 ## Deployment
 
-### Build Pipeline
+### Azure DevOps Pipeline
 
-1. Code quality checks:
-   - ESLint validation
-   - TypeScript compilation
-   - Unit test execution
-   - Code coverage verification
+1. Build stage:
+   - Install dependencies
+   - Run tests
+   - Create production build
+   - Build Docker image
 
-2. Build process:
-   - Environment-specific builds
-   - Asset optimization
-   - Bundle analysis
-   - Docker image creation
-
-3. Testing:
+2. Test stage:
+   - Unit tests
    - Integration tests
    - E2E tests
-   - Performance benchmarks
-   - Accessibility validation
+   - Security scanning
 
-### Deployment Pipeline
-
-1. Staging deployment:
-   - Azure Container Registry push
-   - Blue-green deployment
-   - Smoke tests
-   - Performance validation
-
-2. Production deployment:
-   - Progressive rollout
+3. Deployment stage:
+   - Push to Azure Container Registry
+   - Deploy to AKS cluster
    - Health checks
-   - Metrics verification
-   - Automated rollback capability
+   - Blue-green deployment
 
-### Monitoring
+### Deployment Strategy
 
-- Azure Application Insights integration
-- Real-time error tracking
-- Performance monitoring
-- User behavior analytics
-- Custom business metrics
+- Blue-green deployment for zero-downtime updates
+- Automated rollback on failure
+- Health check monitoring
+- Performance metrics collection
 
 ## Performance Optimization
 
 - Code splitting with React.lazy
 - Image optimization with next-gen formats
-- Efficient bundle size management
-- Browser caching strategy
-- Service Worker implementation
-- Web Vitals monitoring
+- Caching strategies
+- Bundle size optimization
+- Tree shaking
+- Performance monitoring
 
 ## Accessibility
 
 - WCAG 2.1 Level AA compliance
 - Semantic HTML structure
-- ARIA attributes implementation
-- Keyboard navigation support
-- Screen reader optimization
-- Color contrast verification
+- ARIA attributes
+- Keyboard navigation
+- Screen reader support
+- Color contrast compliance
 
-## Security
+## Browser Support
 
-- Azure AD B2C authentication
-- JWT token management
-- XSS prevention
-- CSRF protection
-- Content Security Policy
-- Secure HTTP headers
+- Chrome >= 90
+- Firefox >= 88
+- Safari >= 14
+- Edge >= 90
+- iOS Safari >= 14
+- Android Chrome >= 90
 
 ## Contributing
 
-1. Create feature branch from `develop`
+1. Create feature branch from development
 2. Implement changes with tests
-3. Submit pull request with:
-   - Clear description
-   - Test coverage report
-   - Performance impact analysis
-   - Breaking changes documentation
+3. Submit pull request
+4. Code review process
+5. Merge to development
 
 ## License
 
@@ -219,6 +204,4 @@ Proprietary - All rights reserved
 
 ## Support
 
-Contact the development team for support:
-- Email: support@example.com
-- Internal Slack: #catalog-search-support
+Contact system administrators for support and access management.

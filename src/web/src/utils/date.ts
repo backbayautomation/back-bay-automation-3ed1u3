@@ -1,28 +1,44 @@
 /**
  * Date utility functions for consistent date handling across the frontend application.
  * Provides formatting, manipulation, and validation with timezone support.
+ * @module utils/date
  * @version 1.0.0
  */
 
 import { format, formatDistance, parseISO, isValid, differenceInDays, isBefore, isAfter } from 'date-fns'; // v2.30.0
 import type { Timestamp } from '../types/common';
 
-// Cache for memoized chart date formatting
+// Memoization cache for chart date formatting
 const chartDateCache = new Map<string, string>();
+const CACHE_MAX_SIZE = 1000;
+
+/**
+ * Default date format for general display
+ */
+const DEFAULT_DATE_FORMAT = 'yyyy-MM-dd HH:mm:ss';
+
+/**
+ * Chart-specific date format
+ */
+const CHART_DATE_FORMAT = 'MMM dd, yyyy';
 
 /**
  * Formats a date string or Date object into a standardized display format
- * @param date - Input date to format
- * @param formatString - Format string pattern (e.g., 'yyyy-MM-dd')
+ * @param date - Date to format
+ * @param formatString - Optional format string (defaults to DEFAULT_DATE_FORMAT)
  * @returns Formatted date string or empty string if invalid
  */
-export const formatDate = (date: Date | string | null, formatString: string): string => {
+export const formatDate = (
+  date: Date | string | null,
+  formatString: string = DEFAULT_DATE_FORMAT
+): string => {
   try {
     if (!date) return '';
 
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
     
     if (!isValid(dateObj)) {
+      console.warn('Invalid date provided to formatDate:', date);
       return '';
     }
 
@@ -35,7 +51,7 @@ export const formatDate = (date: Date | string | null, formatString: string): st
 
 /**
  * Formats a date relative to current time (e.g., "2 days ago")
- * @param date - Input date to format
+ * @param date - Date to format
  * @returns Relative time string or empty string if invalid
  */
 export const formatRelativeTime = (date: Date | string | null): string => {
@@ -45,6 +61,7 @@ export const formatRelativeTime = (date: Date | string | null): string => {
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
     
     if (!isValid(dateObj)) {
+      console.warn('Invalid date provided to formatRelativeTime:', date);
       return '';
     }
 
@@ -57,7 +74,7 @@ export const formatRelativeTime = (date: Date | string | null): string => {
 
 /**
  * Checks if one date is before another with timezone consideration
- * @param date - Date to compare
+ * @param date - Date to check
  * @param compareDate - Date to compare against
  * @returns True if date is before compareDate, false if invalid input
  */
@@ -72,6 +89,7 @@ export const isDateBefore = (
     const compareDateObj = typeof compareDate === 'string' ? parseISO(compareDate) : compareDate;
 
     if (!isValid(dateObj) || !isValid(compareDateObj)) {
+      console.warn('Invalid date(s) provided to isDateBefore:', { date, compareDate });
       return false;
     }
 
@@ -84,7 +102,7 @@ export const isDateBefore = (
 
 /**
  * Checks if one date is after another with timezone consideration
- * @param date - Date to compare
+ * @param date - Date to check
  * @param compareDate - Date to compare against
  * @returns True if date is after compareDate, false if invalid input
  */
@@ -99,6 +117,7 @@ export const isDateAfter = (
     const compareDateObj = typeof compareDate === 'string' ? parseISO(compareDate) : compareDate;
 
     if (!isValid(dateObj) || !isValid(compareDateObj)) {
+      console.warn('Invalid date(s) provided to isDateAfter:', { date, compareDate });
       return false;
     }
 
@@ -111,8 +130,8 @@ export const isDateAfter = (
 
 /**
  * Calculates the absolute number of days between two dates
- * @param startDate - Start date for calculation
- * @param endDate - End date for calculation
+ * @param startDate - Start date
+ * @param endDate - End date
  * @returns Absolute number of days between dates, 0 if invalid input
  */
 export const getDaysDifference = (
@@ -126,10 +145,11 @@ export const getDaysDifference = (
     const endDateObj = typeof endDate === 'string' ? parseISO(endDate) : endDate;
 
     if (!isValid(startDateObj) || !isValid(endDateObj)) {
+      console.warn('Invalid date(s) provided to getDaysDifference:', { startDate, endDate });
       return 0;
     }
 
-    return Math.abs(differenceInDays(startDateObj, endDateObj));
+    return Math.abs(differenceInDays(endDateObj, startDateObj));
   } catch (error) {
     console.error('Error calculating days difference:', error);
     return 0;
@@ -137,36 +157,37 @@ export const getDaysDifference = (
 };
 
 /**
- * Formats a date specifically for chart axis display with memoization
- * @param date - Input date to format
+ * Formats a date specifically for chart axis display with performance optimization
+ * @param date - Date to format
  * @returns Formatted date string for chart display or empty string if invalid
  */
 export const formatChartDate = (date: Date | string | null): string => {
   try {
     if (!date) return '';
 
+    const dateString = typeof date === 'string' ? date : date.toISOString();
+    
+    // Check cache first
+    const cached = chartDateCache.get(dateString);
+    if (cached) return cached;
+
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
     
     if (!isValid(dateObj)) {
+      console.warn('Invalid date provided to formatChartDate:', date);
       return '';
     }
 
-    const dateKey = dateObj.toISOString();
-    
-    if (chartDateCache.has(dateKey)) {
-      return chartDateCache.get(dateKey)!;
-    }
+    const formatted = format(dateObj, CHART_DATE_FORMAT);
 
-    const formattedDate = format(dateObj, 'MMM d, yyyy');
-    chartDateCache.set(dateKey, formattedDate);
-
-    // Prevent cache from growing too large
-    if (chartDateCache.size > 1000) {
+    // Implement LRU-like cache management
+    if (chartDateCache.size >= CACHE_MAX_SIZE) {
       const firstKey = chartDateCache.keys().next().value;
       chartDateCache.delete(firstKey);
     }
+    chartDateCache.set(dateString, formatted);
 
-    return formattedDate;
+    return formatted;
   } catch (error) {
     console.error('Error formatting chart date:', error);
     return '';

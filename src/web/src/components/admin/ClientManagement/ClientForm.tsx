@@ -1,25 +1,26 @@
 import React, { useCallback, useEffect } from 'react'; // v18.2.0
 import { useForm } from 'react-hook-form'; // v7.45.0
 import { zodResolver } from '@hookform/resolvers/zod'; // v3.3.0
-import { z } from 'zod'; // v3.22.0
 import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
+import { z } from 'zod'; // v3.22.0
 import throttle from 'lodash/throttle'; // v4.1.1
-import { FormField } from '../../common/Forms/FormField';
+import { FormField, FormFieldProps } from '../../common/Forms/FormField';
 import { useAuth } from '../../../hooks/useAuth';
 import { UserRole } from '../../../types/auth';
-import { audit } from '@company/audit-log'; // v1.0.0
+import { auditLog } from '@company/audit-log'; // v1.0.0
 import { validateCsrfToken } from '@company/security'; // v1.0.0
 
-// Client form validation schema with strict typing
+// Client form validation schema with comprehensive validation rules
 const clientFormSchema = z.object({
   name: z.string()
     .min(2, 'Name must be at least 2 characters')
-    .max(100, 'Name cannot exceed 100 characters'),
+    .max(100, 'Name cannot exceed 100 characters')
+    .regex(/^[a-zA-Z0-9\s\-_]+$/, 'Name can only contain letters, numbers, spaces, hyphens, and underscores'),
   industry: z.string()
     .min(1, 'Industry is required'),
   maxUsers: z.number()
     .int()
-    .min(1, 'Must allow at least 1 user')
+    .min(1, 'Must have at least 1 user')
     .max(1000, 'Cannot exceed 1000 users'),
   settings: z.object({
     theme: z.enum(['light', 'dark', 'system']),
@@ -42,7 +43,7 @@ interface ClientFormProps {
   csrfToken: string;
 }
 
-// Error fallback component with accessibility
+// Error fallback component for error boundary
 const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> = ({
   error,
   resetErrorBoundary
@@ -67,7 +68,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({
   const {
     register,
     handleSubmit,
-    formState: { errors, isDirty },
+    formState: { errors },
     reset,
     setError
   } = useForm<ClientFormData>({
@@ -75,7 +76,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({
     defaultValues: initialData || {
       name: '',
       industry: '',
-      maxUsers: 10,
+      maxUsers: 1,
       settings: {
         theme: 'system',
         language: 'en',
@@ -94,7 +95,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({
     }
   }, [initialData, reset]);
 
-  // Throttled form submission with security checks
+  // Throttled form submission handler with security checks
   const onSubmit = useCallback(
     throttle(async (data: ClientFormData) => {
       try {
@@ -105,7 +106,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({
 
         // Check user permissions
         if (!user || user.role !== UserRole.SYSTEM_ADMIN) {
-          throw new Error('Insufficient permissions');
+          throw new Error('Unauthorized access');
         }
 
         // Sanitize input data
@@ -115,7 +116,7 @@ export const ClientForm: React.FC<ClientFormProps> = ({
           industry: data.industry.trim()
         };
 
-        // Submit data to API
+        // Make API call
         const response = await fetch('/api/clients', {
           method: initialData ? 'PUT' : 'POST',
           headers: {
@@ -130,10 +131,10 @@ export const ClientForm: React.FC<ClientFormProps> = ({
         }
 
         // Log audit trail
-        await audit.log({
+        await auditLog({
           action: initialData ? 'UPDATE_CLIENT' : 'CREATE_CLIENT',
-          actor: user.id,
-          target: 'client',
+          userId: user.id,
+          orgId: user.orgId,
           details: sanitizedData
         });
 
@@ -144,16 +145,15 @@ export const ClientForm: React.FC<ClientFormProps> = ({
           message: error instanceof Error ? error.message : 'An error occurred'
         });
       }
-    }, 1000),
+    }, 1000, { leading: true, trailing: false }),
     [csrfToken, initialData, onSuccess, setError, user]
   );
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <form
+      <form 
         onSubmit={handleSubmit(onSubmit)}
         className="client-form"
-        noValidate
         aria-label="Client management form"
       >
         <FormField
@@ -161,8 +161,8 @@ export const ClientForm: React.FC<ClientFormProps> = ({
           label="Client Name"
           error={errors.name?.message}
           required
-          maxLength={100}
           disabled={isSubmitting}
+          maxLength={100}
         />
 
         <FormField
@@ -212,38 +212,50 @@ export const ClientForm: React.FC<ClientFormProps> = ({
           />
 
           <div className="feature-toggles">
-            <FormField
-              {...register('settings.features.chat')}
-              label="Enable Chat"
-              type="checkbox"
-              error={errors.settings?.features?.chat?.message}
-              disabled={isSubmitting}
-            />
+            <label>
+              <input
+                type="checkbox"
+                {...register('settings.features.chat')}
+                disabled={isSubmitting}
+              />
+              Enable Chat
+            </label>
 
-            <FormField
-              {...register('settings.features.export')}
-              label="Enable Export"
-              type="checkbox"
-              error={errors.settings?.features?.export?.message}
-              disabled={isSubmitting}
-            />
+            <label>
+              <input
+                type="checkbox"
+                {...register('settings.features.export')}
+                disabled={isSubmitting}
+              />
+              Enable Export
+            </label>
           </div>
         </fieldset>
+
+        {errors.root && (
+          <div 
+            role="alert" 
+            className="error-message"
+            aria-live="polite"
+          >
+            {errors.root.message}
+          </div>
+        )}
 
         <div className="form-actions">
           <button
             type="button"
             onClick={onCancel}
             disabled={isSubmitting}
-            className="btn-secondary"
+            className="cancel-button"
           >
             Cancel
           </button>
-          
           <button
             type="submit"
-            disabled={isSubmitting || !isDirty}
-            className="btn-primary"
+            disabled={isSubmitting}
+            className="submit-button"
+            aria-busy={isSubmitting}
           >
             {isSubmitting ? 'Saving...' : initialData ? 'Update Client' : 'Create Client'}
           </button>

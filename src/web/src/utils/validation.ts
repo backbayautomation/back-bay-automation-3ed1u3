@@ -6,21 +6,15 @@
  */
 
 import { z } from 'zod'; // v3.22.0
-import { 
-  VALIDATION_CONSTANTS, 
-} from '../config/constants';
+import { VALIDATION_CONSTANTS } from '../config/constants';
 import type { ValidationError } from '../types/common';
 
-// Regular expressions for validation
+// Regular expressions for validation patterns
 const EMAIL_REGEX = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
 const SPECIAL_CHARS_REGEX = /[!@#$%^&*(),.?":{}|<>]/;
-const COMMON_PASSWORD_PATTERNS = [
-  /^123/,
-  /password/i,
-  /qwerty/i
-];
+const COMMON_PASSWORD_PATTERNS = [/^123/, /password/i, /qwerty/i];
 
-// Zod schemas for validation
+// Zod schemas for type validation
 const emailSchema = z.string().email().min(1);
 const passwordSchema = z.string().min(VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH);
 const fileSchema = z.instanceof(File);
@@ -109,14 +103,11 @@ export const validatePassword = (password: string): ValidationError[] => {
   }
 
   // Check for common patterns
-  for (const pattern of COMMON_PASSWORD_PATTERNS) {
-    if (pattern.test(password)) {
-      errors.push({
-        field: 'password',
-        message: 'Password contains a common pattern that is easily guessable'
-      });
-      break;
-    }
+  if (COMMON_PASSWORD_PATTERNS.some(pattern => pattern.test(password))) {
+    errors.push({
+      field: 'password',
+      message: 'Password contains common patterns that are easily guessable'
+    });
   }
 
   return errors;
@@ -143,7 +134,7 @@ export const validateFileUpload = (file: File): ValidationError[] => {
   if (file.size > VALIDATION_CONSTANTS.MAX_FILE_SIZE) {
     errors.push({
       field: 'file',
-      message: `File size cannot exceed ${VALIDATION_CONSTANTS.MAX_FILE_SIZE / 1024 / 1024}MB`
+      message: `File size cannot exceed ${VALIDATION_CONSTANTS.MAX_FILE_SIZE / (1024 * 1024)}MB`
     });
   }
 
@@ -155,7 +146,7 @@ export const validateFileUpload = (file: File): ValidationError[] => {
     });
   }
 
-  // Additional security check for content type
+  // Verify file content type
   const validMimeTypes = [
     'application/pdf',
     'application/msword',
@@ -193,23 +184,21 @@ export const validateForm = (formData: Record<string, unknown>): ValidationError
   }
 
   // Validate required fields
-  Object.entries(formData).forEach(([key, value]) => {
+  Object.entries(formData).forEach(([field, value]) => {
     if (value === undefined || value === null || value === '') {
       errors.push({
-        field: key,
-        message: `${key} is required`
+        field,
+        message: `${field} is required`
       });
     }
   });
 
   // Validate field dependencies and constraints
-  if (formData.password && formData.confirmPassword) {
-    if (formData.password !== formData.confirmPassword) {
-      errors.push({
-        field: 'confirmPassword',
-        message: 'Passwords do not match'
-      });
-    }
+  if (formData.confirmPassword && formData.password !== formData.confirmPassword) {
+    errors.push({
+      field: 'confirmPassword',
+      message: 'Passwords do not match'
+    });
   }
 
   return errors;
@@ -232,7 +221,7 @@ export const sanitizeString = (input: string): string => {
   sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
 
   // Remove SQL injection patterns
-  sanitized = sanitized.replace(/(\b(select|insert|update|delete|drop|union|exec|eval)\b)/gi, '');
+  sanitized = sanitized.replace(/(\b(select|insert|update|delete|drop|union|exec|declare)\b)/gi, '');
 
   // Escape special characters
   sanitized = sanitized

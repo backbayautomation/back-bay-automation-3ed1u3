@@ -7,27 +7,27 @@ import { MockWebSocket } from 'mock-socket';
 import { ErrorBoundary } from 'react-error-boundary';
 
 import Dashboard from '../../../../src/pages/admin/Dashboard';
-import { analyticsService } from '../../../services/analytics';
-import { WebSocketClient } from '../../../api/websocket';
+import AnalyticsDashboard from '../../../../src/components/admin/AnalyticsDashboard/AnalyticsDashboard';
+import ProcessingQueue from '../../../../src/components/admin/DocumentProcessing/ProcessingQueue';
 
-// Mock dependencies
-vi.mock('../../../../src/components/admin/AnalyticsDashboard/AnalyticsDashboard', () => ({
-  default: vi.fn().mockImplementation(({ onExport }) => (
-    <div data-testid="analytics-dashboard">
-      Analytics Dashboard
-      <button onClick={() => onExport('csv')}>Export</button>
-    </div>
-  ))
+// Mock services and hooks
+vi.mock('../../../../src/hooks/useAuth', () => ({
+  useAuth: () => ({
+    isAuthenticated: true,
+    user: {
+      id: 'test-user',
+      clientId: 'test-client',
+      role: 'ADMIN'
+    }
+  })
 }));
 
-vi.mock('../../../../src/components/admin/DocumentProcessing/ProcessingQueue', () => ({
-  default: vi.fn().mockImplementation(({ onProcessingComplete, onError }) => (
-    <div data-testid="processing-queue">
-      Processing Queue
-      <button onClick={() => onProcessingComplete({ id: '123' })}>Complete</button>
-      <button onClick={() => onError(new Error('Test error'))}>Trigger Error</button>
-    </div>
-  ))
+vi.mock('../../../../src/hooks/useWebSocket', () => ({
+  useWebSocket: () => ({
+    isConnected: true,
+    addListener: vi.fn(),
+    removeListener: vi.fn()
+  })
 }));
 
 // Mock Application Insights
@@ -35,199 +35,192 @@ vi.mock('@microsoft/applicationinsights-web', () => ({
   ApplicationInsights: vi.fn().mockImplementation(() => ({
     loadAppInsights: vi.fn(),
     trackPageView: vi.fn(),
-    trackEvent: vi.fn(),
     trackException: vi.fn()
   }))
 }));
 
-// Mock WebSocket service
-const mockWebSocket = {
-  connect: vi.fn(),
-  subscribe: vi.fn(),
-  unsubscribe: vi.fn()
-};
-
-// Mock real-time updates data
-const mockRealTimeUpdates = {
-  activeClients: 46,
-  processingQueue: 11,
-  systemHealth: 99.95,
-  lastUpdate: '2024-01-20T10:30:00Z'
-};
-
-// Mock performance metrics
-const mockPerformanceMetrics = {
-  responseTime: 150,
-  uptime: 99.93,
-  errorRate: 0.01,
-  throughput: 1000
-};
-
-describe('Dashboard', () => {
-  let mockWsServer: MockWebSocket;
-
+describe('Dashboard Component', () => {
+  // Mock WebSocket server
+  let mockServer: MockWebSocket;
+  
   beforeEach(() => {
-    // Reset all mocks
+    mockServer = new MockWebSocket('ws://localhost:8080');
     vi.clearAllMocks();
-    
-    // Initialize mock WebSocket server
-    mockWsServer = new MockWebSocket('ws://localhost:8080');
-    
-    // Mock WebSocket connection
-    global.WebSocket = vi.fn().mockImplementation(() => mockWsServer);
-    
-    // Mock auth context
-    vi.mock('../../../../src/hooks/useAuth', () => ({
-      useAuth: () => ({
-        isAuthenticated: true,
-        user: { id: 'test-user', name: 'Test User' }
-      })
-    }));
   });
 
   afterEach(() => {
-    mockWsServer.close();
+    mockServer.close();
   });
 
-  it('renders dashboard components correctly', async () => {
-    render(
-      <Provider store={{}}>
-        <Dashboard />
+  const renderDashboard = () => {
+    return render(
+      <Provider store={mockStore}>
+        <ErrorBoundary fallback={<div>Error</div>}>
+          <Dashboard refreshInterval={30000} enableRealtime={true} />
+        </ErrorBoundary>
       </Provider>
     );
+  };
 
+  it('renders dashboard with all required components', async () => {
+    renderDashboard();
+
+    // Verify main components are rendered
+    expect(screen.getByText('Admin Dashboard')).toBeInTheDocument();
     expect(screen.getByTestId('analytics-dashboard')).toBeInTheDocument();
     expect(screen.getByTestId('processing-queue')).toBeInTheDocument();
   });
 
-  it('handles real-time updates via WebSocket', async () => {
-    render(
-      <Provider store={{}}>
-        <Dashboard enableRealtime={true} />
-      </Provider>
-    );
+  it('handles real-time metric updates correctly', async () => {
+    renderDashboard();
+
+    const mockMetricUpdate = {
+      activeClients: 46,
+      processingQueue: 11,
+      systemHealth: 99.95,
+      lastUpdate: '2024-01-20T10:30:00Z'
+    };
 
     // Simulate WebSocket message
-    mockWsServer.send(JSON.stringify({
-      type: 'dashboard.update',
-      data: mockRealTimeUpdates
+    mockServer.send(JSON.stringify({
+      event: 'metrics.update',
+      data: mockMetricUpdate
     }));
 
     await waitFor(() => {
-      expect(screen.getByText(`Active Clients: ${mockRealTimeUpdates.activeClients}`)).toBeInTheDocument();
-      expect(screen.getByText(`Queue Size: ${mockRealTimeUpdates.processingQueue}`)).toBeInTheDocument();
+      expect(screen.getByText('46')).toBeInTheDocument(); // Active clients
+      expect(screen.getByText('11')).toBeInTheDocument(); // Processing queue
     });
   });
 
   it('maintains accessibility compliance', async () => {
-    const { container } = render(
-      <Provider store={{}}>
-        <Dashboard />
-      </Provider>
-    );
+    const { container } = renderDashboard();
 
+    // Run accessibility audit
     const results = await axe(container);
-    expect(results).toHaveNoViolations();
+    expect(results.violations).toHaveLength(0);
+
+    // Verify ARIA attributes
+    expect(screen.getByRole('main')).toHaveAttribute('aria-label', 'Admin Dashboard');
+    expect(screen.getByRole('complementary')).toHaveAttribute('aria-label', 'System Metrics');
   });
 
-  it('handles document processing events correctly', async () => {
-    const onProcessingComplete = vi.fn();
+  it('handles error states gracefully', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    
+    renderDashboard();
 
-    render(
-      <Provider store={{}}>
-        <Dashboard onProcessingComplete={onProcessingComplete} />
-      </Provider>
-    );
+    // Simulate error in child component
+    const error = new Error('Test error');
+    const mockErrorUpdate = {
+      type: 'error',
+      message: error.message
+    };
 
-    const completeButton = screen.getByText('Complete');
-    fireEvent.click(completeButton);
-
-    expect(onProcessingComplete).toHaveBeenCalledWith({ id: '123' });
-  });
-
-  it('tracks analytics events correctly', async () => {
-    const { container } = render(
-      <Provider store={{}}>
-        <Dashboard />
-      </Provider>
-    );
-
-    const exportButton = screen.getByText('Export');
-    fireEvent.click(exportButton);
+    mockServer.send(JSON.stringify({
+      event: 'system.error',
+      data: mockErrorUpdate
+    }));
 
     await waitFor(() => {
-      expect(ApplicationInsights.prototype.trackEvent).toHaveBeenCalledWith({
-        name: 'DashboardExport',
-        properties: expect.any(Object)
-      });
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByText('Test error')).toBeInTheDocument();
+    });
+
+    consoleError.mockRestore();
+  });
+
+  it('tracks performance metrics correctly', async () => {
+    const mockPerformanceMetrics = {
+      responseTime: 150,
+      uptime: 99.93,
+      errorRate: 0.01,
+      throughput: 1000
+    };
+
+    renderDashboard();
+
+    // Verify performance monitoring
+    await waitFor(() => {
+      const performanceSection = screen.getByTestId('performance-metrics');
+      expect(within(performanceSection).getByText('99.93%')).toBeInTheDocument();
+      expect(within(performanceSection).getByText('150ms')).toBeInTheDocument();
     });
   });
 
-  it('handles errors gracefully', async () => {
-    render(
-      <Provider store={{}}>
-        <ErrorBoundary fallback={<div>Error Boundary</div>}>
-          <Dashboard />
-        </ErrorBoundary>
-      </Provider>
-    );
+  it('updates document processing queue in real-time', async () => {
+    renderDashboard();
 
-    const errorButton = screen.getByText('Trigger Error');
-    fireEvent.click(errorButton);
+    const mockQueueUpdate = {
+      documentId: 'doc-123',
+      status: 'processing',
+      progress: 75
+    };
+
+    mockServer.send(JSON.stringify({
+      event: 'document.processing',
+      data: mockQueueUpdate
+    }));
 
     await waitFor(() => {
-      expect(ApplicationInsights.prototype.trackException).toHaveBeenCalled();
-      expect(screen.getByText('Error Boundary')).toBeInTheDocument();
+      const progressBar = screen.getByRole('progressbar');
+      expect(progressBar).toHaveAttribute('aria-valuenow', '75');
     });
   });
 
-  it('updates performance metrics periodically', async () => {
+  it('handles WebSocket disconnection gracefully', async () => {
+    vi.mock('../../../../src/hooks/useWebSocket', () => ({
+      useWebSocket: () => ({
+        isConnected: false,
+        addListener: vi.fn(),
+        removeListener: vi.fn()
+      })
+    }));
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Real-time updates disconnected')).toBeInTheDocument();
+    });
+  });
+
+  it('refreshes data at specified interval', async () => {
     vi.useFakeTimers();
+    const mockRefresh = vi.fn();
+    
+    renderDashboard();
 
-    render(
-      <Provider store={{}}>
-        <Dashboard refreshInterval={300000} />
-      </Provider>
-    );
-
-    // Fast-forward 5 minutes
-    vi.advanceTimersByTime(300000);
+    // Fast-forward time
+    vi.advanceTimersByTime(30000);
 
     await waitFor(() => {
-      expect(screen.getByText(`Response Time: ${mockPerformanceMetrics.responseTime}ms`)).toBeInTheDocument();
-      expect(screen.getByText(`Uptime: ${mockPerformanceMetrics.uptime}%`)).toBeInTheDocument();
+      expect(mockRefresh).toHaveBeenCalled();
     });
 
     vi.useRealTimers();
   });
 
-  it('handles WebSocket reconnection', async () => {
-    render(
-      <Provider store={{}}>
-        <Dashboard enableRealtime={true} />
-      </Provider>
-    );
+  it('validates dashboard layout responsiveness', async () => {
+    const { rerender } = renderDashboard();
 
-    // Simulate WebSocket disconnection
-    mockWsServer.close();
-
-    // Simulate reconnection
-    mockWsServer = new MockWebSocket('ws://localhost:8080');
-
-    await waitFor(() => {
-      expect(mockWebSocket.connect).toHaveBeenCalledTimes(2);
+    // Test desktop layout
+    expect(screen.getByTestId('dashboard-grid')).toHaveStyle({
+      display: 'grid',
+      gridTemplateColumns: 'repeat(12, 1fr)'
     });
-  });
 
-  it('cleans up resources on unmount', () => {
-    const { unmount } = render(
-      <Provider store={{}}>
-        <Dashboard />
+    // Test mobile layout
+    window.innerWidth = 375;
+    window.dispatchEvent(new Event('resize'));
+    rerender(
+      <Provider store={mockStore}>
+        <Dashboard refreshInterval={30000} enableRealtime={true} />
       </Provider>
     );
 
-    unmount();
-
-    expect(mockWebSocket.unsubscribe).toHaveBeenCalled();
+    expect(screen.getByTestId('dashboard-grid')).toHaveStyle({
+      display: 'grid',
+      gridTemplateColumns: 'repeat(1, 1fr)'
+    });
   });
 });

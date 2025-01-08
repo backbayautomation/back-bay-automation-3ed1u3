@@ -1,8 +1,7 @@
 /**
  * Core application constants defining layout measurements, UI configurations,
  * validation rules and other shared constants used across the frontend application.
- * Implements design system specifications, responsive breakpoints, and validation rules
- * while ensuring accessibility and security compliance.
+ * Implements design system specifications and ensures accessibility compliance.
  */
 
 /**
@@ -76,7 +75,8 @@ interface DateFormatConstants {
 }
 
 /**
- * Layout and spacing constants for consistent component sizing and responsive behavior
+ * Layout constants for consistent component sizing and responsive behavior
+ * Based on 8px grid system and standard breakpoints
  */
 export const LAYOUT_CONSTANTS: LayoutConstants = {
   SPACING_UNIT: 8,
@@ -84,27 +84,28 @@ export const LAYOUT_CONSTANTS: LayoutConstants = {
     MOBILE: 320,
     TABLET: 768,
     DESKTOP: 1024,
-    LARGE_DESKTOP: 1440,
+    LARGE_DESKTOP: 1440
   },
   CONTAINER_WIDTHS: {
     MOBILE: '100%',
     TABLET: '750px',
     DESKTOP: '970px',
-    LARGE_DESKTOP: '1170px',
+    LARGE_DESKTOP: '1170px'
   },
   SIDEBAR_WIDTH: 280,
   HEADER_HEIGHT: 64,
-  FOOTER_HEIGHT: 48,
-} as const;
+  FOOTER_HEIGHT: 48
+};
 
 /**
- * UI-related constants for consistent animations, layering, and accessibility compliance
+ * UI constants for consistent animations, layering, and accessibility compliance
+ * Follows WCAG 2.1 Level AA standards for touch targets and interactions
  */
 export const UI_CONSTANTS: UIConstants = {
   ANIMATION_DURATION: {
     SHORT: 200,
     MEDIUM: 300,
-    LONG: 500,
+    LONG: 500
   },
   Z_INDEX: {
     MODAL: 1000,
@@ -112,35 +113,37 @@ export const UI_CONSTANTS: UIConstants = {
     HEADER: 800,
     SIDEBAR: 700,
     OVERLAY: 600,
-    TOOLTIP: 500,
+    TOOLTIP: 500
   },
-  MIN_TOUCH_TARGET: 44,
+  MIN_TOUCH_TARGET: 44, // WCAG 2.1 minimum touch target size
   BORDER_RADIUS: {
     SMALL: 4,
     MEDIUM: 8,
-    LARGE: 12,
-  },
-} as const;
+    LARGE: 12
+  }
+};
 
 /**
- * Validation rules and limits for secure data handling and input validation
+ * Validation constants for secure data handling and input validation
+ * Implements security best practices for file uploads and user input
  */
 export const VALIDATION_CONSTANTS: ValidationConstants = {
-  MAX_FILE_SIZE: 10485760, // 10MB in bytes
+  MAX_FILE_SIZE: 10 * 1024 * 1024, // 10MB in bytes
   ALLOWED_FILE_TYPES: ['.pdf', '.doc', '.docx', '.xls', '.xlsx'],
   MAX_UPLOAD_FILES: 10,
   MIN_PASSWORD_LENGTH: 8,
   MAX_PASSWORD_LENGTH: 128,
   MAX_USERNAME_LENGTH: 50,
-  MAX_CHAT_MESSAGE_LENGTH: 1000,
-} as const;
+  MAX_CHAT_MESSAGE_LENGTH: 1000
+};
 
 /**
- * Date format patterns for consistent date handling and display
+ * Date format constants for consistent date handling and display
+ * Uses ISO format for storage and localized format for display
  */
 export const DATE_FORMAT_CONSTANTS: DateFormatConstants = {
   DEFAULT: 'YYYY-MM-DD',
   WITH_TIME: 'YYYY-MM-DD HH:mm:ss',
   DISPLAY: 'MMM DD, YYYY',
-  DISPLAY_WITH_TIME: 'MMM DD, YYYY HH:mm',
-} as const;
+  DISPLAY_WITH_TIME: 'MMM DD, YYYY HH:mm'
+};

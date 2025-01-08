@@ -1,63 +1,56 @@
 # Production environment Terraform configuration for AI-powered Product Catalog Search System
 # Version: 1.0
 # Provider versions:
-# - azurerm: ~> 3.0
 # - terraform: ~> 1.0
+# - azurerm: ~> 3.0
 
-# Configure Terraform backend for production state management
 terraform {
   required_version = "~> 1.0"
   
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+  }
+
   backend "azurerm" {
     resource_group_name  = "tfstate-prod-rg"
     storage_account_name = "tfstateprodsa"
     container_name      = "tfstate"
-    key                 = "prod.terraform.tfstate"
-    subscription_id     = "${var.subscription_id}"
+    key                = "prod.terraform.tfstate"
+    subscription_id    = "${var.subscription_id}"
     tenant_id          = "${var.tenant_id}"
-    use_msi            = true
   }
 }
 
-# Configure Azure provider with production-specific features
-provider "azurerm" {
-  features {
-    key_vault {
-      purge_soft_delete_on_destroy = false
-      recover_soft_deleted_key_vaults = true
-    }
-    resource_group {
-      prevent_deletion_if_contains_resources = true
-    }
-  }
-}
-
-# Main module configuration for production environment
+# Production environment module configuration
 module "main" {
   source = "../../"
 
   environment = "prod"
   
-  # Multi-region configuration
   location = {
     primary   = "eastus2"
     secondary = "westus2"
   }
-  
+
   resource_group_name = "product-search-prod-rg"
 
-  # Production AKS configuration with GPU support
+  # AKS cluster configuration with GPU support
   aks_config = {
     cluster_name = "aks-prod-cluster"
     node_count   = 5
     vm_size     = "Standard_D8s_v3"
     availability_zones = ["1", "2", "3"]
+    
     gpu_node_pool = {
       enabled    = true
       vm_size    = "Standard_NC6s_v3"
       node_count = 2
       zones      = ["1", "2"]
     }
+    
     auto_scaling = {
       enabled   = true
       min_count = 3
@@ -76,6 +69,7 @@ module "main" {
       failover_group       = true
       backup_retention_days = 35
     }
+    
     cosmos = {
       throughput           = 10000
       consistency_level    = "Session"
@@ -92,10 +86,11 @@ module "main" {
     access_tier          = "Hot"
     versioning           = true
     soft_delete_retention = 30
+    
     network_rules = {
       default_action = "Deny"
-      bypass        = ["AzureServices"]
-      ip_rules      = []
+      bypass         = ["AzureServices"]
+      ip_rules       = []
       virtual_network_subnet_ids = []
     }
   }
@@ -104,10 +99,12 @@ module "main" {
   network_config = {
     vnet_address_space = "10.0.0.0/16"
     subnet_prefixes    = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+    
     network_security_rules = {
       inbound_rules  = []
       outbound_rules = []
     }
+    
     ddos_protection   = true
     private_endpoints = true
   }
@@ -115,7 +112,8 @@ module "main" {
   # Production monitoring configuration
   monitoring_config = {
     retention_days = 90
-    sku           = "PerGB2018"
+    sku            = "PerGB2018"
+    
     diagnostic_settings = {
       enabled = true
       retention_policy = {
@@ -123,6 +121,7 @@ module "main" {
         days    = 90
       }
     }
+    
     alerts = {
       enabled = true
       action_groups = []
@@ -136,6 +135,7 @@ module "main" {
       soft_delete      = true
       purge_protection = true
     }
+    
     ddos_protection = true
     waf_policy = {
       enabled = true
@@ -143,7 +143,7 @@ module "main" {
     }
   }
 
-  # Production resource tagging
+  # Production resource tags
   tags = {
     Environment         = "Production"
     Project            = "AI-Catalog-Search"
@@ -156,14 +156,13 @@ module "main" {
 
 # Production environment outputs
 output "resource_group_name" {
-  value       = module.main.resource_group_name
+  value = module.main.resource_group_name
   description = "Production resource group name"
 }
 
 output "aks_cluster_id" {
-  value       = module.main.aks_cluster_id
+  value = module.main.aks_cluster_id
   description = "Production AKS cluster ID"
-  sensitive   = true
 }
 
 output "database_connection_strings" {
@@ -176,7 +175,6 @@ output "database_connection_strings" {
 }
 
 output "monitoring_workspace_id" {
-  value       = module.main.monitoring_workspace_id
+  value = module.main.monitoring_workspace_id
   description = "Production monitoring workspace ID"
-  sensitive   = true
 }

@@ -1,23 +1,23 @@
 """
-Test services initialization module configuring comprehensive test suites for backend services.
-Implements pytest configuration for test discovery, async testing support, coverage reporting,
-and test isolation while maintaining security contexts.
+Test services initialization module configuring comprehensive test suites for backend services
+including document processing, AI services, vector search, and security testing.
 
 Version: 1.0.0
 """
 
-# pytest configuration imports
-import pytest  # version: ^7.4.0
-import pytest_asyncio  # version: ^0.21.0
-import pytest_cov  # version: ^4.1.0
-import pytest_xdist  # version: ^3.3.1
+import pytest  # version: 7.4.0
+import pytest_asyncio  # version: 0.21.0
+import pytest_cov  # version: 4.1.0
+import pytest_xdist  # version: 3.3.1
+import logging
+from typing import Dict, Any
 
 # Import test suites
 from .test_document_processor import *
 from .test_ai_service import *
 from .test_vector_search import *
 
-# Configure pytest plugins
+# Configure test plugins
 pytest_plugins = [
     'pytest_asyncio',
     'pytest_cov',
@@ -27,7 +27,7 @@ pytest_plugins = [
 # Configure async test mode
 pytest_async_mode = 'auto'
 
-# Configure coverage reporting
+# Configure coverage settings
 pytest_cov_config = {
     'branch': True,
     'cover_pylib': False,
@@ -35,27 +35,32 @@ pytest_cov_config = {
         'tests/*',
         'setup.py'
     ],
-    'report_missing': 'skip',
-    'precision': 2
+    'report_options': {
+        'exclude_lines': [
+            'pragma: no cover',
+            'def __repr__',
+            'raise NotImplementedError'
+        ]
+    }
 }
 
-# Configure test parallelization
+# Configure parallel test execution
 pytest_xdist_config = {
     'numprocesses': 'auto',
     'maxprocesses': 8
 }
 
-def pytest_configure(config):
+def pytest_configure(config: pytest.Config) -> None:
     """
-    Configure pytest settings for test organization and execution.
+    Configure pytest settings for comprehensive test organization and execution.
     
     Args:
-        config: pytest configuration object
+        config: Pytest configuration object
     """
-    # Register test categories
+    # Configure test categories
     config.addinivalue_line(
         "markers",
-        "unit: Unit tests for isolated component testing"
+        "unit: Unit tests for individual components"
     )
     config.addinivalue_line(
         "markers", 
@@ -63,29 +68,33 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "security: Security and access control tests"
+        "security: Security and vulnerability tests"
     )
     
     # Configure async test support
     config.option.asyncio_mode = pytest_async_mode
     
-    # Configure coverage settings
-    config.option.cov = True
+    # Configure coverage reporting
     config.option.cov_config = pytest_cov_config
+    config.option.cov_branch = True
+    config.option.cov_report = ['term-missing', 'html', 'xml']
     
     # Configure parallel execution
     if not config.option.collectonly:
         config.option.dist = 'loadfile'
-        config.option.tx = []
-        for _ in range(pytest_xdist_config['maxprocesses']):
-            config.option.tx.append('popen')
+        config.option.tx = f'8*popen//python={config.option.python_executable}'
     
     # Configure test isolation
-    config.option.isolated_download = True
+    config.option.isolated_build = True
     
-    # Set up security context
-    config._metadata.update({
-        'test_environment': 'isolated',
-        'security_context': 'test',
-        'tenant_isolation': True
-    })
+    # Set up logging for tests
+    logging.basicConfig(
+        level=logging.DEBUG if config.option.verbose > 0 else logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+    
+    # Configure security context
+    config.option.sensitive_url = None
+    config.option.sensitive_post = None
+    config.option.sensitive_files = []

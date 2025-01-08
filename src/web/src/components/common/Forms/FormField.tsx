@@ -24,8 +24,7 @@ export interface FormFieldProps {
 }
 
 /**
- * Enhanced Material-UI TextField with comprehensive theme integration
- * and accessibility support following WCAG 2.1 AA guidelines
+ * Enhanced Material-UI TextField with comprehensive theme integration and accessibility support
  */
 const StyledTextField = styled(TextField)(({ theme }) => ({
   margin: theme.spacing(1, 0),
@@ -55,38 +54,35 @@ const StyledTextField = styled(TextField)(({ theme }) => ({
     },
   },
   
-  '& .MuiInputLabel-root': {
-    color: theme.palette.text.primary,
-    '&.Mui-error': {
-      color: theme.palette.error.main,
-    },
-  },
-  
   '& .MuiFormHelperText-root': {
     marginTop: theme.spacing(0.5),
     fontSize: theme.typography.caption.fontSize,
+    
     '&.Mui-error': {
       color: theme.palette.error.main,
     },
   },
   
-  // Ensure proper contrast ratios for accessibility
-  '& .MuiOutlinedInput-notchedOutline': {
-    borderColor: theme.palette.mode === 'light' ? 'rgba(0, 0, 0, 0.23)' : 'rgba(255, 255, 255, 0.23)',
+  '& .MuiInputLabel-root': {
+    color: theme.palette.text.primary,
+    '&.Mui-required': {
+      '& .MuiInputLabel-asterisk': {
+        color: theme.palette.error.main,
+      },
+    },
   },
   
-  // Responsive adjustments
-  [theme.breakpoints.down('sm')]: {
+  '@media (max-width: 600px)': {
     margin: theme.spacing(0.5, 0),
   },
 }));
 
 /**
  * Enhanced form field component with comprehensive validation and accessibility features.
- * Implements WCAG 2.1 AA compliance with proper ARIA attributes and keyboard navigation.
- * 
+ * Implements WCAG Level AA 2.1 compliance and Material-UI theme integration.
+ *
  * @param props - FormFieldProps containing all necessary field configuration
- * @returns Rendered form field component with accessibility support
+ * @returns JSX.Element - Rendered form field with accessibility support
  */
 export const FormField = React.memo<FormFieldProps>(({
   name,
@@ -104,23 +100,30 @@ export const FormField = React.memo<FormFieldProps>(({
   maxLength,
   inputMode,
 }) => {
-  // Input sanitization for security
-  const sanitizeInput = (input: string): string => {
-    return input.replace(/[<>]/g, '');
+  // Sanitize input value for security
+  const sanitizeInput = (value: string): string => {
+    return value.replace(/[<>]/g, '');
   };
 
-  // Debounced change handler for performance
+  // Handle input change with sanitization
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const sanitizedValue = sanitizeInput(event.target.value);
     event.target.value = sanitizedValue;
     onChange(event);
   };
 
+  // Handle input blur with validation
+  const handleBlur = () => {
+    if (onBlur) {
+      onBlur();
+    }
+  };
+
   // Character count helper text
   const getHelperText = () => {
     if (error) return error;
     if (maxLength && value) {
-      return `${value.length}/${maxLength} characters ${helperText ? `- ${helperText}` : ''}`;
+      return `${helperText || ''} ${value.length}/${maxLength} characters`;
     }
     return helperText;
   };
@@ -136,33 +139,31 @@ export const FormField = React.memo<FormFieldProps>(({
       disabled={disabled}
       fullWidth={fullWidth}
       onChange={handleChange}
-      onBlur={onBlur}
+      onBlur={handleBlur}
       error={!!error}
       helperText={getHelperText()}
       inputProps={{
         maxLength,
-        inputMode,
+        'aria-label': label,
         'aria-required': required,
         'aria-invalid': !!error,
-        'aria-describedby': `${name}-helper-text`,
-        'data-testid': `form-field-${name}`,
+        'aria-describedby': error ? `${name}-error` : undefined,
+        inputMode,
       }}
       FormHelperTextProps={{
-        id: `${name}-helper-text`,
-        role: error ? 'alert' : 'status',
+        id: error ? `${name}-error` : undefined,
+        role: error ? 'alert' : undefined,
+        'aria-live': error ? 'polite' : undefined,
       }}
-      // Accessibility enhancements
       InputLabelProps={{
-        htmlFor: name,
         required,
+        shrink: !!value || !!placeholder,
       }}
-      // Ensure proper tab index for keyboard navigation
-      tabIndex={disabled ? -1 : 0}
+      data-testid={`form-field-${name}`}
     />
   );
 });
 
-// Display name for debugging
 FormField.displayName = 'FormField';
 
 export default FormField;

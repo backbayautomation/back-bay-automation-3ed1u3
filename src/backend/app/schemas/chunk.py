@@ -1,3 +1,8 @@
+"""
+Pydantic schema models for document chunks used in vector search.
+Implements comprehensive validation for document segments that are processed for embeddings and similarity search.
+"""
+
 # pydantic v2.0.0
 from datetime import datetime
 from typing import Optional, Dict, Any
@@ -6,7 +11,7 @@ from pydantic import BaseModel, UUID4, Field, ConfigDict
 from app.schemas.document import Document
 
 class ChunkBase(BaseModel):
-    """Base Pydantic model for chunk data with common attributes and validation rules."""
+    """Base Pydantic model for chunk data with common attributes and validation."""
     content: str = Field(
         ...,
         min_length=10,
@@ -19,16 +24,16 @@ class ChunkBase(BaseModel):
         ge=0,
         le=999999,
         description="Sequential position of the chunk within the document",
-        examples=[0, 1, 2]
+        examples=[1, 2, 3]
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional metadata about the chunk",
+        description="Additional metadata for the chunk",
         examples=[{
-            "page_number": 1,
+            "page": 1,
             "position": 0,
-            "confidence": 0.95,
-            "word_count": 150
+            "section": "Technical Specifications",
+            "confidence": 0.95
         }]
     )
 
@@ -39,12 +44,12 @@ class ChunkBase(BaseModel):
         json_schema_extra={
             "example": {
                 "content": "Technical specifications for the A123 pump model include flow rate of 500 GPM...",
-                "sequence": 0,
+                "sequence": 1,
                 "metadata": {
-                    "page_number": 1,
+                    "page": 1,
                     "position": 0,
-                    "confidence": 0.95,
-                    "word_count": 150
+                    "section": "Technical Specifications",
+                    "confidence": 0.95
                 }
             }
         }
@@ -58,24 +63,20 @@ class ChunkCreate(ChunkBase):
         examples=["123e4567-e89b-12d3-a456-426614174000"]
     )
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "document_id": "123e4567-e89b-12d3-a456-426614174000",
-                "content": "Technical specifications for the A123 pump model include flow rate of 500 GPM...",
-                "sequence": 0,
-                "metadata": {
-                    "page_number": 1,
-                    "position": 0,
-                    "confidence": 0.95,
-                    "word_count": 150
-                }
-            }
-        }
-    )
+    @classmethod
+    def validate_metadata(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate metadata structure and content."""
+        required_keys = {"page", "position"}
+        if not all(key in v for key in required_keys):
+            raise ValueError(f"Metadata must contain keys: {required_keys}")
+        if not isinstance(v.get("page"), int) or not isinstance(v.get("position"), int):
+            raise ValueError("page and position must be integers")
+        if "confidence" in v and not (0 <= float(v["confidence"]) <= 1):
+            raise ValueError("confidence must be between 0 and 1")
+        return v
 
 class ChunkInDB(ChunkBase):
-    """Pydantic model for chunk data as stored in database with system fields."""
+    """Pydantic model for chunk data as stored in database."""
     id: UUID4 = Field(
         ...,
         description="Unique identifier for the chunk"
@@ -95,24 +96,37 @@ class ChunkInDB(ChunkBase):
     )
 
 class Chunk(ChunkInDB):
-    """Complete Pydantic model for chunk response data with relationships and embeddings."""
+    """Complete Pydantic model for chunk response data with enhanced validation."""
     document: Optional[Document] = Field(
         None,
         description="Parent document reference"
     )
     embedding: Optional[Dict[str, Any]] = Field(
         None,
-        description="Vector embedding data for similarity search",
+        description="Vector embedding data",
         examples=[{
             "vector": [0.1, 0.2, 0.3],
-            "dimensions": 1536,
+            "dimension": 1536,
             "model": "text-embedding-ada-002"
         }]
     )
 
     @classmethod
+    def validate_embedding(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Validate embedding vector format and dimensions."""
+        if v is None:
+            return v
+        if "vector" not in v or "dimension" not in v:
+            raise ValueError("Embedding must contain vector and dimension")
+        if not isinstance(v["vector"], list):
+            raise ValueError("Embedding vector must be a list")
+        if len(v["vector"]) != v["dimension"]:
+            raise ValueError("Vector length must match specified dimension")
+        return v
+
+    @classmethod
     def from_orm(cls, orm_model: Any) -> 'Chunk':
-        """Create Chunk schema from ORM model with relationship handling.
+        """Create Chunk schema from ORM model with validation.
         
         Args:
             orm_model: SQLAlchemy ORM model instance
@@ -121,26 +135,28 @@ class Chunk(ChunkInDB):
             Chunk: Validated Chunk schema instance
             
         Raises:
-            ValueError: If ORM model is invalid or missing required fields
+            ValueError: If invalid or missing required fields
+            TypeError: If invalid ORM model type
         """
-        if not orm_model:
-            raise ValueError("Invalid ORM model provided")
+        if not hasattr(orm_model, '__table__'):
+            raise TypeError("Invalid ORM model provided")
 
         try:
             # Convert ORM model to dictionary with relationships
             data = {
-                "id": orm_model.id,
-                "document_id": orm_model.document_id,
-                "content": orm_model.content,
-                "sequence": orm_model.sequence,
-                "metadata": orm_model.metadata,
-                "created_at": orm_model.created_at,
-                "document": orm_model.document if hasattr(orm_model, "document") else None,
-                "embedding": orm_model.embedding if hasattr(orm_model, "embedding") else None
+                'id': orm_model.id,
+                'document_id': orm_model.document_id,
+                'content': orm_model.content,
+                'sequence': orm_model.sequence,
+                'metadata': orm_model.metadata,
+                'created_at': orm_model.created_at,
+                'document': orm_model.document if hasattr(orm_model, 'document') else None,
+                'embedding': orm_model.embedding if hasattr(orm_model, 'embedding') else None
             }
             
             # Create and validate Chunk instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Chunk from ORM model: {str(e)}")
 
@@ -150,20 +166,20 @@ class Chunk(ChunkInDB):
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
-                "document_id": "987fcdeb-51a2-43f7-9876-543210987654",
+                "document_id": "987fcdeb-51a2-43f7-9012-345678901234",
                 "content": "Technical specifications for the A123 pump model include flow rate of 500 GPM...",
-                "sequence": 0,
+                "sequence": 1,
                 "metadata": {
-                    "page_number": 1,
+                    "page": 1,
                     "position": 0,
-                    "confidence": 0.95,
-                    "word_count": 150
+                    "section": "Technical Specifications",
+                    "confidence": 0.95
                 },
                 "created_at": "2024-01-20T12:00:00Z",
                 "document": None,
                 "embedding": {
                     "vector": [0.1, 0.2, 0.3],
-                    "dimensions": 1536,
+                    "dimension": 1536,
                     "model": "text-embedding-ada-002"
                 }
             }

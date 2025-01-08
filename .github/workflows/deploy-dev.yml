@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy to Development Environment
+    name: Deploy Services
     runs-on: ubuntu-latest
     environment:
       name: development
@@ -42,7 +42,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Login to Azure
+      - name: Azure login
         uses: azure/login@v1
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -53,18 +53,25 @@ jobs:
           cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
           resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
 
+      - name: Set deployment variables
+        id: vars
+        run: |
+          echo "DEPLOY_ID=$(date +%s)" >> $GITHUB_ENV
+          echo "START_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
+
+      - name: Validate GPU nodes
+        run: |
+          kubectl get nodes -l nvidia.com/gpu=true --no-headers | grep -q . || {
+            echo "Error: No GPU nodes found in cluster"
+            exit 1
+          }
+
       - name: Create namespace if not exists
         run: |
-          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          kubectl get namespace ${{ env.NAMESPACE }} || \
+          kubectl create namespace ${{ env.NAMESPACE }}
 
-      - name: Verify GPU nodes
-        run: |
-          if ! kubectl get nodes -l nvidia.com/gpu=true | grep Ready; then
-            echo "Error: No GPU nodes available in the cluster"
-            exit 1
-          fi
-
-      - name: Deploy Backend Service
+      - name: Deploy backend service
         if: ${{ github.event.inputs.deploy_backend != 'false' }}
         uses: azure/k8s-deploy@v4
         with:
@@ -73,11 +80,11 @@ jobs:
             infrastructure/kubernetes/backend/deployment.yaml
           images: |
             ${{ needs.backend-ci.outputs.docker-image }}:${{ needs.backend-ci.outputs.image-tag }}
-          timeout: ${{ env.DEPLOYMENT_TIMEOUT }}
           strategy: rolling
-          action: deploy
+          timeout: ${{ env.DEPLOYMENT_TIMEOUT }}
+          annotate-namespace: true
 
-      - name: Deploy Frontend Service
+      - name: Deploy frontend service
         if: ${{ github.event.inputs.deploy_frontend != 'false' }}
         uses: azure/k8s-deploy@v4
         with:
@@ -86,93 +93,55 @@ jobs:
             infrastructure/kubernetes/frontend/deployment.yaml
           images: |
             ${{ needs.frontend-ci.outputs.docker-image }}:${{ needs.frontend-ci.outputs.image-tag }}
-          timeout: ${{ env.DEPLOYMENT_TIMEOUT }}
           strategy: rolling
-          action: deploy
+          timeout: ${{ env.DEPLOYMENT_TIMEOUT }}
+          annotate-namespace: true
 
-      - name: Verify Deployment Health
+      - name: Verify deployment health
         if: ${{ github.event.inputs.skip_health_check != 'true' }}
         run: |
-          echo "Starting health verification..."
-          
-          # Backend health check
-          if [[ "${{ github.event.inputs.deploy_backend }}" != "false" ]]; then
-            kubectl rollout status deployment/backend -n ${{ env.NAMESPACE }} --timeout=${{ env.DEPLOYMENT_TIMEOUT }}
+          for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
+            BACKEND_READY=$(kubectl -n ${{ env.NAMESPACE }} get deploy backend -o jsonpath='{.status.readyReplicas}')
+            FRONTEND_READY=$(kubectl -n ${{ env.NAMESPACE }} get deploy frontend -o jsonpath='{.status.readyReplicas}')
+            BACKEND_DESIRED=$(kubectl -n ${{ env.NAMESPACE }} get deploy backend -o jsonpath='{.spec.replicas}')
+            FRONTEND_DESIRED=$(kubectl -n ${{ env.NAMESPACE }} get deploy frontend -o jsonpath='{.spec.replicas}')
             
-            # Verify GPU allocation
-            if ! kubectl get pods -n ${{ env.NAMESPACE }} -l app=backend -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -q "True"; then
-              echo "Backend pods are not ready"
-              exit 1
+            if [ "$BACKEND_READY" = "$BACKEND_DESIRED" ] && [ "$FRONTEND_READY" = "$FRONTEND_DESIRED" ]; then
+              echo "All deployments are healthy"
+              exit 0
             fi
             
-            # Check backend health endpoint
-            BACKEND_URL=$(kubectl get svc -n ${{ env.NAMESPACE }} backend -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
-              if curl -sf http://${BACKEND_URL}/api/v1/health; then
-                break
-              fi
-              if [ $i -eq ${{ env.HEALTH_CHECK_RETRIES }} ]; then
-                echo "Backend health check failed after ${{ env.HEALTH_CHECK_RETRIES }} attempts"
-                exit 1
-              fi
-              sleep 10
-            done
-          fi
+            echo "Waiting for deployments to be ready (attempt $i/${{ env.HEALTH_CHECK_RETRIES }})..."
+            sleep 30
+          done
           
-          # Frontend health check
-          if [[ "${{ github.event.inputs.deploy_frontend }}" != "false" ]]; then
-            kubectl rollout status deployment/frontend -n ${{ env.NAMESPACE }} --timeout=${{ env.DEPLOYMENT_TIMEOUT }}
-            
-            # Verify frontend pods
-            if ! kubectl get pods -n ${{ env.NAMESPACE }} -l app=frontend -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' | grep -q "True"; then
-              echo "Frontend pods are not ready"
-              exit 1
-            fi
-            
-            # Check frontend health endpoint
-            FRONTEND_URL=$(kubectl get svc -n ${{ env.NAMESPACE }} frontend -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-            for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
-              if curl -sf http://${FRONTEND_URL}/health; then
-                break
-              fi
-              if [ $i -eq ${{ env.HEALTH_CHECK_RETRIES }} ]; then
-                echo "Frontend health check failed after ${{ env.HEALTH_CHECK_RETRIES }} attempts"
-                exit 1
-              fi
-              sleep 10
-            done
-          fi
-          
-          echo "Health verification completed successfully"
+          echo "Deployment health check failed"
+          exit 1
 
-      - name: Rollback on Failure
+      - name: Rollback on failure
         if: failure()
         run: |
-          echo "Deployment failed, initiating rollback..."
-          
-          if [[ "${{ github.event.inputs.deploy_backend }}" != "false" ]]; then
-            kubectl rollout undo deployment/backend -n ${{ env.NAMESPACE }}
+          if [ "${{ github.event.inputs.deploy_backend }}" != "false" ]; then
+            kubectl -n ${{ env.NAMESPACE }} rollout undo deployment/backend
           fi
-          
-          if [[ "${{ github.event.inputs.deploy_frontend }}" != "false" ]]; then
-            kubectl rollout undo deployment/frontend -n ${{ env.NAMESPACE }}
-          fi
-          
-          # Send notification about rollback
-          if [ ! -z "${{ secrets.DEPLOYMENT_NOTIFICATION_WEBHOOK }}" ]; then
-            curl -X POST -H "Content-Type: application/json" \
-              -d "{\"text\":\"⚠️ Development deployment failed and rolled back. Environment: ${{ env.ENVIRONMENT }}, Services affected: $([ "${{ github.event.inputs.deploy_backend }}" != "false" ] && echo "backend ")$([ "${{ github.event.inputs.deploy_frontend }}" != "false" ] && echo "frontend")\"}" \
-              ${{ secrets.DEPLOYMENT_NOTIFICATION_WEBHOOK }}
+          if [ "${{ github.event.inputs.deploy_frontend }}" != "false" ]; then
+            kubectl -n ${{ env.NAMESPACE }} rollout undo deployment/frontend
           fi
 
-      - name: Notify Deployment Status
+      - name: Send deployment notification
         if: always()
         run: |
-          STATUS="${{ job.status }}"
-          MESSAGE="🚀 Development deployment completed with status: ${STATUS}. Environment: ${{ env.ENVIRONMENT }}"
+          DEPLOY_STATUS="${{ job.status }}"
+          DEPLOY_DURATION=$(($(date +%s) - ${{ env.DEPLOY_ID }}))
           
-          if [ ! -z "${{ secrets.DEPLOYMENT_NOTIFICATION_WEBHOOK }}" ]; then
-            curl -X POST -H "Content-Type: application/json" \
-              -d "{\"text\":\"${MESSAGE}\"}" \
-              ${{ secrets.DEPLOYMENT_NOTIFICATION_WEBHOOK }}
-          fi
+          curl -X POST ${{ secrets.DEPLOYMENT_NOTIFICATION_WEBHOOK }} \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"deployment_id\": \"${{ env.DEPLOY_ID }}\",
+              \"environment\": \"${{ env.ENVIRONMENT }}\",
+              \"status\": \"$DEPLOY_STATUS\",
+              \"duration_seconds\": $DEPLOY_DURATION,
+              \"start_time\": \"${{ env.START_TIME }}\",
+              \"end_time\": \"$(date -u '+%Y-%m-%dT%H:%M:%SZ')\",
+              \"triggered_by\": \"${{ github.actor }}\"
+            }"

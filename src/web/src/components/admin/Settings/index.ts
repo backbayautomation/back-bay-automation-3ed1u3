@@ -9,23 +9,18 @@ import ApiSettings from './ApiSettings';
 import BrandingSettings, { BrandingSettingsProps } from './BrandingSettings';
 import SecuritySettings, { SecuritySettingsProps } from './SecuritySettings';
 
-// Export settings components and their props interfaces
-export {
-    // API Settings component for managing API configuration
-    ApiSettings,
-    
-    // Branding Settings component and props for portal customization
-    BrandingSettings,
-    BrandingSettingsProps,
-    
-    // Security Settings component and props for access control configuration
-    SecuritySettings,
-    SecuritySettingsProps,
-};
+// Export individual components and their type definitions
+export { ApiSettings };
+export { BrandingSettings };
+export { SecuritySettings };
+
+// Export type definitions for component props
+export type { BrandingSettingsProps };
+export type { SecuritySettingsProps };
 
 // Default export for convenient importing
 export default {
-    ApiSettings,
-    BrandingSettings,
-    SecuritySettings,
+  ApiSettings,
+  BrandingSettings,
+  SecuritySettings,
 };

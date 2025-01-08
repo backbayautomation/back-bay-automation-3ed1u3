@@ -8,17 +8,26 @@ metadata:
     component: api
     environment: production
   annotations:
+    # Enable Kubernetes metrics monitoring
     monitoring.kubernetes.io/enable: "true"
+    # Indicate stable scaling behavior
     scaling.kubernetes.io/behavior: "stable"
-    kubernetes.io/description: "HPA configuration for backend service with multi-metric scaling"
-    kubernetes.io/version: "v1.25+"
+    # Document HPA version and configuration
+    app.kubernetes.io/version: "v1.25+"
+    app.kubernetes.io/description: "Backend service HPA with multi-metric scaling"
+
 spec:
+  # Target the backend deployment for scaling
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: backend
+
+  # Scaling limits based on production requirements
   minReplicas: 3
   maxReplicas: 20
+
+  # Multi-metric scaling configuration
   metrics:
     # CPU-based scaling
     - type: Resource
@@ -27,7 +36,7 @@ spec:
         target:
           type: Utilization
           averageUtilization: 75
-    
+
     # Memory-based scaling
     - type: Resource
       resource:
@@ -35,7 +44,7 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
-    
+
     # GPU utilization scaling
     - type: Resource
       resource:
@@ -44,21 +53,28 @@ spec:
           type: Utilization
           averageUtilization: 80
 
+  # Scaling behavior controls
   behavior:
-    # Scale up behavior - aggressive but controlled
+    # Scale up behavior
     scaleUp:
-      stabilizationWindowSeconds: 60  # 1-minute window to prevent thrashing
+      # Wait 60s before scaling up again
+      stabilizationWindowSeconds: 60
       policies:
-      - type: Pods
-        value: 2  # Add up to 2 pods at a time
-        periodSeconds: 60
-      selectPolicy: Max  # Use the most aggressive policy
+        # Add max 2 pods per minute
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      # Use the most aggressive policy
+      selectPolicy: Max
 
-    # Scale down behavior - conservative
+    # Scale down behavior
     scaleDown:
-      stabilizationWindowSeconds: 300  # 5-minute window for stability
+      # Wait 5 minutes before scaling down
+      stabilizationWindowSeconds: 300
       policies:
-      - type: Pods
-        value: 1  # Remove only 1 pod at a time
-        periodSeconds: 60
-      selectPolicy: Min  # Use the most conservative policy
+        # Remove max 1 pod per minute
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      # Use the most conservative policy
+      selectPolicy: Min

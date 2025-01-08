@@ -1,6 +1,7 @@
 """
 FastAPI router endpoints for document management with enhanced security, monitoring, and error handling.
-Implements multi-tenant document operations with comprehensive validation and performance monitoring.
+Implements multi-tenant document operations with comprehensive validation, processing status tracking,
+and performance monitoring.
 
 Version: 1.0.0
 """
@@ -16,12 +17,12 @@ from fastapi_limiter import RateLimiter
 from app.models.document import Document
 from app.schemas.document import DocumentCreate, DocumentUpdate, Document as DocumentSchema, DocumentProcessingStatus
 from app.services.document_processor import DocumentProcessor
-from app.core.config import settings
 from app.db.session import get_db
+from app.core.auth import requires_auth, get_current_client
+from app.core.monitoring import track_operation_time
 from app.utils.document_utils import validate_file_type
-from app.api.deps import get_current_client, require_client_access
 
-# Initialize router
+# Initialize router with prefix and tags
 router = APIRouter(prefix='/documents', tags=['documents'])
 
 # Constants
@@ -30,15 +31,18 @@ MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 RATE_LIMIT_UPLOADS = '100/hour'
 PROCESSING_TIMEOUT = 300  # 5 minutes
 
-# Prometheus metrics
-DOCUMENT_REQUESTS = Counter('document_api_requests_total', 'Total document API requests')
-UPLOAD_LATENCY = Histogram('document_upload_latency_seconds', 'Document upload latency')
-PROCESSING_ERRORS = Counter('document_processing_errors_total', 'Document processing errors')
+# Initialize metrics
+DOCUMENT_REQUESTS = Counter('document_requests_total', 'Total document requests', ['operation'])
+DOCUMENT_ERRORS = Counter('document_errors_total', 'Document operation errors', ['error_type'])
+PROCESSING_TIME = Histogram('document_processing_seconds', 'Document processing time')
+UPLOAD_SIZE = Histogram('document_upload_bytes', 'Document upload size in bytes')
 
-# Configure logging
+# Initialize logger
 logger = logging.getLogger(__name__)
 
 @router.get('/', response_model=List[DocumentSchema])
+@requires_auth
+@track_operation_time
 async def get_documents(
     db: Session = Depends(get_db),
     client_id: UUID = Depends(get_current_client),
@@ -57,51 +61,53 @@ async def get_documents(
         limit: Maximum number of records to return
 
     Returns:
-        List[DocumentSchema]: Filtered and paginated list of documents
+        List of document schemas with metadata
     """
-    DOCUMENT_REQUESTS.inc()
     try:
+        DOCUMENT_REQUESTS.labels(operation='get').inc()
+
         # Build query with filters
         query = db.query(Document).filter(Document.client_id == client_id)
-        
         if status:
             query = query.filter(Document.status == status)
-        
+
         # Apply pagination
+        total_count = query.count()
         documents = query.offset(skip).limit(limit).all()
-        
+
         logger.info(
-            "Documents retrieved successfully",
+            f"Retrieved {len(documents)} documents",
             extra={
                 'client_id': str(client_id),
-                'count': len(documents),
-                'status_filter': status
+                'status_filter': status,
+                'total_count': total_count
             }
         )
-        
+
         return [DocumentSchema.from_orm(doc) for doc in documents]
 
     except Exception as e:
+        error_type = type(e).__name__
+        DOCUMENT_ERRORS.labels(error_type=error_type).inc()
         logger.error(
-            "Error retrieving documents",
-            extra={
-                'client_id': str(client_id),
-                'error': str(e)
-            }
+            f"Error retrieving documents: {str(e)}",
+            extra={'client_id': str(client_id)},
+            exc_info=True
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve documents"
+            detail="Error retrieving documents"
         )
 
 @router.post('/', response_model=DocumentSchema, status_code=status.HTTP_201_CREATED)
+@requires_auth
 @RateLimiter(RATE_LIMIT_UPLOADS)
+@track_operation_time
 async def upload_document(
     db: Session = Depends(get_db),
     file: UploadFile = File(...),
     document_data: DocumentCreate = Depends(),
-    background_tasks: BackgroundTasks = None,
-    client_id: UUID = Depends(get_current_client)
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ) -> DocumentSchema:
     """
     Upload and process a new document with enhanced validation and monitoring.
@@ -111,189 +117,84 @@ async def upload_document(
         file: Uploaded file
         document_data: Document metadata
         background_tasks: Background task manager
-        client_id: Authenticated client ID
 
     Returns:
-        DocumentSchema: Created document with processing status
+        Created document schema with processing status
     """
-    with UPLOAD_LATENCY.time():
-        try:
-            # Validate client access
-            await require_client_access(db, client_id, document_data.client_id)
-            
-            # Validate file type and size
-            is_valid, error_msg = validate_file_type(file.filename)
-            if not is_valid:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid file: {error_msg}"
-                )
-            
-            if file.size > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"File size exceeds maximum allowed size of {MAX_FILE_SIZE} bytes"
-                )
-            
-            # Create document record
-            document = Document(
-                client_id=document_data.client_id,
-                filename=file.filename,
-                type=file.filename.split('.')[-1].lower(),
-                metadata=document_data.metadata
-            )
-            db.add(document)
-            db.commit()
-            
-            # Initialize document processor
-            processor = DocumentProcessor(
-                ocr_service=settings.OCR_SERVICE,
-                ai_service=settings.AI_SERVICE,
-                vector_search=settings.VECTOR_SEARCH,
-                config=settings.DOCUMENT_PROCESSING
-            )
-            
-            # Schedule background processing
-            if background_tasks:
-                background_tasks.add_task(
-                    processor.process_document,
-                    document=document,
-                    tenant_id=str(client_id)
-                )
-            
-            logger.info(
-                "Document uploaded successfully",
-                extra={
-                    'document_id': str(document.id),
-                    'client_id': str(client_id),
-                    'filename': file.filename
-                }
-            )
-            
-            return DocumentSchema.from_orm(document)
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            PROCESSING_ERRORS.inc()
-            logger.error(
-                "Document upload failed",
-                extra={
-                    'client_id': str(client_id),
-                    'filename': file.filename,
-                    'error': str(e)
-                }
-            )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to process document upload"
-            )
-
-@router.get('/{document_id}', response_model=DocumentSchema)
-async def get_document(
-    document_id: UUID,
-    db: Session = Depends(get_db),
-    client_id: UUID = Depends(get_current_client)
-) -> DocumentSchema:
-    """
-    Retrieve a specific document by ID with access control.
-
-    Args:
-        document_id: Document UUID
-        db: Database session
-        client_id: Authenticated client ID
-
-    Returns:
-        DocumentSchema: Document details
-    """
-    DOCUMENT_REQUESTS.inc()
     try:
-        document = db.query(Document).filter(
-            Document.id == document_id,
-            Document.client_id == client_id
-        ).first()
-        
-        if not document:
+        DOCUMENT_REQUESTS.labels(operation='upload').inc()
+
+        # Validate file type and size
+        is_valid, error_msg = await validate_file_type(file.filename)
+        if not is_valid:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Document not found"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid file: {error_msg}"
             )
-        
-        logger.info(
-            "Document retrieved successfully",
-            extra={
-                'document_id': str(document_id),
-                'client_id': str(client_id)
+
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"File size exceeds maximum limit of {MAX_FILE_SIZE // (1024*1024)}MB"
+            )
+
+        UPLOAD_SIZE.observe(len(content))
+
+        # Create document record
+        document = Document(
+            client_id=document_data.client_id,
+            filename=file.filename,
+            type=file.filename.split('.')[-1].lower(),
+            metadata={
+                'original_name': file.filename,
+                'content_type': file.content_type,
+                'size_bytes': len(content)
             }
         )
-        
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+
+        # Initialize document processor
+        processor = DocumentProcessor(
+            ocr_service=OCRService(),
+            ai_service=AIService(),
+            vector_search=VectorSearchService(),
+            config={'timeout': PROCESSING_TIMEOUT}
+        )
+
+        # Schedule background processing
+        background_tasks.add_task(
+            processor.process_document,
+            document=document,
+            tenant_id=str(document_data.client_id)
+        )
+
+        logger.info(
+            f"Document uploaded successfully",
+            extra={
+                'document_id': str(document.id),
+                'client_id': str(document_data.client_id),
+                'filename': file.filename,
+                'size': len(content)
+            }
+        )
+
         return DocumentSchema.from_orm(document)
 
     except HTTPException:
         raise
+
     except Exception as e:
+        error_type = type(e).__name__
+        DOCUMENT_ERRORS.labels(error_type=error_type).inc()
         logger.error(
-            "Error retrieving document",
-            extra={
-                'document_id': str(document_id),
-                'client_id': str(client_id),
-                'error': str(e)
-            }
+            f"Error uploading document: {str(e)}",
+            extra={'filename': file.filename},
+            exc_info=True
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve document"
-        )
-
-@router.delete('/{document_id}', status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(
-    document_id: UUID,
-    db: Session = Depends(get_db),
-    client_id: UUID = Depends(get_current_client)
-):
-    """
-    Delete a document with security validation.
-
-    Args:
-        document_id: Document UUID
-        db: Database session
-        client_id: Authenticated client ID
-    """
-    try:
-        document = db.query(Document).filter(
-            Document.id == document_id,
-            Document.client_id == client_id
-        ).first()
-        
-        if not document:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Document not found"
-            )
-        
-        db.delete(document)
-        db.commit()
-        
-        logger.info(
-            "Document deleted successfully",
-            extra={
-                'document_id': str(document_id),
-                'client_id': str(client_id)
-            }
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(
-            "Error deleting document",
-            extra={
-                'document_id': str(document_id),
-                'client_id': str(client_id),
-                'error': str(e)
-            }
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete document"
+            detail="Error processing document upload"
         )

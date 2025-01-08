@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react'; // v18.2.0
 import { Box, Card, CardContent, Typography, Alert } from '@mui/material'; // v5.14.0
 import { styled } from '@mui/material/styles'; // v5.14.0
+import { debounce } from 'lodash'; // v4.17.21
 import { ChromePicker } from 'react-color'; // v2.19.3
-import debounce from 'lodash/debounce'; // v4.17.21
 
 import { FormField, FormFieldProps } from '../../common/Forms/FormField';
 import { PrimaryButton } from '../../common/Buttons/PrimaryButton';
-import { ClientBranding } from '../../../types/client';
+import { ClientBranding, isHexColor, isURL } from '../../../types/client';
 
-// Styled components with enhanced theme integration
+// Styled components with responsive design
 const StyledCard = styled(Card)(({ theme }) => ({
   margin: theme.spacing(2),
   padding: theme.spacing(2),
@@ -43,7 +43,7 @@ const ColorPickerContainer = styled(Box)(({ theme }) => ({
   },
 }));
 
-// Enhanced props interface with validation support
+// Props interface with enhanced validation
 export interface BrandingSettingsProps {
   initialBranding: ClientBranding;
   onSave: (branding: ClientBranding) => Promise<void>;
@@ -58,54 +58,16 @@ interface ValidationState {
   primaryColor: string | null;
 }
 
-// Enhanced form validation with detailed rules
-const validateForm = (data: ClientBranding): ValidationState => {
-  const errors: ValidationState = {
-    companyName: null,
-    logoUrl: null,
-    primaryColor: null,
-  };
-
-  // Company name validation
-  if (!data.companyName.trim()) {
-    errors.companyName = 'Company name is required';
-  } else if (data.companyName.length < 2) {
-    errors.companyName = 'Company name must be at least 2 characters';
-  } else if (data.companyName.length > 100) {
-    errors.companyName = 'Company name must not exceed 100 characters';
-  }
-
-  // Logo URL validation
-  if (!data.logoUrl) {
-    errors.logoUrl = 'Logo URL is required';
-  } else {
-    try {
-      new URL(data.logoUrl as string);
-    } catch {
-      errors.logoUrl = 'Please enter a valid URL';
-    }
-  }
-
-  // Primary color validation
-  const hexColorRegex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
-  if (!data.primaryColor) {
-    errors.primaryColor = 'Primary color is required';
-  } else if (!hexColorRegex.test(data.primaryColor as string)) {
-    errors.primaryColor = 'Please enter a valid hex color';
-  }
-
-  return errors;
-};
-
-// Memoized component with enhanced validation and preview
+// Enhanced branding settings component with real-time preview
 export const BrandingSettings = React.memo<BrandingSettingsProps>(({
   initialBranding,
   onSave,
   isLoading,
   onDirtyChange,
 }) => {
+  // Form state
   const [formData, setFormData] = useState<ClientBranding>(initialBranding);
-  const [validation, setValidation] = useState<ValidationState>({
+  const [validationErrors, setValidationErrors] = useState<ValidationState>({
     companyName: null,
     logoUrl: null,
     primaryColor: null,
@@ -113,48 +75,65 @@ export const BrandingSettings = React.memo<BrandingSettingsProps>(({
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Debounced validation to prevent excessive re-renders
-  const debouncedValidation = useCallback(
+  // Validation rules
+  const validateForm = useCallback((data: ClientBranding): ValidationState => {
+    const errors: ValidationState = {
+      companyName: null,
+      logoUrl: null,
+      primaryColor: null,
+    };
+
+    if (!data.companyName || data.companyName.length < 2) {
+      errors.companyName = 'Company name must be at least 2 characters long';
+    }
+
+    if (!data.logoUrl || !isURL(data.logoUrl)) {
+      errors.logoUrl = 'Please enter a valid URL for the logo';
+    }
+
+    if (!data.primaryColor || !isHexColor(data.primaryColor)) {
+      errors.primaryColor = 'Please select a valid color';
+    }
+
+    return errors;
+  }, []);
+
+  // Debounced validation
+  const debouncedValidate = useCallback(
     debounce((data: ClientBranding) => {
-      setValidation(validateForm(data));
+      const errors = validateForm(data);
+      setValidationErrors(errors);
     }, 300),
-    []
+    [validateForm]
   );
 
-  // Track form changes
-  useEffect(() => {
-    const isDirty = JSON.stringify(formData) !== JSON.stringify(initialBranding);
-    onDirtyChange(isDirty);
-    debouncedValidation(formData);
-  }, [formData, initialBranding, onDirtyChange, debouncedValidation]);
+  // Handle form changes
+  const handleChange = useCallback((field: keyof ClientBranding) => 
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const newValue = event.target.value;
+      setFormData(prev => {
+        const updated = { ...prev, [field]: newValue };
+        debouncedValidate(updated);
+        return updated;
+      });
+    }, [debouncedValidate]);
 
-  // Handle form field changes
-  const handleChange = (field: keyof ClientBranding) => (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: event.target.value,
-    }));
-    setSaveError(null);
-  };
-
-  // Handle color picker changes
-  const handleColorChange = (color: { hex: string }) => {
-    setFormData((prev) => ({
+  // Handle color change
+  const handleColorChange = useCallback((color: { hex: string }) => {
+    setFormData(prev => ({
       ...prev,
       primaryColor: color.hex as ClientBranding['primaryColor'],
     }));
-    setSaveError(null);
-  };
+    debouncedValidate({ ...formData, primaryColor: color.hex as ClientBranding['primaryColor'] });
+  }, [formData, debouncedValidate]);
 
-  // Handle form submission with validation
+  // Handle form submission
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     const errors = validateForm(formData);
-    setValidation(errors);
+    setValidationErrors(errors);
 
-    if (Object.values(errors).every((error) => error === null)) {
+    if (Object.values(errors).every(error => error === null)) {
       try {
         await onSave(formData);
         setSaveError(null);
@@ -164,8 +143,11 @@ export const BrandingSettings = React.memo<BrandingSettingsProps>(({
     }
   };
 
-  // Check if form has any validation errors
-  const hasErrors = Object.values(validation).some((error) => error !== null);
+  // Track form dirty state
+  useEffect(() => {
+    const isDirty = JSON.stringify(formData) !== JSON.stringify(initialBranding);
+    onDirtyChange(isDirty);
+  }, [formData, initialBranding, onDirtyChange]);
 
   return (
     <StyledCard>
@@ -181,49 +163,51 @@ export const BrandingSettings = React.memo<BrandingSettingsProps>(({
               label="Company Name"
               value={formData.companyName}
               onChange={handleChange('companyName')}
-              error={validation.companyName}
+              error={validationErrors.companyName}
               required
-              maxLength={100}
+              fullWidth
             />
 
             <FormField
               name="logoUrl"
               label="Logo URL"
-              value={formData.logoUrl as string}
+              value={formData.logoUrl}
               onChange={handleChange('logoUrl')}
-              error={validation.logoUrl}
+              error={validationErrors.logoUrl}
               required
-              type="url"
+              fullWidth
+              helperText="Enter the URL of your company logo"
             />
 
             <Box>
-              <FormField
-                name="primaryColor"
-                label="Primary Color"
-                value={formData.primaryColor as string}
-                onChange={handleChange('primaryColor')}
-                error={validation.primaryColor}
-                required
-                onClick={() => setShowColorPicker(true)}
+              <Typography variant="subtitle2" gutterBottom>
+                Primary Color
+              </Typography>
+              <Box
+                onClick={() => setShowColorPicker(!showColorPicker)}
+                sx={{
+                  width: '40px',
+                  height: '40px',
+                  backgroundColor: formData.primaryColor,
+                  cursor: 'pointer',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                }}
               />
               {showColorPicker && (
                 <ColorPickerContainer>
-                  <Box position="absolute" zIndex={1}>
-                    <ChromePicker
-                      color={formData.primaryColor as string}
-                      onChange={handleColorChange}
-                      onChangeComplete={handleColorChange}
-                    />
-                    <Box mt={1}>
-                      <PrimaryButton
-                        size="small"
-                        onClick={() => setShowColorPicker(false)}
-                      >
-                        Close
-                      </PrimaryButton>
-                    </Box>
-                  </Box>
+                  <ChromePicker
+                    color={formData.primaryColor}
+                    onChange={handleColorChange}
+                    disableAlpha
+                  />
                 </ColorPickerContainer>
+              )}
+              {validationErrors.primaryColor && (
+                <Typography color="error" variant="caption">
+                  {validationErrors.primaryColor}
+                </Typography>
               )}
             </Box>
 
@@ -242,25 +226,31 @@ export const BrandingSettings = React.memo<BrandingSettingsProps>(({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 2,
-                  color: formData.primaryColor as string,
+                  p: 2,
+                  backgroundColor: 'background.paper',
                 }}
               >
                 {formData.logoUrl && (
                   <img
-                    src={formData.logoUrl as string}
+                    src={formData.logoUrl}
                     alt={`${formData.companyName} logo`}
-                    style={{ maxHeight: 40 }}
+                    style={{ maxHeight: '40px', width: 'auto' }}
                   />
                 )}
-                <Typography variant="h5">{formData.companyName}</Typography>
+                <Typography
+                  variant="h6"
+                  style={{ color: formData.primaryColor }}
+                >
+                  {formData.companyName}
+                </Typography>
               </Box>
             </PreviewContainer>
 
-            <Box sx={{ mt: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
               <PrimaryButton
                 type="submit"
-                disabled={isLoading || hasErrors}
-                fullWidth
+                disabled={isLoading || Object.values(validationErrors).some(error => error !== null)}
+                onClick={handleSubmit}
               >
                 {isLoading ? 'Saving...' : 'Save Changes'}
               </PrimaryButton>

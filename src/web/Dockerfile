@@ -1,27 +1,19 @@
-# Stage 1: Build environment
+# ===== Stage 1: Build Stage =====
 FROM node:18-alpine AS builder
 
 # Set working directory
 WORKDIR /app
 
-# Install build dependencies and security updates
-RUN apk update && \
-    apk upgrade && \
-    apk add --no-cache \
-    python3 \
-    make \
-    g++ \
-    git
+# Install dependencies for node-gyp and other build tools
+RUN apk add --no-cache python3 make g++ git
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies with exact versions and security audit
-RUN npm ci --production=false && \
-    npm audit fix && \
-    npm cache clean --force
+# Install dependencies with exact versions
+RUN npm ci --no-audit --no-optional
 
-# Copy source code
+# Copy source code and configuration files
 COPY . .
 
 # Set build environment variables
@@ -29,10 +21,10 @@ ENV NODE_ENV=production \
     VITE_APP_ENV=production \
     CI=true
 
-# Build application with optimizations
+# Build production bundle with optimization flags
 RUN npm run build
 
-# Stage 2: Production environment
+# ===== Stage 2: Production Stage =====
 FROM nginx:1.25-alpine
 
 # Install security updates and create nginx user
@@ -57,15 +49,19 @@ RUN chmod -R 644 /usr/share/nginx/html && \
     touch /var/run/nginx.pid && \
     chown -R nginx:nginx /var/run/nginx.pid
 
-# Configure security headers
-RUN echo "add_header X-Frame-Options 'DENY' always;" >> /etc/nginx/conf.d/security.conf && \
-    echo "add_header X-Content-Type-Options 'nosniff' always;" >> /etc/nginx/conf.d/security.conf && \
-    echo "add_header X-XSS-Protection '1; mode=block' always;" >> /etc/nginx/conf.d/security.conf && \
-    echo "add_header Referrer-Policy 'strict-origin-when-cross-origin' always;" >> /etc/nginx/conf.d/security.conf && \
-    echo "add_header Content-Security-Policy \"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' ws: wss: https://api.openai.com;\" always;" >> /etc/nginx/conf.d/security.conf
-
 # Create health check endpoint
-RUN echo "location /health { return 200 'healthy\n'; }" > /etc/nginx/conf.d/health.conf
+RUN echo "OK" > /usr/share/nginx/html/health
+
+# Configure security headers
+RUN echo "add_header X-Frame-Options 'DENY' always;" > /etc/nginx/conf.d/security-headers.conf && \
+    echo "add_header X-Content-Type-Options 'nosniff' always;" >> /etc/nginx/conf.d/security-headers.conf && \
+    echo "add_header X-XSS-Protection '1; mode=block' always;" >> /etc/nginx/conf.d/security-headers.conf && \
+    echo "add_header Referrer-Policy 'strict-origin-when-cross-origin' always;" >> /etc/nginx/conf.d/security-headers.conf && \
+    echo "add_header Content-Security-Policy \"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' ws: wss: https://api.openai.com;\" always;" >> /etc/nginx/conf.d/security-headers.conf
+
+# Set environment variables
+ENV NGINX_PORT=80 \
+    TZ=UTC
 
 # Expose port
 EXPOSE 80

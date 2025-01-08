@@ -1,6 +1,6 @@
 /// <reference types="vite/client" /> // vite ^4.4.9
 
-// Environment variable declarations
+// Environment variable type declarations
 interface ImportMetaEnv {
   readonly VITE_APP_TITLE: string;
   readonly VITE_API_URL: string;
@@ -11,11 +11,12 @@ interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
 
-// Asset type definitions
+// Image asset type definitions
 export interface ImageAsset {
   src: string;
 }
 
+// SVG component type definitions with React support
 export interface SVGComponent {
   ReactComponent: React.FC<React.SVGProps<SVGSVGElement>>;
   src: string;

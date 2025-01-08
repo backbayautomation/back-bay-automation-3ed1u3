@@ -3,8 +3,8 @@
 
 # Frontend source files
 *.js text eol=lf
-*.ts text eol=lf
 *.jsx text eol=lf
+*.ts text eol=lf
 *.tsx text eol=lf
 *.css text eol=lf
 *.scss text eol=lf
@@ -12,6 +12,7 @@
 
 # Backend source files
 *.py text eol=lf
+*.pyi text eol=lf
 *.pyx text eol=lf
 *.pxd text eol=lf
 
@@ -54,8 +55,34 @@ Dockerfile text eol=lf
 *.gz binary
 *.tar binary
 
-# Linguist language overrides
-*.ipynb linguist-documentation
-docs/* linguist-documentation
-*.min.js linguist-generated
-*.min.css linguist-generated
+# Vector and AI model files
+*.bin binary
+*.onnx binary
+*.pt binary
+*.pth binary
+*.h5 binary
+*.pkl binary
+
+# Git files
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.gitkeep text eol=lf
+
+# IDE and editor files
+.editorconfig text eol=lf
+*.code-workspace text eol=lf
+.vscode/* text eol=lf
+
+# Kubernetes and cloud config files
+*.tf text eol=lf
+*.tfvars text eol=lf
+*.helmignore text eol=lf
+Chart.yaml text eol=lf
+values.yaml text eol=lf
+
+# Ensure GitHub linguist correctly identifies languages
+*.py linguist-language=Python
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+*.jsx linguist-language=JavaScript
+Dockerfile linguist-language=Dockerfile
