@@ -1,0 +1,45 @@
+# Kubernetes Service resource for backend FastAPI application
+# Version: v1.25+
+# Purpose: Internal load balancing and service discovery for Product Catalog Search System
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: backend-service
+  namespace: product-search
+  labels:
+    app: backend
+    component: api
+    tier: backend
+    environment: production
+  annotations:
+    # Prometheus monitoring configuration
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+    # Azure internal load balancer configuration
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "backend-subnet"
+
+spec:
+  # Internal cluster IP service type for secure access
+  type: ClusterIP
+  
+  # Port configuration for FastAPI backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  
+  # Pod selector for service endpoints
+  selector:
+    app: backend
+    component: api
+  
+  # Session affinity configuration for consistent user experience
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours timeout
