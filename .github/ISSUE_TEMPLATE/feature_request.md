@@ -9,7 +9,7 @@ assignees: ''
 
 > Please complete all required fields marked with **Required:** to ensure proper feature request processing.
 
-## Feature Type
+## Feature Type Selection
 **Required:** Select all that apply:
 - [ ] Frontend Enhancement
 - [ ] Backend API
@@ -21,22 +21,19 @@ assignees: ''
 - [ ] Integration
 - [ ] Performance Optimization
 
-## Priority Level
-**Required:** Select one:
+**Required:** Priority Level (select one):
 - [ ] Critical - Core Functionality
 - [ ] High - Major Enhancement
 - [ ] Medium - Improvement
 - [ ] Low - Nice to Have
 
-## Complexity Assessment
-**Required:** Select one:
+**Required:** Complexity Assessment:
 - [ ] High - Architectural Change
 - [ ] Medium - Multiple Components
 - [ ] Low - Single Component
 - [ ] Minimal - Configuration Only
 
-## Impact Assessment
-**Required:** Select one:
+**Required:** Impact Assessment:
 - [ ] High - System-wide
 - [ ] Medium - Multiple Features
 - [ ] Low - Single Feature
@@ -44,214 +41,140 @@ assignees: ''
 
 ## Feature Description
 **Required:**
-### Problem Statement
-> Describe the problem or need this feature addresses.
+### Overview
+<!-- Provide a clear and concise description of the feature -->
 
-### Proposed Solution
-> Provide a clear and concise description of the feature.
+### Problem Statement
+<!-- Describe the problem or need this feature addresses -->
 
 ### Expected Benefits
-> List the expected benefits and impact.
+<!-- List the expected benefits and impact -->
 
 ### Target Users
-> Identify the target users or stakeholders.
+<!-- Identify the target users or stakeholders -->
 
 ### Business Value
-> Explain the business value proposition.
+<!-- Explain the business value proposition -->
 
 ## Technical Requirements
 **Required:**
-### System Components
-> List affected components:
+### System Components Affected
+<!-- List all system components that will be affected -->
 - Frontend:
 - Backend:
 - Infrastructure:
 
 ### Integration Requirements
-> Describe integration needs with existing components:
-```
-- Component:
-- Integration Type:
-- Data Flow:
-```
+<!-- Describe integration requirements with existing components -->
 
 ### Performance Requirements
-> Specify performance requirements and SLAs:
-- Response Time:
-- Throughput:
-- Availability:
+<!-- Specify performance requirements and SLAs -->
 
 ### Security & Compliance
-> Detail security implications and compliance needs:
-- Security Controls:
-- Compliance Requirements:
-- Data Protection:
+<!-- Detail security implications and compliance needs -->
 
 ### Data Requirements
-> Specify data handling requirements:
-- Data Types:
-- Storage Needs:
-- Retention Policy:
+<!-- Specify data handling requirements -->
 
-### AI/ML Processing
-> Detail AI/ML processing considerations:
-- Model Requirements:
-- Training Needs:
-- Inference Requirements:
+### AI/ML Considerations
+<!-- Detail AI/ML processing requirements if applicable -->
 
 ### Scalability
-> Define scalability requirements:
-- Load Expectations:
-- Growth Projections:
-- Resource Scaling:
+<!-- Define scalability requirements -->
 
 ## Implementation Details
 **Required:**
 ### Technical Approach
-> Outline the proposed technical approach:
-```
-- Architecture Changes:
-- Component Updates:
-- New Services:
-```
+<!-- Describe the proposed technical approach -->
 
 ### Component Changes
-> List required changes to existing components:
-- [ ] Component 1:
-- [ ] Component 2:
+<!-- List required changes to existing components -->
+
+### New Components
+<!-- Specify new components or services needed -->
 
 ### Dependencies
-> List dependencies and prerequisites:
-- [ ] Dependency 1:
-- [ ] Dependency 2:
+<!-- List dependencies and prerequisites -->
 
-### Migration Plan
-> Describe migration considerations:
-```
-- Data Migration:
-- User Migration:
-- Service Migration:
-```
+### Migration Strategy
+<!-- Describe migration considerations -->
 
-### Rollback Strategy
-> Define rollback approach:
-```
-- Rollback Triggers:
-- Rollback Steps:
-- Data Recovery:
-```
+### Rollback Plan
+<!-- Outline the rollback strategy -->
+
+### Infrastructure Needs
+<!-- Detail infrastructure requirements -->
 
 ## User Experience
 **Required:**
 ### UI/UX Requirements
-> Attach mockups or describe UI changes:
-```
-- Screens:
-- Workflows:
-- Interactions:
-```
+<!-- Describe UI/UX requirements and include mockups if available -->
+
+### Workflow Changes
+<!-- Detail workflow changes and user journey maps -->
 
 ### Accessibility
-> Detail WCAG 2.1 AA compliance requirements:
-- [ ] Keyboard Navigation
-- [ ] Screen Reader Support
-- [ ] Color Contrast
-- [ ] Focus Management
+<!-- Specify accessibility requirements (WCAG 2.1 AA) -->
 
-### Responsive Design
-> Specify responsive design requirements:
-- Mobile:
-- Tablet:
-- Desktop:
+### Mobile Requirements
+<!-- Define mobile responsiveness specifications -->
 
 ### Error Handling
-> Define error scenarios and user feedback:
-```
-- Error Types:
-- User Messages:
-- Recovery Actions:
-```
+<!-- Describe error handling and user feedback mechanisms -->
+
+### Performance Expectations
+<!-- List performance expectations from user perspective -->
+
+### i18n Requirements
+<!-- Specify internationalization needs -->
 
 ## Testing Requirements
 **Required:**
 ### Unit Testing
-> Specify unit test requirements (>85% coverage):
-- [ ] Component Tests
-- [ ] Service Tests
-- [ ] Utility Tests
+<!-- Define unit test coverage requirements (>85%) -->
 
 ### Integration Testing
-> List integration test scenarios:
-```
-- Scenario 1:
-- Scenario 2:
-- Scenario 3:
-```
+<!-- List integration test scenarios -->
 
 ### Performance Testing
-> Define performance test criteria:
-- Load Tests:
-- Stress Tests:
-- Endurance Tests:
+<!-- Specify performance test criteria and benchmarks -->
+
+### UAT Scenarios
+<!-- Detail user acceptance testing scenarios -->
 
 ### Security Testing
-> Specify security testing requirements:
-- [ ] Penetration Testing
-- [ ] Vulnerability Scanning
-- [ ] Access Control Testing
+<!-- List security testing requirements -->
 
 ### AI/ML Validation
-> Define model validation criteria:
-```
-- Accuracy Metrics:
-- Performance Benchmarks:
-- Quality Thresholds:
-```
+<!-- Specify AI/ML model validation criteria if applicable -->
+
+### Cross-browser Testing
+<!-- Define cross-browser testing needs -->
 
 ## Additional Context
 *Optional:*
 ### Related Items
-> Link related features or issues:
-- [ ] Related Feature 1:
-- [ ] Related Feature 2:
+<!-- List related features or issues -->
 
 ### Alternatives
-> Describe alternative approaches considered:
-```
-- Alternative 1:
-- Alternative 2:
-- Trade-offs:
-```
+<!-- Describe alternative approaches considered -->
+
+### Priority Justification
+<!-- Provide business priority justification -->
 
 ### Timeline
-> Provide timeline expectations:
-- Start Date:
-- Milestones:
-- Target Completion:
+<!-- Specify timeline expectations and constraints -->
 
 ### Resources
-> List required resources:
-- Team Members:
-- Infrastructure:
-- External Dependencies:
+<!-- List resource requirements -->
 
 ### Risk Assessment
-> Identify potential risks:
-```
-- Risk 1:
-  - Impact:
-  - Mitigation:
-- Risk 2:
-  - Impact:
-  - Mitigation:
-```
+<!-- Provide risk assessment details -->
 
 ### Success Metrics
-> Define success criteria:
-- Metric 1:
-- Metric 2:
-- Measurement Method:
+<!-- Define success metrics -->
 
 ---
-> **Note:** Please ensure all required sections are completed before submitting the feature request.
-Labels: ${PRIORITY_LABELS}, ${COMPONENT_LABELS}
+**Labels to be added by maintainers:**
+- Priority: [feature/critical|feature/high|feature/medium|feature/low]
+- Component: [component/frontend|component/backend|component/ai|component/infrastructure]
