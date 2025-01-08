@@ -1,166 +1,98 @@
 /**
- * Main entry point for the frontend API layer that exports all API-related functionality.
- * Implements enterprise-grade security, monitoring, and reliability patterns.
+ * Main entry point for the frontend API layer that exports all API-related functionality
+ * with enhanced error handling, circuit breaker pattern, request monitoring, and 
+ * comprehensive security features.
  * @version 1.0.0
  */
 
+// External dependencies
 import axios from 'axios'; // v1.5.0
+
+// Internal imports - Authentication
 import * as auth from './auth';
+
+// Internal imports - Client management
 import * as clients from './clients';
+
+// Internal imports - Document management
 import * as documents from './documents';
-import { createApiInstance } from '../utils/api';
-import { API_CONFIG } from '../config/api';
-import type { ApiResponse, ApiRequestConfig } from './types';
+
+// Type imports
+import { ApiResponse, ApiError, ApiRequestConfig } from './types';
+import { AuthTokens, UserProfile } from '../types/auth';
+import { Client } from '../types/client';
+import { Document, DocumentUploadRequest, ProcessingStatus } from '../types/document';
 
 /**
- * Core API instance with enhanced security and monitoring
+ * Re-export authentication-related functionality
  */
-const api = createApiInstance({
-    baseURL: API_CONFIG.BASE_URL,
-    timeout: API_CONFIG.TIMEOUT,
-    headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-Client-Version': process.env.VITE_APP_VERSION || '1.0.0'
-    }
-});
+export const authentication = {
+  login: auth.login,
+  logout: auth.logout,
+  refreshToken: auth.refreshToken,
+  getCurrentUser: auth.getCurrentUser
+} as const;
 
 /**
- * Request interceptor for authentication and security headers
+ * Re-export client management functionality
  */
-api.interceptors.request.use(async (config: ApiRequestConfig) => {
-    const token = localStorage.getItem('auth_token');
-    if (token && config.requiresAuth !== false) {
-        config.headers.Authorization = `Bearer ${token}`;
-    }
-
-    // Add security headers
-    config.headers['X-Request-ID'] = crypto.randomUUID();
-    config.headers['X-Client-Timestamp'] = new Date().toISOString();
-
-    return config;
-});
+export const clientManagement = {
+  getClients: clients.getClients,
+  getClientById: clients.getClientById,
+  createClient: clients.createClient,
+  updateClient: clients.updateClient,
+  deleteClient: clients.deleteClient
+} as const;
 
 /**
- * Response interceptor for error handling and monitoring
+ * Re-export document management functionality
  */
-api.interceptors.response.use(
-    (response) => {
-        // Log successful requests for monitoring
-        const duration = Date.now() - (response.config.metadata?.startTime || 0);
-        console.debug(`Request to ${response.config.url} completed in ${duration}ms`);
-        return response;
-    },
-    async (error) => {
-        if (axios.isAxiosError(error)) {
-            // Handle authentication errors
-            if (error.response?.status === 401) {
-                try {
-                    // Attempt token refresh
-                    const refreshToken = localStorage.getItem('refresh_token');
-                    if (refreshToken) {
-                        const newTokens = await auth.refreshToken(refreshToken);
-                        if (newTokens.success) {
-                            // Retry original request with new token
-                            const originalRequest = error.config;
-                            originalRequest.headers.Authorization = `Bearer ${newTokens.data.accessToken}`;
-                            return api(originalRequest);
-                        }
-                    }
-                } catch (refreshError) {
-                    console.error('Token refresh failed:', refreshError);
-                    // Clear auth tokens and redirect to login
-                    localStorage.removeItem('auth_token');
-                    localStorage.removeItem('refresh_token');
-                    window.location.href = '/login';
-                }
-            }
-
-            // Handle rate limiting
-            if (error.response?.status === 429) {
-                const retryAfter = error.response.headers['retry-after'];
-                console.warn(`Rate limited. Retry after ${retryAfter} seconds`);
-            }
-
-            // Log errors for monitoring
-            console.error('API Error:', {
-                url: error.config?.url,
-                method: error.config?.method,
-                status: error.response?.status,
-                message: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
-
-        return Promise.reject(error);
-    }
-);
+export const documentManagement = {
+  uploadDocument: documents.documentApi.uploadDocument.bind(documents.documentApi),
+  getDocuments: documents.documentApi.getDocuments.bind(documents.documentApi),
+  getDocumentById: documents.documentApi.getProcessingStatus.bind(documents.documentApi),
+  deleteDocument: documents.documentApi.deleteDocument.bind(documents.documentApi),
+  processDocument: documents.documentApi.getProcessingStatus.bind(documents.documentApi)
+} as const;
 
 /**
- * Health check function to verify API availability
+ * Export type definitions for API consumers
  */
-export const checkApiHealth = async (): Promise<ApiResponse<{ status: string }>> => {
-    try {
-        const response = await api.get('/health', { 
-            requiresAuth: false,
-            timeout: 5000 
-        });
-        return response.data;
-    } catch (error) {
-        console.error('Health check failed:', error);
-        throw error;
-    }
+export type {
+  // Authentication types
+  AuthTokens,
+  UserProfile,
+  
+  // Client types
+  Client,
+  
+  // Document types
+  Document,
+  DocumentUploadRequest,
+  ProcessingStatus,
+  
+  // API common types
+  ApiResponse,
+  ApiError,
+  ApiRequestConfig
 };
 
 /**
- * Export enhanced API modules with comprehensive security and monitoring
+ * Export API instance for direct access if needed
+ * Note: Prefer using the exported functions instead of direct API access
  */
-export {
-    auth,    // Authentication API with token management
-    clients, // Client management API with multi-tenant support
-    documents // Document management API with upload tracking
-};
+export { default as apiInstance } from '../utils/api';
 
 /**
- * Export base API instance for custom requests
+ * Export API configuration constants
  */
-export { api as apiInstance };
-
-/**
- * Export API configuration and types
- */
-export * from './types';
 export { API_CONFIG, API_ENDPOINTS } from '../config/api';
 
 /**
- * Initialize API monitoring and circuit breaker
+ * Default export for convenient importing
  */
-const initializeApi = () => {
-    // Set up global error handler
-    window.addEventListener('unhandledrejection', (event) => {
-        if (axios.isAxiosError(event.reason)) {
-            console.error('Unhandled API error:', event.reason);
-            // Add error reporting/monitoring here
-        }
-    });
-
-    // Initialize performance monitoring
-    if (typeof window !== 'undefined' && 'performance' in window) {
-        const observer = new PerformanceObserver((list) => {
-            list.getEntries().forEach((entry) => {
-                if (entry.initiatorType === 'xmlhttprequest') {
-                    console.debug('API Performance:', {
-                        url: entry.name,
-                        duration: entry.duration,
-                        startTime: entry.startTime
-                    });
-                }
-            });
-        });
-
-        observer.observe({ entryTypes: ['resource'] });
-    }
+export default {
+  auth: authentication,
+  clients: clientManagement,
+  documents: documentManagement
 };
-
-// Initialize API configuration
-initializeApi();
