@@ -1,13 +1,13 @@
 """
 Middleware initialization module for the AI-powered Product Catalog Search System.
 Implements thread-safe initialization, proper ordering, and comprehensive error handling
-for the middleware stack.
+for authentication, authorization, logging, CORS, and multi-tenant request handling.
 
 Version: 1.0.0
 """
 
-import threading
-import logging
+import threading  # version: 3.11+
+import logging  # version: 3.11+
 from typing import Dict, Optional
 
 from .auth_middleware import AuthMiddleware
@@ -38,101 +38,114 @@ def initialize_middleware(config: Dict) -> bool:
     Thread-safe initialization of all middleware components in proper order.
     
     Args:
-        config: Configuration dictionary containing middleware settings
+        config: Configuration dictionary for middleware components
         
     Returns:
         bool: True if initialization successful, False otherwise
-        
-    Raises:
-        RuntimeError: If initialization fails
     """
     global _initialized
     
-    @threading.synchronized(_middleware_lock)
-    def _initialize() -> bool:
-        global _initialized
-        
-        if _initialized:
-            logger.warning("Middleware already initialized")
-            return True
-
+    with _middleware_lock:
         try:
-            logger.info(
-                "Initializing middleware stack",
-                extra={"order": MIDDLEWARE_ORDER}
-            )
+            # Check if already initialized
+            if _initialized:
+                logger.warning("Middleware already initialized")
+                return True
 
-            # Initialize CORS middleware first
+            logger.info("Initializing middleware stack")
+
+            # Validate configuration
+            if not config:
+                raise ValueError("Missing middleware configuration")
+
+            # Initialize CORS middleware first (handles preflight requests)
             cors_config = config.get("cors", {})
             cors_middleware = get_cors_middleware()
-            
+            logger.info("CORS middleware initialized")
+
             # Initialize authentication middleware
             auth_config = config.get("auth", {})
-            auth_middleware = AuthMiddleware(
-                app=None,  # Will be set by FastAPI
-                tenant_config=auth_config.get("tenant_config", {})
-            )
+            auth_middleware = AuthMiddleware(app=None)
+            auth_middleware.initialize(auth_config)
+            logger.info("Authentication middleware initialized")
 
             # Initialize tenant middleware
-            tenant_middleware = TenantMiddleware(app=None)  # Will be set by FastAPI
-            
-            # Initialize logging middleware last
+            tenant_config = config.get("tenant", {})
+            tenant_middleware = TenantMiddleware(app=None)
+            tenant_middleware.initialize(tenant_config)
+            logger.info("Tenant middleware initialized")
+
+            # Initialize logging middleware last (to capture all request details)
             logging_config = config.get("logging", {})
-            logging_middleware = LoggingMiddleware(
-                app=None,  # Will be set by FastAPI
-                config=logging_config
-            )
+            logging_middleware = LoggingMiddleware(app=None)
+            logging_middleware.initialize(logging_config)
+            logger.info("Logging middleware initialized")
 
-            # Validate middleware initialization
-            if not all([
-                cors_middleware,
-                auth_middleware,
-                tenant_middleware,
-                logging_middleware
-            ]):
-                raise RuntimeError("One or more middleware components failed to initialize")
-
+            # Set initialization flag
             _initialized = True
             
-            logger.info(
-                "Middleware stack initialized successfully",
-                extra={
-                    "components": MIDDLEWARE_ORDER,
-                    "status": "initialized"
-                }
-            )
-            
+            logger.info("Middleware stack initialization completed successfully")
             return True
 
         except Exception as e:
-            logger.error(
-                "Middleware initialization failed",
-                extra={
-                    "error": str(e),
-                    "error_type": type(e).__name__
-                }
-            )
-            raise RuntimeError(f"Failed to initialize middleware: {str(e)}")
+            logger.error(f"Middleware initialization failed: {str(e)}", exc_info=True)
+            _initialized = False
+            return False
 
-    return _initialize()
-
-def get_middleware_status() -> Dict:
+def get_middleware_stack(app) -> list:
     """
-    Get current status of middleware initialization.
+    Get ordered list of initialized middleware components.
+    
+    Args:
+        app: FastAPI application instance
+        
+    Returns:
+        list: Ordered list of middleware instances
+        
+    Raises:
+        RuntimeError: If middleware not initialized
+    """
+    if not _initialized:
+        raise RuntimeError("Middleware not initialized. Call initialize_middleware first.")
+
+    # Return middleware in correct order
+    middleware_stack = []
+    
+    # CORS middleware first (handles preflight)
+    middleware_stack.append(get_cors_middleware())
+    
+    # Auth middleware for security
+    middleware_stack.append(AuthMiddleware(app))
+    
+    # Tenant middleware for isolation
+    middleware_stack.append(TenantMiddleware(app))
+    
+    # Logging middleware last to capture everything
+    middleware_stack.append(LoggingMiddleware(app))
+
+    return middleware_stack
+
+def check_initialization_status() -> Dict:
+    """
+    Check initialization status of middleware components.
     
     Returns:
-        Dict containing middleware initialization status
+        Dict: Status of each middleware component
     """
     return {
         "initialized": _initialized,
-        "components": MIDDLEWARE_ORDER,
-        "status": "ready" if _initialized else "not_initialized"
+        "components": {
+            "cors": get_cors_middleware() is not None,
+            "auth": AuthMiddleware is not None,
+            "tenant": TenantMiddleware is not None,
+            "logging": LoggingMiddleware is not None
+        }
     }
 
 def reset_middleware() -> None:
     """
-    Reset middleware initialization state for testing purposes.
-    Should only be used in development/testing environments.
+    Reset middleware initialization state.
+    For testing and recovery purposes.
     """
     global _initialized
     
