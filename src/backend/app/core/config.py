@@ -74,7 +74,6 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = Field(default=ENV)
     DEBUG: bool = Field(default=DEBUG)
 
-    # Database configuration with environment-specific settings
     DATABASE_CONFIG: Dict[str, Any] = {
         'development': {
             'host': 'localhost',
@@ -99,47 +98,36 @@ class Settings(BaseSettings):
         }
     }
 
-    # Azure service configuration
     AZURE_CONFIG: Dict[str, Any] = {
-        'key_vault_url': os.getenv('AZURE_KEY_VAULT_URL'),
-        'tenant_id': os.getenv('AZURE_TENANT_ID'),
-        'storage_account': os.getenv('AZURE_STORAGE_ACCOUNT'),
-        'blob_container': os.getenv('AZURE_BLOB_CONTAINER'),
-        'application_insights': {
-            'connection_string': os.getenv('AZURE_APP_INSIGHTS_CONNECTION_STRING'),
-            'sampling_percentage': 100 if ENV != 'production' else 10
-        }
+        'key_vault_name': 'catalog-search-kv',
+        'tenant_id': Field(..., env='AZURE_TENANT_ID'),
+        'client_id': Field(..., env='AZURE_CLIENT_ID'),
+        'client_secret': Field(..., env='AZURE_CLIENT_SECRET'),
+        'storage_account': Field(..., env='AZURE_STORAGE_ACCOUNT'),
+        'container_name': 'documents'
     }
 
-    # Vector search configuration based on environment
     VECTOR_SEARCH_CONFIG: Dict[str, Any] = {
         'dimension': 1536,
         'similarity_threshold': 0.8,
         'top_k_results': 5,
+        'context_window_size': 8192,
         'batch_size': 32,
-        'distance_metric': 'cosine',
-        'index_settings': {
-            'development': {'nprobe': 8, 'ef_search': 100},
-            'staging': {'nprobe': 16, 'ef_search': 200},
-            'production': {'nprobe': 32, 'ef_search': 400}
-        }
+        'distance_metric': 'cosine'
     }
 
-    # Security configuration
     SECURITY_CONFIG: Dict[str, Any] = {
-        'jwt_secret': os.getenv('JWT_SECRET_KEY'),
+        'jwt_secret': Field(..., env='JWT_SECRET'),
         'jwt_algorithm': 'HS256',
         'access_token_expire_minutes': 30,
         'refresh_token_expire_days': 7,
         'password_hash_algorithm': 'bcrypt',
         'min_password_length': 12,
         'require_special_characters': True,
-        'cors_origins': os.getenv('CORS_ORIGINS', '').split(','),
-        'rate_limit_requests': 1000,
-        'rate_limit_period': 3600
+        'max_login_attempts': 5,
+        'lockout_duration_minutes': 15
     }
 
-    # Logging configuration
     LOGGING_CONFIG: Dict[str, Any] = {
         'version': 1,
         'disable_existing_loggers': False,
@@ -164,8 +152,8 @@ class Settings(BaseSettings):
             }
         },
         'root': {
-            'level': 'DEBUG' if DEBUG else 'INFO',
-            'handlers': ['console', 'file'] if ENV != 'development' else ['console']
+            'handlers': ['console', 'file'] if not DEBUG else ['console'],
+            'level': 'DEBUG' if DEBUG else 'INFO'
         }
     }
 
@@ -182,48 +170,33 @@ class Settings(BaseSettings):
     def get_azure_settings(self) -> Dict[str, Any]:
         """Returns validated Azure service configuration."""
         azure_config = self.AZURE_CONFIG.copy()
-        # Add environment-specific configurations
-        if self.ENVIRONMENT == 'production':
+        if self.ENVIRONMENT != 'development':
             azure_config.update({
-                'redis_cache': os.getenv('AZURE_REDIS_CONNECTION_STRING'),
-                'cdn_endpoint': os.getenv('AZURE_CDN_ENDPOINT')
+                'use_managed_identity': True,
+                'key_vault_url': f"https://{self.AZURE_CONFIG['key_vault_name']}.vault.azure.net/"
             })
         return azure_config
 
     def get_vector_search_settings(self) -> Dict[str, Any]:
         """Returns optimized vector search configuration."""
-        config = self.VECTOR_SEARCH_CONFIG.copy()
-        config.update({
-            'index_settings': config['index_settings'][self.ENVIRONMENT]
-        })
-        return config
+        vector_config = self.VECTOR_SEARCH_CONFIG.copy()
+        if self.ENVIRONMENT == 'production':
+            vector_config.update({
+                'cache_enabled': True,
+                'cache_ttl_seconds': 3600,
+                'max_concurrent_searches': 50
+            })
+        return vector_config
 
     def configure_logging(self) -> None:
         """Configures application-wide logging with JSON formatting."""
-        # Create logs directory if it doesn't exist
-        log_dir = os.path.join(BASE_DIR, 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-
-        # Configure logging
+        os.makedirs(os.path.join(BASE_DIR, 'logs'), exist_ok=True)
         logging.config.dictConfig(self.LOGGING_CONFIG)
-
-        # Set default logging level
-        logging.getLogger().setLevel(logging.DEBUG if self.DEBUG else logging.INFO)
-
-        # Log initial configuration
-        logging.info(
-            "Application logging configured",
-            extra={
-                'environment': self.ENVIRONMENT,
-                'debug_mode': self.DEBUG,
-                'log_level': 'DEBUG' if self.DEBUG else 'INFO'
-            }
-        )
-
-    class Config:
-        env_file = os.path.join(BASE_DIR, '.env')
-        env_file_encoding = 'utf-8'
-        case_sensitive = True
+        
+        # Set up error reporting integration for non-development environments
+        if self.ENVIRONMENT != 'development':
+            logging.getLogger('azure.monitor').setLevel(logging.INFO)
+            logging.getLogger('azure.identity').setLevel(logging.WARNING)
 
 def get_settings() -> Settings:
     """Returns thread-safe singleton instance of Settings class."""
@@ -232,23 +205,9 @@ def get_settings() -> Settings:
     if _settings_instance is None:
         with _settings_lock:
             if _settings_instance is None:
-                # Load environment variables
                 load_dotenv(os.path.join(BASE_DIR, '.env'))
-                
-                # Create settings instance
                 _settings_instance = Settings()
-                
-                # Configure logging
                 _settings_instance.configure_logging()
-                
-                # Log settings initialization
-                logging.info(
-                    "Application settings initialized",
-                    extra={
-                        'environment': _settings_instance.ENVIRONMENT,
-                        'debug_mode': _settings_instance.DEBUG
-                    }
-                )
     
     return _settings_instance
 
