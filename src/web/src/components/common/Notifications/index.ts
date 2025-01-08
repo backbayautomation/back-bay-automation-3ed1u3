@@ -1,13 +1,16 @@
 /**
- * Barrel export file for notification components.
- * Provides centralized access to Alert and Toast components for displaying user feedback and system notifications.
+ * Barrel export file for notification components providing standardized visual feedback
+ * across the application following the design system specifications.
  * @version 1.0.0
  */
 
 // Import notification components
-export { default as Alert } from './Alert';
-export { default as Toast } from './Toast';
+import Alert from './Alert';
+import Toast from './Toast';
 
-// Re-export types for external usage
+// Re-export components for external use
+export { Alert, Toast };
+
+// Re-export types for component props
 export type { AlertProps } from './Alert';
 export type { ToastProps } from './Toast';
