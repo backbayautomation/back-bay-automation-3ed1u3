@@ -7,36 +7,35 @@ Version: 1.0.0
 
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from fastapi_limiter import RateLimiter
-from cachetools import TTLCache
-from opentelemetry.instrumentation.fastapi import monitor_performance
+from cachetools import TTLCache  # version: 5.0.0
+from opentelemetry.instrumentation import monitor_performance  # version: 0.40.0
+from fastapi_limiter import RateLimiter  # version: 0.1.5
 
 from ....models.organization import Organization
 from ....schemas.organization import (
-    OrganizationCreate, 
-    OrganizationUpdate, 
+    OrganizationCreate,
+    OrganizationUpdate,
     OrganizationResponse
 )
 from ....services.auth import get_current_user, check_user_permissions, audit_log
 from ....db.session import get_db, handle_db_error
-from ....core.security import encrypt_sensitive_data
 from ....utils.logging import StructuredLogger
 
 # Initialize router with prefix and tags
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
-# Initialize structured logger
+# Initialize logger
 logger = StructuredLogger(__name__)
+
+# Configure rate limiting
+RATE_LIMIT_CALLS = 100
+RATE_LIMIT_PERIOD = 3600  # 1 hour
 
 # Initialize cache for organization data
 organization_cache = TTLCache(maxsize=100, ttl=300)  # 5 minutes TTL
-
-# Rate limiting configuration
-RATE_LIMIT_CALLS = 100
-RATE_LIMIT_PERIOD = 3600  # 1 hour
 
 @router.get("/", response_model=List[OrganizationResponse])
 @monitor_performance
@@ -44,10 +43,10 @@ RATE_LIMIT_PERIOD = 3600  # 1 hour
 async def get_organizations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-    skip: int = 0,
-    limit: int = 100,
-    name_filter: Optional[str] = None
-):
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=10, ge=1, le=100),
+    name_filter: Optional[str] = Query(None, min_length=1, max_length=100)
+) -> List[OrganizationResponse]:
     """
     Retrieve paginated list of organizations with optional filtering.
     Only accessible by system administrators.
@@ -60,7 +59,10 @@ async def get_organizations(
         name_filter: Optional organization name filter
 
     Returns:
-        List[OrganizationResponse]: Paginated list of organizations
+        List[OrganizationResponse]: List of organization schemas
+
+    Raises:
+        HTTPException: If user lacks permissions or database error occurs
     """
     try:
         # Check system admin permissions
@@ -70,19 +72,14 @@ async def get_organizations(
                 detail="Only system administrators can view all organizations"
             )
 
-        # Validate pagination parameters
-        if skip < 0 or limit < 1 or limit > 100:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid pagination parameters"
-            )
-
-        # Build query with optional name filter
+        # Build base query
         query = db.query(Organization)
+
+        # Apply name filter if provided
         if name_filter:
             query = query.filter(Organization.name.ilike(f"%{name_filter}%"))
 
-        # Execute paginated query
+        # Apply pagination
         organizations = query.offset(skip).limit(limit).all()
 
         # Log access
@@ -93,7 +90,6 @@ async def get_organizations(
             {"skip": skip, "limit": limit, "name_filter": name_filter}
         )
 
-        # Return organization list
         return [OrganizationResponse.from_orm(org) for org in organizations]
 
     except SQLAlchemyError as e:
@@ -103,7 +99,7 @@ async def get_organizations(
             detail="Database error occurred"
         )
     except Exception as e:
-        logger.error("Error retrieving organizations", extra={"error": str(e)})
+        logger.error(f"Error retrieving organizations: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
@@ -116,7 +112,7 @@ async def get_organization(
     organization_id: UUID,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-):
+) -> OrganizationResponse:
     """
     Retrieve specific organization by ID with tenant isolation.
 
@@ -126,7 +122,10 @@ async def get_organization(
         current_user: Authenticated user
 
     Returns:
-        OrganizationResponse: Organization details
+        OrganizationResponse: Organization schema
+
+    Raises:
+        HTTPException: If organization not found or user lacks permissions
     """
     try:
         # Check cache first
@@ -134,16 +133,14 @@ async def get_organization(
         if cache_key in organization_cache:
             return organization_cache[cache_key]
 
-        # Check user permissions for organization access
-        has_access = await check_user_permissions(
+        # Check user permissions
+        if not await check_user_permissions(
             current_user,
-            ["system_admin", "client_admin"],
-            organization_id
-        )
-        if not has_access:
+            ["system_admin", "client_admin"]
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions to access this organization"
+                detail="Insufficient permissions"
             )
 
         # Query organization with tenant isolation
@@ -157,6 +154,14 @@ async def get_organization(
                 detail="Organization not found"
             )
 
+        # Verify tenant access for client admins
+        if current_user.role == "client_admin" and \
+           organization.id != current_user.org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this organization"
+            )
+
         # Log access
         await audit_log(
             db,
@@ -165,7 +170,7 @@ async def get_organization(
             {"organization_id": str(organization_id)}
         )
 
-        # Create response and cache it
+        # Cache result
         response = OrganizationResponse.from_orm(organization)
         organization_cache[cache_key] = response
 
@@ -180,10 +185,7 @@ async def get_organization(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
-            "Error retrieving organization",
-            extra={"error": str(e), "organization_id": str(organization_id)}
-        )
+        logger.error(f"Error retrieving organization: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
