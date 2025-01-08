@@ -1,5 +1,6 @@
-// Prettier configuration v3.0.0
-// Optimized for TypeScript 5.0+ and React enterprise applications
+// @prettier/version: ^3.0.0
+// Comprehensive Prettier configuration for enterprise React TypeScript application
+// Optimized for TypeScript 5.0+ and React components
 
 import type { Config } from 'prettier';
 
@@ -28,7 +29,7 @@ const prettierConfig: Config = {
   // Omit parentheses around single arrow function parameters
   arrowParens: 'avoid',
 
-  // Use LF for consistent line endings across platforms
+  // Unix-style line endings for cross-platform consistency
   endOfLine: 'lf',
 
   // Use double quotes in JSX for HTML compatibility
