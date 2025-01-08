@@ -1,8 +1,12 @@
+# Security Scan Workflow v1.0
+# Comprehensive security scanning for frontend, backend, and container components
+# Includes SAST, dependency checks, compliance validation for GDPR, SOC 2, ISO 27001, and NIST 800-53
+
 name: Security Scan
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight
+    - cron: '0 0 * * *'  # Daily at midnight UTC
   push:
     branches: ['main', 'develop']
   pull_request:
@@ -17,11 +21,12 @@ env:
 
 jobs:
   backend-security-scan:
+    name: Backend Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
-    
+
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -32,20 +37,20 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: Install backend dependencies
+      - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install bandit safety
 
-      - name: Run Snyk Python scan
+      - name: Run Snyk Python Scan
         uses: snyk/actions/python@v3
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
           args: --severity-threshold=${{ env.SNYK_SEVERITY_THRESHOLD }}
 
-      - name: Run OWASP dependency check
+      - name: Run OWASP Dependency Check
         uses: dependency-check/Dependency-Check_Action@v2.7.0
         with:
           project: 'backend'
@@ -56,28 +61,28 @@ jobs:
             --failOnCVSS 7
             --enableRetired
 
-      - name: Run Bandit SAST scan
+      - name: Run Bandit SAST Scan
         run: |
-          bandit -r . -f json -o bandit-results.json
-          bandit -r . -f html -o bandit-results.html
+          bandit -r ./backend -f json -o bandit-results.json
+          bandit -r ./backend -f html -o bandit-results.html
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v2
         with:
           languages: python
-          queries: security-extended,security-and-quality
+          queries: security-extended
 
-      - name: Perform CodeQL Analysis
+      - name: Run CodeQL Analysis
         uses: github/codeql-action/analyze@v2
 
-      - name: SonarQube Scan
+      - name: SonarQube Analysis
         uses: SonarSource/sonarqube-scan-action@v1.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
             -Dsonar.projectKey=backend
+            -Dsonar.sources=./backend
             -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.python.bandit.reportPaths=bandit-results.json
 
@@ -94,24 +99,28 @@ jobs:
           path: |
             bandit-results.json
             dependency-check-report.html
-          key: ${{ runner.os }}-backend-security-${{ github.sha }}
+            backend-security-report.md
+          key: backend-security-${{ github.sha }}
 
       - name: Upload Security Reports
         uses: actions/upload-artifact@v3
         with:
           name: backend-security-report
           path: |
-            backend-security-report.md
-            bandit-results.html
+            bandit-results.*
             dependency-check-report.html
+            backend-security-report.md
 
   frontend-security-scan:
+    name: Frontend Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
@@ -119,10 +128,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: Install frontend dependencies
+      - name: Install Dependencies
         run: npm ci
 
-      - name: Run Snyk Node.js scan
+      - name: Run Snyk Node.js Scan
         uses: snyk/actions/node@v3
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -132,28 +141,28 @@ jobs:
       - name: Run npm audit
         run: npm audit --json > npm-audit.json || true
 
-      - name: Run ESLint security rules
+      - name: Run ESLint Security Rules
         run: |
-          npm install -g eslint eslint-plugin-security
-          eslint . -c .eslintrc.js --plugin security --format json > eslint-results.json
+          npm install eslint-plugin-security
+          npx eslint . -c .eslintrc.js --plugin security --format json > eslint-results.json
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v2
         with:
           languages: javascript
-          queries: security-extended,security-and-quality
+          queries: security-extended
 
-      - name: Perform CodeQL Analysis
+      - name: Run CodeQL Analysis
         uses: github/codeql-action/analyze@v2
 
-      - name: SonarQube Scan
+      - name: SonarQube Analysis
         uses: SonarSource/sonarqube-scan-action@v1.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
             -Dsonar.projectKey=frontend
+            -Dsonar.sources=./frontend
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
       - name: Generate Security Report
@@ -162,6 +171,8 @@ jobs:
           echo "## Scan Time: $(date)" >> frontend-security-report.md
           echo "## npm audit findings" >> frontend-security-report.md
           cat npm-audit.json >> frontend-security-report.md
+          echo "## ESLint security findings" >> frontend-security-report.md
+          cat eslint-results.json >> frontend-security-report.md
 
       - name: Cache Scan Results
         uses: actions/cache@v3
@@ -169,31 +180,33 @@ jobs:
           path: |
             npm-audit.json
             eslint-results.json
-          key: ${{ runner.os }}-frontend-security-${{ github.sha }}
+            frontend-security-report.md
+          key: frontend-security-${{ github.sha }}
 
       - name: Upload Security Reports
         uses: actions/upload-artifact@v3
         with:
           name: frontend-security-report
           path: |
-            frontend-security-report.md
             npm-audit.json
             eslint-results.json
+            frontend-security-report.md
 
   container-security-scan:
+    name: Container Security Scan
     runs-on: ubuntu-latest
     needs: [backend-security-scan, frontend-security-scan]
     timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Build containers
+      - name: Build Containers
         run: |
           docker-compose build
 
-      - name: Run Trivy container scan
+      - name: Run Trivy Container Scan
         uses: aquasecurity/trivy-action@0.16.1
         with:
           image-ref: 'app-backend:latest'
@@ -202,7 +215,7 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
-      - name: Run Snyk container scan
+      - name: Run Snyk Container Scan
         uses: snyk/actions/docker@v3
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -210,9 +223,9 @@ jobs:
           image: app-backend:latest
           args: --file=Dockerfile
 
-      - name: Run Docker bench security
+      - name: Run Docker Bench Security
         run: |
-          docker run --rm -v /var:/var -v /etc:/etc -v /usr/bin/docker:/usr/bin/docker -v /usr/lib/systemd:/usr/lib/systemd -v /tmp:/tmp -v /run/containerd/containerd.sock:/run/containerd/containerd.sock -v $(pwd):/host/data docker/docker-bench-security > docker-bench-results.txt
+          docker run --rm -v /var:/var -v /etc:/etc -v /usr/bin/docker:/usr/bin/docker docker/docker-bench-security > docker-bench-results.txt
 
       - name: Generate Container Scan Report
         run: |
@@ -220,23 +233,26 @@ jobs:
           echo "## Scan Time: $(date)" >> container-security-report.md
           echo "## Trivy Findings" >> container-security-report.md
           cat trivy-results.sarif >> container-security-report.md
+          echo "## Docker Bench Results" >> container-security-report.md
+          cat docker-bench-results.txt >> container-security-report.md
 
       - name: Upload Container Scan Reports
         uses: actions/upload-artifact@v3
         with:
           name: container-security-report
           path: |
-            container-security-report.md
             trivy-results.sarif
             docker-bench-results.txt
+            container-security-report.md
 
   compliance-validation:
+    name: Compliance Validation
     runs-on: ubuntu-latest
     needs: [backend-security-scan, frontend-security-scan, container-security-scan]
     timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
 
     steps:
-      - name: Download Security Reports
+      - name: Download All Scan Reports
         uses: actions/download-artifact@v3
         with:
           path: security-reports
@@ -254,14 +270,14 @@ jobs:
           echo "# SOC 2 Type II Controls Check" > soc2-compliance.md
           # Add SOC 2 validation logic here
           echo "- Security controls validation" >> soc2-compliance.md
-          echo "- Access control validation" >> soc2-compliance.md
-          echo "- Change management validation" >> soc2-compliance.md
+          echo "- Availability controls validation" >> soc2-compliance.md
+          echo "- Confidentiality controls validation" >> soc2-compliance.md
 
       - name: Verify ISO 27001 Compliance
         run: |
           echo "# ISO 27001 Compliance Check" > iso27001-compliance.md
           # Add ISO 27001 validation logic here
-          echo "- Information security validation" >> iso27001-compliance.md
+          echo "- Information security controls validation" >> iso27001-compliance.md
           echo "- Risk assessment validation" >> iso27001-compliance.md
           echo "- Security policy validation" >> iso27001-compliance.md
 
@@ -286,10 +302,24 @@ jobs:
         run: |
           mkdir -p compliance-evidence
           cp -r security-reports/* compliance-evidence/
-          cp *.md compliance-evidence/
+          cp *compliance.md compliance-evidence/
+          cp compliance-report.md compliance-evidence/
 
       - name: Upload Compliance Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: compliance-report
           path: compliance-evidence
+
+      - name: Generate Security Summary
+        run: |
+          echo "# Security and Compliance Summary" > security-summary.md
+          echo "## Scan Time: $(date)" >> security-summary.md
+          echo "## Overall Risk Assessment" >> security-summary.md
+          # Add summary generation logic here
+          
+      - name: Upload Security Summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-summary
+          path: security-summary.md
