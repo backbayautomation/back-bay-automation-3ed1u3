@@ -2,103 +2,78 @@
 import { createTheme, ThemeOptions, responsiveFontSizes } from '@mui/material/styles';
 import variables from '../styles/variables.scss';
 
-// Type definitions for enhanced theme configuration
-declare module '@mui/material/styles' {
-  interface Theme {
-    status: {
-      danger: string;
-    }
-  }
-  interface ThemeOptions {
-    status?: {
-      danger?: string;
-    }
-  }
-}
+// =============================================================================
+// Theme Configuration
+// Implements WCAG 2.1 AA compliant theming with dark mode support
+// =============================================================================
 
-// Base theme configuration shared between light and dark modes
 const baseThemeOptions: ThemeOptions = {
   typography: {
-    fontFamily: variables.fontFamilyPrimary,
-    fontSize: parseInt(variables.fontSizeBase),
-    htmlFontSize: 16,
+    fontFamily: variables.$font_family_primary,
+    fontSize: parseInt(variables.$font_size_base),
+    htmlFontSize: parseInt(variables.$font_size_base),
     fontWeightLight: 300,
-    fontWeightRegular: 400,
-    fontWeightMedium: 500,
-    fontWeightBold: 700,
+    fontWeightRegular: variables.$font_weight_regular,
+    fontWeightMedium: variables.$font_weight_medium,
+    fontWeightBold: variables.$font_weight_bold,
     h1: {
-      fontSize: '2.5rem',
-      fontWeight: 700,
-      lineHeight: 1.2,
-      letterSpacing: '-0.01562em',
+      fontSize: variables.$font_size_xxl,
+      fontWeight: variables.$font_weight_bold,
+      lineHeight: variables.$line_height_heading,
+      letterSpacing: variables.$letter_spacing_heading,
     },
     h2: {
-      fontSize: '2rem',
-      fontWeight: 700,
-      lineHeight: 1.2,
-      letterSpacing: '-0.00833em',
+      fontSize: variables.$font_size_xl,
+      fontWeight: variables.$font_weight_bold,
+      lineHeight: variables.$line_height_heading,
+      letterSpacing: variables.$letter_spacing_heading,
     },
     h3: {
-      fontSize: '1.75rem',
-      fontWeight: 500,
-      lineHeight: 1.2,
-      letterSpacing: '0em',
+      fontSize: variables.$font_size_lg,
+      fontWeight: variables.$font_weight_medium,
+      lineHeight: variables.$line_height_heading,
+      letterSpacing: variables.$letter_spacing_base,
     },
     body1: {
-      fontSize: '1rem',
-      lineHeight: 1.5,
-      letterSpacing: '0.00938em',
+      fontSize: variables.$font_size_base,
+      lineHeight: variables.$line_height_base,
+      letterSpacing: variables.$letter_spacing_base,
     },
     body2: {
-      fontSize: '0.875rem',
-      lineHeight: 1.43,
-      letterSpacing: '0.01071em',
+      fontSize: variables.$font_size_md,
+      lineHeight: variables.$line_height_base,
+      letterSpacing: variables.$letter_spacing_base,
     },
     button: {
-      fontSize: '0.875rem',
-      fontWeight: 500,
-      lineHeight: 1.75,
-      letterSpacing: '0.02857em',
-      textTransform: 'uppercase',
+      fontSize: variables.$font_size_md,
+      fontWeight: variables.$font_weight_medium,
+      lineHeight: variables.$line_height_base,
+      letterSpacing: variables.$letter_spacing_base,
+      textTransform: 'none',
     },
   },
   breakpoints: {
     values: {
-      xs: 0,
-      sm: 576,
-      md: 768,
-      lg: 992,
-      xl: 1200,
+      xs: parseInt(variables.$breakpoint_mobile),
+      sm: parseInt(variables.$breakpoint_tablet),
+      md: parseInt(variables.$breakpoint_desktop),
+      lg: parseInt(variables.$breakpoint_large),
+      xl: parseInt(variables.$breakpoint_xlarge),
     },
   },
-  spacing: (factor: number) => `${8 * factor}px`,
-  components: {
-    MuiButton: {
-      styleOverrides: {
-        root: {
-          borderRadius: '4px',
-          padding: '8px 16px',
-          minWidth: '64px',
-          transition: 'background-color 250ms cubic-bezier(0.4, 0, 0.2, 1)',
-        },
-      },
+  spacing: (factor: number) => `${parseInt(variables.$spacing_base) * factor}px`,
+  shape: {
+    borderRadius: parseInt(variables.$border_radius_md),
+  },
+  transitions: {
+    duration: {
+      shortest: parseInt(variables.$animation_duration_base),
+      standard: parseInt(variables.$animation_duration_slow),
     },
-    MuiTextField: {
-      styleOverrides: {
-        root: {
-          '& .MuiOutlinedInput-root': {
-            borderRadius: '4px',
-          },
-        },
-      },
-    },
-    MuiCard: {
-      styleOverrides: {
-        root: {
-          borderRadius: '8px',
-          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-        },
-      },
+    easing: {
+      easeInOut: variables.$animation_timing_base,
+      easeOut: variables.$animation_timing_entrance,
+      easeIn: variables.$animation_timing_exit,
     },
   },
 };
@@ -110,49 +85,78 @@ export const createLightTheme = () => {
     palette: {
       mode: 'light',
       primary: {
-        main: variables.colorPrimary,
-        light: '#3384D7',
-        dark: '#004C99',
+        main: variables.$primary,
+        light: variables.$primary_light,
+        dark: variables.$primary_dark,
         contrastText: '#FFFFFF',
       },
       secondary: {
-        main: variables.colorSecondary,
-        light: '#6FBF73',
-        dark: '#388E3C',
+        main: variables.$secondary,
         contrastText: '#FFFFFF',
       },
       error: {
-        main: '#DC3545',
-        light: '#E35D6A',
-        dark: '#C82333',
+        main: variables.$error,
         contrastText: '#FFFFFF',
       },
       warning: {
-        main: '#FFC107',
-        light: '#FFCD38',
-        dark: '#E0A800',
+        main: variables.$warning,
         contrastText: '#000000',
       },
       info: {
-        main: '#17A2B8',
-        light: '#31B0C6',
-        dark: '#138496',
+        main: variables.$info,
         contrastText: '#FFFFFF',
       },
       success: {
-        main: '#28A745',
-        light: '#48B461',
-        dark: '#1E7E34',
+        main: variables.$success,
         contrastText: '#FFFFFF',
       },
       text: {
-        primary: variables.textPrimary,
-        secondary: '#6C757D',
-        disabled: '#A0A0A0',
+        primary: variables.$text_primary,
+        secondary: variables.$text_secondary,
+        disabled: variables.$text_disabled,
       },
       background: {
-        default: variables.backgroundPrimary,
-        paper: '#F8F9FA',
+        default: variables.$background_color,
+        paper: variables.$background_secondary,
+      },
+      action: {
+        focusOpacity: 0.12,
+        selectedOpacity: 0.08,
+        hoverOpacity: 0.04,
+      },
+    },
+    components: {
+      MuiButton: {
+        styleOverrides: {
+          root: {
+            borderRadius: variables.$border_radius_md,
+            padding: `${variables.$spacing_sm} ${variables.$spacing_md}`,
+            '&:focus-visible': {
+              outline: `2px solid ${variables.$focus_ring_color}`,
+              outlineOffset: '2px',
+            },
+          },
+        },
+      },
+      MuiTextField: {
+        styleOverrides: {
+          root: {
+            '& .MuiOutlinedInput-root': {
+              borderRadius: variables.$border_radius_md,
+              '&:focus-within': {
+                boxShadow: `0 0 0 3px ${variables.$focus_ring_color}`,
+              },
+            },
+          },
+        },
+      },
+      MuiCard: {
+        styleOverrides: {
+          root: {
+            borderRadius: variables.$border_radius_lg,
+            boxShadow: variables.$shadow_md,
+          },
+        },
       },
     },
   });
@@ -167,58 +171,77 @@ export const createDarkTheme = () => {
     palette: {
       mode: 'dark',
       primary: {
-        main: variables.colorPrimary,
-        light: '#3384D7',
-        dark: '#004C99',
+        main: variables.$primary_light,
+        light: variables.$primary,
+        dark: variables.$primary_dark,
         contrastText: '#FFFFFF',
       },
       secondary: {
-        main: variables.colorSecondary,
-        light: '#6FBF73',
-        dark: '#388E3C',
+        main: variables.$secondary,
         contrastText: '#FFFFFF',
       },
       error: {
-        main: '#DC3545',
-        light: '#E35D6A',
-        dark: '#C82333',
+        main: variables.$error,
         contrastText: '#FFFFFF',
       },
       warning: {
-        main: '#FFC107',
-        light: '#FFCD38',
-        dark: '#E0A800',
+        main: variables.$warning,
         contrastText: '#000000',
       },
       info: {
-        main: '#17A2B8',
-        light: '#31B0C6',
-        dark: '#138496',
+        main: variables.$info,
         contrastText: '#FFFFFF',
       },
       success: {
-        main: '#28A745',
-        light: '#48B461',
-        dark: '#1E7E34',
+        main: variables.$success,
         contrastText: '#FFFFFF',
       },
       text: {
-        primary: '#E0E0E0',
-        secondary: '#A0A0A0',
-        disabled: '#666666',
+        primary: variables.$dark_text_primary,
+        secondary: variables.$dark_text_secondary,
+        disabled: variables.$text_disabled,
       },
       background: {
-        default: variables.darkBackgroundPrimary,
-        paper: '#1E1E1E',
+        default: variables.$dark_background_color,
+        paper: variables.$dark_background_secondary,
+      },
+      action: {
+        focusOpacity: 0.12,
+        selectedOpacity: 0.16,
+        hoverOpacity: 0.08,
       },
     },
     components: {
-      ...baseThemeOptions.components,
+      MuiButton: {
+        styleOverrides: {
+          root: {
+            borderRadius: variables.$border_radius_md,
+            padding: `${variables.$spacing_sm} ${variables.$spacing_md}`,
+            '&:focus-visible': {
+              outline: `2px solid ${variables.$focus_ring_color}`,
+              outlineOffset: '2px',
+            },
+          },
+        },
+      },
+      MuiTextField: {
+        styleOverrides: {
+          root: {
+            '& .MuiOutlinedInput-root': {
+              borderRadius: variables.$border_radius_md,
+              '&:focus-within': {
+                boxShadow: `0 0 0 3px ${variables.$focus_ring_color}`,
+              },
+            },
+          },
+        },
+      },
       MuiCard: {
         styleOverrides: {
           root: {
-            backgroundColor: '#1E1E1E',
-            boxShadow: '0 4px 6px rgba(0, 0, 0, 0.3)',
+            borderRadius: variables.$border_radius_lg,
+            boxShadow: variables.$shadow_md,
+            backgroundColor: variables.$dark_background_secondary,
           },
         },
       },
@@ -228,6 +251,6 @@ export const createDarkTheme = () => {
   return responsiveFontSizes(darkTheme);
 };
 
-// Export pre-configured themes
+// Export theme instances
 export const lightTheme = createLightTheme();
 export const darkTheme = createDarkTheme();
