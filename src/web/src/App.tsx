@@ -1,8 +1,8 @@
-import React, { lazy, Suspense, useEffect } from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { CssBaseline } from '@mui/material';
 import { Helmet } from 'react-helmet-async';
-import { withErrorBoundary } from 'react-error-boundary';
+import { ErrorBoundary } from 'react-error-boundary';
 
 // Layouts
 import AdminLayout from './layouts/AdminLayout';
@@ -14,7 +14,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 // Analytics
-import { analyticsService } from './services/analytics';
+import { trackRouteChange } from './services/analytics';
 
 // Lazy-loaded components for code splitting
 const Login = lazy(() => import('./pages/auth/Login'));
@@ -30,118 +30,103 @@ const SECURITY_HEADERS = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
 };
 
-// Route change tracking component
+// Error fallback component
+const ErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
+  <div role="alert" style={{ padding: '2rem', textAlign: 'center' }}>
+    <h2>Application Error</h2>
+    <pre style={{ color: 'red' }}>{error.message}</pre>
+  </div>
+);
+
+// Loading fallback component
+const LoadingFallback: React.FC = () => (
+  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+    Loading...
+  </div>
+);
+
+// Route change tracker component
 const RouteTracker: React.FC = () => {
   const location = useLocation();
 
-  useEffect(() => {
-    analyticsService.trackRouteChange({
+  React.useEffect(() => {
+    trackRouteChange({
       path: location.pathname,
       timestamp: new Date().toISOString()
-    }).catch(error => {
-      console.error('Analytics tracking error:', error);
     });
   }, [location]);
 
   return null;
 };
 
-// Error fallback component
-const ErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
-  <div role="alert" style={{ padding: '20px', textAlign: 'center' }}>
-    <h2>Application Error</h2>
-    <pre style={{ whiteSpace: 'pre-wrap' }}>{error.message}</pre>
-  </div>
-);
-
-// Main App component with enhanced security and monitoring
+/**
+ * Root application component implementing the dual-portal system with
+ * enhanced security features and performance optimizations.
+ */
 const App: React.FC = () => {
   return (
-    <BrowserRouter>
-      <ThemeProvider>
-        <AuthProvider>
-          <Helmet>
-            {/* Security headers */}
-            {Object.entries(SECURITY_HEADERS).map(([key, value]) => (
-              <meta key={key} httpEquiv={key} content={value} />
-            ))}
-            {/* Basic meta tags */}
-            <title>AI-Powered Product Catalog Search</title>
-            <meta name="description" content="Enterprise product catalog search system" />
-            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
-          </Helmet>
+    <ErrorBoundary FallbackComponent={ErrorFallback}>
+      <Helmet>
+        {Object.entries(SECURITY_HEADERS).map(([key, value]) => (
+          <meta key={key} httpEquiv={key} content={value} />
+        ))}
+        <title>AI-Powered Product Catalog Search</title>
+      </Helmet>
 
+      <BrowserRouter>
+        <ThemeProvider>
           <CssBaseline />
-          <RouteTracker />
+          <AuthProvider>
+            <RouteTracker />
+            <Suspense fallback={<LoadingFallback />}>
+              <Routes>
+                {/* Authentication Routes */}
+                <Route element={<AuthLayout redirectTo="/client" />}>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
+                </Route>
 
-          <Suspense fallback={<div>Loading...</div>}>
-            <Routes>
-              {/* Authentication routes */}
-              <Route path="/login" element={
-                <AuthLayout redirectTo="/client">
-                  <Login />
-                </AuthLayout>
-              } />
-              <Route path="/forgot-password" element={
-                <AuthLayout redirectTo="/client">
-                  <ForgotPassword />
-                </AuthLayout>
-              } />
-              <Route path="/reset-password" element={
-                <AuthLayout redirectTo="/client">
-                  <ResetPassword />
-                </AuthLayout>
-              } />
+                {/* Admin Portal Routes */}
+                <Route
+                  path="/admin/*"
+                  element={
+                    <AdminLayout>
+                      <Routes>
+                        {/* Admin routes will be defined in AdminLayout */}
+                      </Routes>
+                    </AdminLayout>
+                  }
+                />
 
-              {/* Admin portal routes */}
-              <Route path="/admin/*" element={
-                <AdminLayout>
-                  <Routes>
-                    <Route path="dashboard" element={<div>Admin Dashboard</div>} />
-                    <Route path="clients" element={<div>Client Management</div>} />
-                    <Route path="documents" element={<div>Document Management</div>} />
-                    <Route path="analytics" element={<div>Analytics Dashboard</div>} />
-                    <Route path="settings" element={<div>Admin Settings</div>} />
-                    <Route path="*" element={<Navigate to="/admin/dashboard" replace />} />
-                  </Routes>
-                </AdminLayout>
-              } />
+                {/* Client Portal Routes */}
+                <Route
+                  path="/client/*"
+                  element={
+                    <ClientLayout>
+                      <Routes>
+                        {/* Client routes will be defined in ClientLayout */}
+                      </Routes>
+                    </ClientLayout>
+                  }
+                />
 
-              {/* Client portal routes */}
-              <Route path="/client/*" element={
-                <ClientLayout>
-                  <Routes>
-                    <Route path="/" element={<div>Client Dashboard</div>} />
-                    <Route path="chat" element={<div>Chat Interface</div>} />
-                    <Route path="documents" element={<div>Document Library</div>} />
-                    <Route path="settings" element={<div>Client Settings</div>} />
-                    <Route path="*" element={<Navigate to="/client" replace />} />
-                  </Routes>
-                </ClientLayout>
-              } />
-
-              {/* Default redirect */}
-              <Route path="/" element={<Navigate to="/client" replace />} />
-              <Route path="*" element={<Navigate to="/client" replace />} />
-            </Routes>
-          </Suspense>
-        </AuthProvider>
-      </ThemeProvider>
-    </BrowserRouter>
+                {/* Default Redirect */}
+                <Route path="/" element={<Navigate to="/client" replace />} />
+                
+                {/* 404 Route */}
+                <Route path="*" element={
+                  <div style={{ padding: '2rem', textAlign: 'center' }}>
+                    <h2>404 - Page Not Found</h2>
+                  </div>
+                } />
+              </Routes>
+            </Suspense>
+          </AuthProvider>
+        </ThemeProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 };
 
-// Enhanced App component with error boundary
-const EnhancedApp = withErrorBoundary(App, {
-  FallbackComponent: ErrorFallback,
-  onError: (error) => {
-    console.error('Application Error:', error);
-    analyticsService.trackError({
-      error: error.message,
-      stack: error.stack,
-      timestamp: new Date().toISOString()
-    }).catch(console.error);
-  }
-});
-
-export default EnhancedApp;
+export default App;
