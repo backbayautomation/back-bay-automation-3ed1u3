@@ -1,16 +1,19 @@
 /**
  * Core API utility functions and request handling implementation.
- * Provides robust error handling, request/response interceptors, retry logic,
- * and standardized API communication patterns with security controls.
+ * Provides robust error handling, request/response interceptors,
+ * retry logic, and standardized API communication patterns.
  * @version 1.0.0
  */
 
-import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from 'axios'; // v1.5.0
+// External dependencies
+import axios, { AxiosError, AxiosInstance } from 'axios'; // v1.5.0
+
+// Internal dependencies
 import { API_CONFIG } from '../config/api';
 import { ApiResponse } from '../types/common';
 
 /**
- * Interface for extended request options with authentication and retry controls
+ * Extended request options interface with authentication and retry controls
  */
 export interface RequestOptions {
   skipAuth?: boolean;
@@ -21,7 +24,7 @@ export interface RequestOptions {
 }
 
 /**
- * Interface for standardized error responses with detailed categorization
+ * Standardized error response interface with detailed categorization
  */
 interface ErrorResponse {
   message: string;
@@ -51,7 +54,6 @@ export const createApiInstance = (options: RequestOptions = {}): AxiosInstance =
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'X-Client-Version': process.env.VITE_APP_VERSION || '1.0.0',
       ...options.customHeaders,
     },
   });
@@ -59,7 +61,7 @@ export const createApiInstance = (options: RequestOptions = {}): AxiosInstance =
   // Request interceptor for authentication
   if (!options.skipAuth) {
     instance.interceptors.request.use(async (config) => {
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('accessToken');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -73,7 +75,7 @@ export const createApiInstance = (options: RequestOptions = {}): AxiosInstance =
     return config;
   });
 
-  // Response interceptor for error handling and monitoring
+  // Response interceptor for error handling and transformation
   instance.interceptors.response.use(
     (response) => {
       // Reset circuit breaker on successful response
@@ -82,32 +84,41 @@ export const createApiInstance = (options: RequestOptions = {}): AxiosInstance =
         circuitBreakerState.isOpen = false;
       }
 
-      // Log request duration
-      const duration = Date.now() - (response.config.metadata?.startTime || 0);
-      console.debug(`Request to ${response.config.url} completed in ${duration}ms`);
+      // Calculate request duration
+      const duration = Date.now() - response.config.metadata.startTime;
+      console.debug(`API call to ${response.config.url} completed in ${duration}ms`);
 
       return response;
     },
     async (error: AxiosError) => {
-      const errorResponse = await handleApiError(error);
-
-      // Update circuit breaker state
+      // Handle circuit breaker logic
       if (options.useCircuitBreaker) {
         circuitBreakerState.failures++;
         circuitBreakerState.lastFailure = Date.now();
-        if (circuitBreakerState.failures >= API_CONFIG.RETRY_ATTEMPTS) {
+        if (circuitBreakerState.failures >= 5) {
           circuitBreakerState.isOpen = true;
         }
       }
 
-      // Implement retry logic if not skipped
-      if (!options.skipRetry && await retryRequest(error, circuitBreakerState.failures)) {
-        return instance(error.config!);
-      }
-
+      // Process error through handler
+      const errorResponse = await handleApiError(error);
       return Promise.reject(errorResponse);
     }
   );
+
+  // Configure retry logic if not skipped
+  if (!options.skipRetry) {
+    instance.interceptors.response.use(
+      (response) => response,
+      async (error: AxiosError) => {
+        const shouldRetry = await retryRequest(error, 0);
+        if (shouldRetry) {
+          return instance(error.config);
+        }
+        return Promise.reject(error);
+      }
+    );
+  }
 
   return instance;
 };
@@ -119,10 +130,10 @@ export const handleApiError = async (error: AxiosError): Promise<ErrorResponse> 
   const timestamp = Date.now();
   const requestId = Math.random().toString(36).substring(7);
 
-  // Network errors
+  // Network or connection errors
   if (!error.response) {
     return {
-      message: 'Network error occurred. Please check your connection.',
+      message: 'Unable to connect to the server. Please check your internet connection.',
       code: 'NETWORK_ERROR',
       details: error.message,
       errorType: 'network',
@@ -134,20 +145,20 @@ export const handleApiError = async (error: AxiosError): Promise<ErrorResponse> 
   // Authentication errors
   if (error.response.status === 401) {
     // Attempt token refresh if available
-    const refreshToken = localStorage.getItem('refresh_token');
+    const refreshToken = localStorage.getItem('refreshToken');
     if (refreshToken) {
       try {
         // Token refresh logic would go here
         // For now, just clear tokens and return auth error
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
       } catch (refreshError) {
         console.error('Token refresh failed:', refreshError);
       }
     }
 
     return {
-      message: 'Authentication failed. Please log in again.',
+      message: 'Your session has expired. Please log in again.',
       code: 'AUTH_ERROR',
       details: error.response.data,
       errorType: 'auth',
@@ -159,7 +170,7 @@ export const handleApiError = async (error: AxiosError): Promise<ErrorResponse> 
   // Validation errors
   if (error.response.status === 400) {
     return {
-      message: 'Invalid request. Please check your input.',
+      message: 'The request contains invalid data. Please check your input.',
       code: 'VALIDATION_ERROR',
       details: error.response.data,
       errorType: 'validation',
@@ -168,11 +179,35 @@ export const handleApiError = async (error: AxiosError): Promise<ErrorResponse> 
     };
   }
 
+  // Rate limiting errors
+  if (error.response.status === 429) {
+    return {
+      message: 'Too many requests. Please try again later.',
+      code: 'RATE_LIMIT_ERROR',
+      details: error.response.data,
+      errorType: 'server',
+      timestamp,
+      requestId,
+    };
+  }
+
   // Server errors
+  if (error.response.status >= 500) {
+    return {
+      message: 'An unexpected error occurred. Please try again later.',
+      code: 'SERVER_ERROR',
+      details: error.response.data,
+      errorType: 'server',
+      timestamp,
+      requestId,
+    };
+  }
+
+  // Default error response
   return {
-    message: 'An unexpected error occurred. Please try again later.',
-    code: 'SERVER_ERROR',
-    details: error.response.data,
+    message: 'An unexpected error occurred.',
+    code: 'UNKNOWN_ERROR',
+    details: error.response?.data || error.message,
     errorType: 'server',
     timestamp,
     requestId,
@@ -188,31 +223,25 @@ const retryRequest = async (error: AxiosError, retryCount: number): Promise<bool
     return false;
   }
 
-  // Don't retry certain status codes
-  const status = error.response?.status;
-  if (status && [400, 401, 403, 404].includes(status)) {
-    return false;
+  // Don't retry certain error types
+  if (error.response) {
+    const status = error.response.status;
+    if (status === 400 || status === 401 || status === 403 || status === 404) {
+      return false;
+    }
   }
 
   // Calculate exponential backoff with jitter
   const backoff = Math.min(
-    API_CONFIG.MAX_BACKOFF_MS,
-    Math.pow(2, retryCount) * 1000 + Math.random() * 1000
+    1000 * Math.pow(2, retryCount) + Math.random() * 1000,
+    API_CONFIG.MAX_BACKOFF_MS
   );
 
   // Wait for backoff period
   await new Promise(resolve => setTimeout(resolve, backoff));
 
-  // Check circuit breaker
-  if (circuitBreakerState.isOpen) {
-    const cooldownPeriod = 60000; // 1 minute
-    if (Date.now() - circuitBreakerState.lastFailure < cooldownPeriod) {
-      return false;
-    }
-    // Reset circuit breaker for retry
-    circuitBreakerState.isOpen = false;
-    circuitBreakerState.failures = 0;
-  }
+  // Log retry attempt
+  console.debug(`Retrying request (attempt ${retryCount + 1} of ${API_CONFIG.RETRY_ATTEMPTS})`);
 
   return true;
 };
