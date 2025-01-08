@@ -1,8 +1,8 @@
-import React, { useCallback, useMemo } from 'react';
-import { IconButton as MuiIconButton, IconButtonProps as MuiIconButtonProps } from '@mui/material'; // v5.14.0
-import { styled, useTheme } from '@mui/material/styles'; // v5.14.0
+import React from 'react';
+import { IconButton as MuiIconButton, IconButtonProps as MuiIconButtonProps } from '@mui/material';
+import { styled, useTheme } from '@mui/material/styles';
 
-// Interface for component props with strict accessibility requirements
+// Interface for component props extending MUI IconButton props
 interface IconButtonProps extends Omit<MuiIconButtonProps, 'color'> {
   children: React.ReactNode;
   color: 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success' | 'default';
@@ -12,102 +12,100 @@ interface IconButtonProps extends Omit<MuiIconButtonProps, 'color'> {
   testId?: string;
 }
 
-// Error boundary for style computation and rendering failures
-class IconButtonErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
+// Custom hook for computing styles based on theme and props
+const useIconButtonStyles = (props: Pick<IconButtonProps, 'size' | 'color' | 'disabled'>) => {
+  const theme = useTheme();
+
+  return React.useMemo(() => {
+    // Size mapping ensuring minimum 44px touch target for mobile
+    const sizeMap = {
+      small: {
+        padding: theme.spacing(1),
+        minWidth: '44px',
+        minHeight: '44px',
+      },
+      medium: {
+        padding: theme.spacing(1.5),
+        minWidth: '48px',
+        minHeight: '48px',
+      },
+      large: {
+        padding: theme.spacing(2),
+        minWidth: '56px',
+        minHeight: '56px',
+      },
+    };
+
+    return {
+      ...sizeMap[props.size || 'medium'],
+      color: props.disabled ? theme.palette.action.disabled : theme.palette[props.color].main,
+      '&:hover': {
+        backgroundColor: props.disabled ? 'transparent' : theme.palette[props.color].light,
+      },
+    };
+  }, [theme, props.size, props.color, props.disabled]);
+};
+
+// Styled component with enhanced accessibility and theme support
+const StyledIconButton = styled(MuiIconButton, {
+  shouldForwardProp: (prop) => !['testId'].includes(prop as string),
+})<IconButtonProps>(({ theme, size, color, disabled }) => ({
+  borderRadius: theme.shape.borderRadius,
+  transition: theme.transitions.create(['background-color', 'box-shadow', 'border-color', 'color'], {
+    duration: theme.transitions.duration.short,
+  }),
+  
+  // Base styles
+  ...useIconButtonStyles({ size, color, disabled }),
+  
+  // Focus visible styles for accessibility
+  '&.Mui-focusVisible': {
+    outline: `3px solid ${theme.palette[color].main}`,
+    outlineOffset: '2px',
+  },
+  
+  // Active state styles
+  '&:active': {
+    backgroundColor: disabled ? 'transparent' : theme.palette[color].dark,
+  },
+  
+  // Ensure sufficient color contrast for accessibility
+  '@media (prefers-contrast: more)': {
+    outline: `2px solid ${theme.palette[color].dark}`,
+  },
+  
+  // Disabled state styles
+  '&.Mui-disabled': {
+    opacity: theme.palette.action.disabledOpacity,
+    cursor: 'not-allowed',
+  },
+}));
+
+// Error boundary for the component
+class IconButtonErrorBoundary extends React.Component<{ children: React.ReactNode }> {
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('IconButton Error:', error, errorInfo);
   }
 
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  render(): React.ReactNode {
-    if (this.state.hasError) {
-      return <MuiIconButton disabled aria-label="Error state button" />;
-    }
+  render() {
     return this.props.children;
   }
 }
 
-// Styled component with comprehensive theme support
-const StyledIconButton = styled(MuiIconButton, {
-  shouldForwardProp: (prop) => prop !== 'size' && prop !== 'color',
-})<IconButtonProps>(({ theme, size = 'medium', color = 'primary', disabled }) => ({
-  // Ensure minimum touch target size of 44px for mobile
-  minWidth: size === 'small' ? '36px' : size === 'large' ? '52px' : '44px',
-  minHeight: size === 'small' ? '36px' : size === 'large' ? '52px' : '44px',
-  
-  // Theme-aware color system with verified contrast ratios
-  color: disabled ? theme.palette.action.disabled : theme.palette[color].main,
-  backgroundColor: 'transparent',
-  
-  // Focus, hover, and active states
-  '&:focus-visible': {
-    outline: `2px solid ${theme.palette[color].main}`,
-    outlineOffset: '2px',
-  },
-  
-  '&:hover': !disabled && {
-    backgroundColor: theme.palette[color].light,
-    '@media (hover: none)': {
-      backgroundColor: 'transparent',
-    },
-  },
-  
-  '&:active': !disabled && {
-    backgroundColor: theme.palette[color].dark,
-  },
-  
-  // Transition animations
-  transition: theme.transitions.create(['background-color', 'color', 'box-shadow'], {
-    duration: theme.transitions.duration.short,
-  }),
-  
-  // Disabled state
-  '&.Mui-disabled': {
-    opacity: theme.palette.action.disabledOpacity,
-  },
-}));
-
-// Custom hook for style computation
-const useIconButtonStyles = (props: Pick<IconButtonProps, 'size' | 'color' | 'disabled'>) => {
-  const theme = useTheme();
-  
-  return useMemo(() => ({
-    root: {
-      padding: props.size === 'small' ? theme.spacing(1) : props.size === 'large' ? theme.spacing(2) : theme.spacing(1.5),
-    },
-  }), [theme, props.size]);
-};
-
-// Main component implementation
-export const IconButton: React.FC<IconButtonProps> = React.memo(({
+// Main component implementation with memoization
+const IconButton = React.memo<IconButtonProps>(({
   children,
   color = 'primary',
   size = 'medium',
   disabled = false,
   ariaLabel,
   testId,
-  onClick,
   ...props
 }) => {
   // Validate required props
   if (!ariaLabel) {
     console.error('IconButton: ariaLabel prop is required for accessibility');
-    ariaLabel = 'Unlabeled button';
   }
-
-  // Memoize styles
-  const styles = useIconButtonStyles({ size, color, disabled });
-
-  // Memoize click handler
-  const handleClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    if (!disabled && onClick) {
-      onClick(event);
-    }
-  }, [disabled, onClick]);
 
   return (
     <IconButtonErrorBoundary>
@@ -117,8 +115,6 @@ export const IconButton: React.FC<IconButtonProps> = React.memo(({
         disabled={disabled}
         aria-label={ariaLabel}
         data-testid={testId}
-        onClick={handleClick}
-        sx={styles.root}
         {...props}
       >
         {children}
@@ -127,6 +123,7 @@ export const IconButton: React.FC<IconButtonProps> = React.memo(({
   );
 });
 
+// Display name for debugging
 IconButton.displayName = 'IconButton';
 
 export default IconButton;
