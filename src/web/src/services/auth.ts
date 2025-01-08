@@ -27,35 +27,35 @@ const auditLogger = winston.createLogger({
 });
 
 /**
- * Enhanced authentication service with enterprise security features
+ * Enterprise authentication service with comprehensive security features
  */
 export class AuthService {
     private tokens: AuthTokens | null = null;
     private currentUser: UserProfile | null = null;
+    private refreshTimer: NodeJS.Timeout | null = null;
     private authAttempts: number = 0;
     private lastAuthAttempt: number = 0;
-    private refreshTimer: NodeJS.Timeout | null = null;
 
     constructor() {
-        this.initializeAuth();
+        this.initializeService();
     }
 
     /**
-     * Initialize authentication state with secure token loading
+     * Initialize the authentication service with secure token loading
      */
-    private async initializeAuth(): Promise<void> {
+    private async initializeService(): Promise<void> {
         try {
             const encryptedTokens = localStorage.getItem(AUTH_STORAGE_KEY);
             if (encryptedTokens) {
                 const decryptedTokens = await decryptData(encryptedTokens);
-                if (this.validateTokenIntegrity(decryptedTokens)) {
+                if (isAuthTokens(decryptedTokens) && this.validateTokenIntegrity(decryptedTokens)) {
                     this.tokens = decryptedTokens;
                     this.setupTokenRefresh();
                 }
             }
         } catch (error) {
-            auditLogger.error('Auth initialization failed', { error });
-            this.clearAuth();
+            auditLogger.error('Failed to initialize auth service', { error });
+            this.clearAuthState();
         }
     }
 
@@ -87,13 +87,13 @@ export class AuthService {
                 throw new Error('Authentication failed');
             }
 
-            const { tokens, user } = await response.json();
+            const { user, tokens } = await response.json();
 
-            if (!isAuthTokens(tokens) || !isUserProfile(user)) {
+            if (!isUserProfile(user) || !isAuthTokens(tokens)) {
                 throw new Error('Invalid response format');
             }
 
-            // Encrypt tokens before storage
+            // Encrypt and store tokens
             const encryptedTokens = await encryptData(tokens);
             localStorage.setItem(AUTH_STORAGE_KEY, encryptedTokens);
 
@@ -120,7 +120,7 @@ export class AuthService {
     /**
      * Secure token refresh with encryption and validation
      */
-    private async secureTokenRefresh(): Promise<AuthTokens> {
+    public async secureTokenRefresh(): Promise<AuthTokens> {
         if (!this.tokens?.refreshToken) {
             throw new Error('No refresh token available');
         }
@@ -140,9 +140,9 @@ export class AuthService {
                     throw new Error('Token refresh failed');
                 }
 
-                const newTokens: AuthTokens = await response.json();
-                if (!this.validateTokenIntegrity(newTokens)) {
-                    throw new Error('Invalid tokens received');
+                const newTokens = await response.json();
+                if (!isAuthTokens(newTokens)) {
+                    throw new Error('Invalid token format');
                 }
 
                 // Encrypt and store new tokens
@@ -164,7 +164,7 @@ export class AuthService {
                         userId: this.currentUser?.id,
                         error: error.message
                     });
-                    this.clearAuth();
+                    this.clearAuthState();
                     throw error;
                 }
                 // Exponential backoff
@@ -178,23 +178,23 @@ export class AuthService {
     /**
      * Validate token integrity and authenticity
      */
-    private validateTokenIntegrity(tokens: AuthTokens): boolean {
+    public validateTokenIntegrity(tokens: AuthTokens): boolean {
         try {
-            if (!tokens.accessToken || !tokens.refreshToken) {
+            const decodedToken: any = jwtDecode(tokens.accessToken);
+            
+            // Validate token claims
+            if (!decodedToken.exp || !decodedToken.iss || !decodedToken.sub) {
                 return false;
             }
 
-            const decodedAccess = jwtDecode<{ exp: number; sub: string }>(tokens.accessToken);
-            const decodedRefresh = jwtDecode<{ exp: number; sub: string }>(tokens.refreshToken);
-
-            // Validate token expiration
-            const now = Date.now() / 1000;
-            if (decodedAccess.exp < now || decodedRefresh.exp < now) {
+            // Check token expiration
+            const expirationTime = decodedToken.exp * 1000;
+            if (Date.now() >= expirationTime) {
                 return false;
             }
 
-            // Validate token subject matches
-            if (decodedAccess.sub !== decodedRefresh.sub) {
+            // Validate issuer
+            if (decodedToken.iss !== process.env.REACT_APP_AUTH_ISSUER) {
                 return false;
             }
 
@@ -221,7 +221,7 @@ export class AuthService {
         this.refreshTimer = setTimeout(() => {
             this.secureTokenRefresh().catch(error => {
                 auditLogger.error('Automatic token refresh failed', { error: error.message });
-                this.clearAuth();
+                this.clearAuthState();
             });
         }, refreshTime);
     }
@@ -229,13 +229,13 @@ export class AuthService {
     /**
      * Clear authentication state securely
      */
-    private clearAuth(): void {
+    private clearAuthState(): void {
         this.tokens = null;
         this.currentUser = null;
-        localStorage.removeItem(AUTH_STORAGE_KEY);
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
         }
+        localStorage.removeItem(AUTH_STORAGE_KEY);
     }
 
     /**
@@ -246,18 +246,18 @@ export class AuthService {
     }
 
     /**
-     * Check if user is authenticated
+     * Check if user has required role
      */
-    public isAuthenticated(): boolean {
-        return !!this.tokens && !!this.currentUser;
+    public hasRole(requiredRole: UserRole): boolean {
+        return this.currentUser?.role === requiredRole;
     }
 
     /**
-     * Logout user securely
+     * Logout user and clear auth state
      */
     public async logout(): Promise<void> {
         try {
-            if (this.tokens) {
+            if (this.tokens?.accessToken) {
                 await fetch('/api/auth/logout', {
                     method: 'POST',
                     headers: {
@@ -266,17 +266,10 @@ export class AuthService {
                 });
             }
         } catch (error) {
-            auditLogger.error('Logout failed', {
-                userId: this.currentUser?.id,
-                error: error.message
-            });
+            auditLogger.error('Logout failed', { error: error.message });
         } finally {
-            this.clearAuth();
-            auditLogger.info('User logged out', {
-                userId: this.currentUser?.id
-            });
+            this.clearAuthState();
+            auditLogger.info('User logged out', { userId: this.currentUser?.id });
         }
     }
 }
-
-export default new AuthService();
