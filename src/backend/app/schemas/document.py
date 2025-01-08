@@ -1,3 +1,8 @@
+"""
+Pydantic schema models for document data validation and serialization.
+Implements comprehensive validation for multi-format document processing with enhanced security and multi-tenant isolation.
+"""
+
 # pydantic v2.0.0
 from datetime import datetime
 from typing import Optional, List, Dict, Any
@@ -19,11 +24,11 @@ class DocumentBase(BaseModel):
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Document metadata and processing information",
+        description="Additional document metadata",
         examples=[{
-            "page_count": 10,
-            "file_size": "1.2MB",
-            "ocr_confidence": 0.95,
+            "pages": 10,
+            "author": "John Doe",
+            "version": "1.0",
             "content_type": "technical/specification"
         }]
     )
@@ -42,9 +47,9 @@ class DocumentBase(BaseModel):
                 "filename": "technical_spec.pdf",
                 "type": "pdf",
                 "metadata": {
-                    "page_count": 10,
-                    "file_size": "1.2MB",
-                    "ocr_confidence": 0.95
+                    "pages": 10,
+                    "author": "John Doe",
+                    "version": "1.0"
                 },
                 "status": "pending"
             }
@@ -55,7 +60,7 @@ class DocumentCreate(DocumentBase):
     """Pydantic model for creating a new document with strict validation."""
     client_id: UUID4 = Field(
         ...,
-        description="ID of the client that owns this document",
+        description="ID of the client owning this document",
         examples=["123e4567-e89b-12d3-a456-426614174000"]
     )
 
@@ -88,7 +93,7 @@ class DocumentInDB(DocumentBase):
     )
     client_id: UUID4 = Field(
         ...,
-        description="ID of the client that owns this document"
+        description="ID of the client owning this document"
     )
     created_at: datetime = Field(
         ...,
@@ -122,10 +127,10 @@ class Document(DocumentInDB):
         None,
         description="Processed document chunks with embeddings",
         examples=[[{
-            "content": "Technical specifications for product XYZ",
+            "content": "Technical specifications for product A123",
             "page": 1,
             "position": 0,
-            "embedding_id": "123e4567-e89b-12d3-a456-426614174000"
+            "embedding_id": "abc123"
         }]]
     )
 
@@ -140,30 +145,32 @@ class Document(DocumentInDB):
             Document: Validated Document schema instance
             
         Raises:
-            ValueError: If ORM model is invalid or missing required fields
+            ValueError: If invalid or missing required fields
+            TypeError: If invalid ORM model type
         """
-        if not orm_model:
-            raise ValueError("Invalid ORM model provided")
+        if not hasattr(orm_model, '__table__'):
+            raise TypeError("Invalid ORM model provided")
 
         try:
             # Convert ORM model to dictionary with relationships
             data = {
-                "id": orm_model.id,
-                "client_id": orm_model.client_id,
-                "filename": orm_model.filename,
-                "type": orm_model.type,
-                "metadata": orm_model.metadata,
-                "status": orm_model.status,
-                "created_at": orm_model.created_at,
-                "processed_at": orm_model.processed_at,
-                "updated_at": orm_model.updated_at,
-                "updated_by": orm_model.updated_by,
-                "client": orm_model.client if hasattr(orm_model, "client") else None,
-                "chunks": orm_model.chunks if hasattr(orm_model, "chunks") else None
+                'id': orm_model.id,
+                'client_id': orm_model.client_id,
+                'filename': orm_model.filename,
+                'type': orm_model.type,
+                'metadata': orm_model.metadata,
+                'status': orm_model.status,
+                'created_at': orm_model.created_at,
+                'processed_at': orm_model.processed_at,
+                'updated_at': orm_model.updated_at,
+                'updated_by': orm_model.updated_by,
+                'client': orm_model.client if hasattr(orm_model, 'client') else None,
+                'chunks': orm_model.chunks if hasattr(orm_model, 'chunks') else None
             }
             
             # Create and validate Document instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Document from ORM model: {str(e)}")
 
@@ -173,21 +180,26 @@ class Document(DocumentInDB):
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
-                "client_id": "987fcdeb-51a2-43f7-9876-543210987654",
+                "client_id": "987fcdeb-51a2-43f7-9012-345678901234",
                 "filename": "technical_spec.pdf",
                 "type": "pdf",
                 "metadata": {
-                    "page_count": 10,
-                    "file_size": "1.2MB",
-                    "ocr_confidence": 0.95
+                    "pages": 10,
+                    "author": "John Doe",
+                    "version": "1.0"
                 },
                 "status": "completed",
                 "created_at": "2024-01-20T12:00:00Z",
                 "processed_at": "2024-01-20T12:05:00Z",
                 "updated_at": "2024-01-20T12:05:00Z",
-                "updated_by": "456e7890-f12d-34e5-a678-901234567890",
+                "updated_by": "456e789a-b12c-34d5-e678-901234567890",
                 "client": None,
-                "chunks": []
+                "chunks": [{
+                    "content": "Technical specifications for product A123",
+                    "page": 1,
+                    "position": 0,
+                    "embedding_id": "abc123"
+                }]
             }
         }
     )
