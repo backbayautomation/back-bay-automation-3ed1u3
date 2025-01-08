@@ -5,6 +5,8 @@
 ![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
+Last Updated: 2024-01-20 | Version: 1.0.0
+
 ## Overview
 
 The AI-powered Product Catalog Search System backend is a high-performance, scalable solution that leverages advanced AI technologies to automate the extraction, processing, and retrieval of product information from technical documentation. Built with Python 3.11+ and utilizing cutting-edge frameworks and services, the system provides enterprise-grade capabilities for document processing, vector search, and natural language understanding.
@@ -12,7 +14,7 @@ The AI-powered Product Catalog Search System backend is a high-performance, scal
 ### Key Features
 
 - Advanced OCR processing with NVIDIA GPU acceleration
-- Vector-based semantic search using LLamaindex
+- Vector-based semantic search powered by LLamaindex
 - Natural language understanding with GPT-4 integration
 - Async processing pipeline for high-performance operations
 - Multi-tenant architecture with data isolation
@@ -25,27 +27,27 @@ The AI-powered Product Catalog Search System backend is a high-performance, scal
 - Docker (24.0.0+) and Docker Compose (2.20.0+)
 - NVIDIA GPU drivers (latest stable version)
 - Azure CLI (2.50.0+)
-- Node.js 18 or higher (for development tools)
-- Git 2.40 or higher
+- Node.js 18+ (for development tools)
+- Git 2.40+
 - VS Code with recommended extensions
 
 ## Technology Stack
 
-### Core Technologies
-- FastAPI 0.103+ (Web Framework)
-- SQLAlchemy 2.0+ (ORM with async support)
-- Celery 5.3+ (Task Queue)
-- Redis 6+ (Cache & Message Broker)
-- PostgreSQL 15+ with pgvector extension
+### Core Components
+- FastAPI (0.103+) - High-performance async web framework
+- SQLAlchemy (2.0+) - Async ORM with enterprise features
+- Celery (5.3+) - Distributed task processing
+- Redis (6.0+) - Caching and message broker
+- PostgreSQL (15+) - Primary database with vector extension
 
 ### AI/ML Components
-- LLamaindex 0.8+ (Vector Search)
-- OpenAI GPT-4 API (Latest)
-- NVIDIA OCR SDK (Latest)
+- LLamaindex (0.8+) - Vector search and document retrieval
+- OpenAI GPT-4 API - Natural language processing
+- NVIDIA OCR SDK - Document processing and text extraction
 
 ### Cloud Services
 - Azure Kubernetes Service (AKS)
-- Azure Storage
+- Azure Blob Storage
 - Azure Monitor
 - Azure Key Vault
 
@@ -57,18 +59,19 @@ The AI-powered Product Catalog Search System backend is a high-performance, scal
 ```bash
 git clone https://github.com/organization/project
 cd project/src/backend
-pre-commit install
+git config core.hooksPath .githooks
 ```
 
-2. Install Poetry and configure virtual environment:
+2. Install Poetry and configure the virtual environment:
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
 poetry config virtualenvs.in-project true
+poetry env use python3.11
 ```
 
 3. Install project dependencies:
 ```bash
-poetry install
+poetry install --with gpu
 ```
 
 4. Configure environment variables:
@@ -80,6 +83,7 @@ cp .env.example .env
 5. Initialize development database:
 ```bash
 poetry run alembic upgrade head
+poetry run python scripts/seed_db.py
 ```
 
 ### Development Setup
@@ -89,9 +93,9 @@ poetry run alembic upgrade head
 docker-compose up -d
 ```
 
-2. Run database migrations and seed data:
+2. Configure development server:
 ```bash
-poetry run python -m scripts.seed_data
+poetry run python scripts/configure_dev.py
 ```
 
 3. Start development server:
@@ -109,8 +113,7 @@ poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - Follow PEP 8 style guide
 - Maintain test coverage above 85%
-- Use type hints consistently
-- Document all public APIs
+- Use type hints and docstrings
 - Run pre-commit hooks before commits
 
 ### Testing
@@ -143,54 +146,45 @@ poetry run alembic downgrade -1
 
 ### Production Requirements
 
-- AKS cluster with GPU nodes (NVIDIA Tesla T4 or better)
-- Azure SQL Database (Business Critical tier)
-- Azure Redis Cache (Premium tier)
-- Azure Key Vault for secrets management
+- Azure subscription with required services
+- NVIDIA GPU-enabled AKS cluster
+- Azure Container Registry access
+- Production SSL certificates
+- Azure Key Vault access
 
-### Deployment Process
+### Deployment Steps
 
 1. Build production Docker image:
 ```bash
 docker build -t product-search-backend:latest .
 ```
 
-2. Deploy to AKS:
+2. Push to Azure Container Registry:
 ```bash
-az aks get-credentials --resource-group myResourceGroup --name myAKSCluster
-kubectl apply -f k8s/
+az acr login --name <registry-name>
+docker tag product-search-backend:latest <registry-name>.azurecr.io/product-search-backend:latest
+docker push <registry-name>.azurecr.io/product-search-backend:latest
 ```
 
-3. Verify deployment:
+3. Deploy to AKS:
 ```bash
-kubectl get pods -n product-search
-kubectl logs -f deployment/backend-deployment
+kubectl apply -f kubernetes/
 ```
 
 ## Monitoring and Maintenance
 
-### Health Checks
-
-- Readiness probe: `/health/ready`
-- Liveness probe: `/health/live`
-- Metrics endpoint: `/metrics`
-
-### Logging
-
-- Application logs: Azure Application Insights
-- System metrics: Azure Monitor
-- Audit logs: Azure Storage
+- Application metrics available in Azure Monitor
+- Log analytics configured for error tracking
+- Performance monitoring through Application Insights
+- Automated alerts for critical issues
+- Regular security scanning and updates
 
 ## Support and Contact
 
-For technical support or questions:
-- Email: dev-team@example.com
-- Internal Documentation: [Wiki](https://github.com/organization/project/wiki)
+For technical support and inquiries:
+- Development Team: dev-team@example.com
+- Repository: https://github.com/organization/project
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details
-
----
-Last Updated: 2024-01-20
-Version: 1.0.0
+This project is licensed under the MIT License - see the LICENSE file for details.
