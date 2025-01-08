@@ -2,12 +2,12 @@ name: Backend CI
 
 on:
   push:
-    branches: ['main', 'develop']
+    branches: [ main, develop ]
     paths:
       - 'src/backend/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
-    branches: ['main', 'develop']
+    branches: [ main, develop ]
     paths:
       - 'src/backend/**'
       - '.github/workflows/backend-ci.yml'
@@ -16,8 +16,7 @@ env:
   PYTHON_VERSION: '3.11'
   POETRY_VERSION: '1.7.0'
   DOCKER_REGISTRY: 'ghcr.io'
-  DOCKER_IMAGE: ${{ github.repository }}/backend
-  COVERAGE_THRESHOLD: 85
+  COVERAGE_THRESHOLD: '85'
 
 permissions:
   contents: read
@@ -38,7 +37,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -53,21 +52,23 @@ jobs:
       - name: Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python3 - --version ${{ env.POETRY_VERSION }}
-          poetry config virtualenvs.create false
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: |
+          poetry config virtualenvs.create false
+          poetry install --no-interaction --no-root
 
-      - name: Run Black
-        run: poetry run black --check --diff .
+      - name: Run black
+        run: poetry run black . --check --diff --color
 
       - name: Run isort
-        run: poetry run isort --check-only --diff .
+        run: poetry run isort . --check-only --diff
 
-      - name: Run Flake8
+      - name: Run flake8
         run: poetry run flake8 .
 
-      - name: Run MyPy
+      - name: Run mypy
         run: poetry run mypy app tests
 
   test:
@@ -79,7 +80,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -92,32 +93,22 @@ jobs:
       - name: Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python3 - --version ${{ env.POETRY_VERSION }}
-          poetry config virtualenvs.create false
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: |
+          poetry config virtualenvs.create false
+          poetry install --no-interaction --no-root
 
       - name: Run tests with coverage
         run: |
-          poetry run pytest \
-            --cov=app \
-            --cov-report=xml \
-            --cov-report=term-missing \
-            --cov-fail-under=${{ env.COVERAGE_THRESHOLD }} \
-            --junitxml=test-results.xml
+          poetry run pytest --cov=app --cov-report=xml --cov-report=term-missing --cov-fail-under=${{ env.COVERAGE_THRESHOLD }}
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v3
         with:
           name: coverage-report
           path: src/backend/coverage.xml
-          retention-days: 14
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: src/backend/test-results.xml
           retention-days: 14
 
   security-scan:
@@ -129,7 +120,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -165,7 +156,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Docker Buildx
@@ -180,27 +171,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Docker
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE }}
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend
           tags: |
             type=sha,format=long
             type=ref,event=branch
             type=ref,event=tag
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v4
         with:
           context: src/backend
-          file: src/backend/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64
           build-args: |
             PYTHON_VERSION=${{ env.PYTHON_VERSION }}
             POETRY_VERSION=${{ env.POETRY_VERSION }}
@@ -208,7 +198,7 @@ jobs:
       - name: Scan container image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.version }}
+          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
