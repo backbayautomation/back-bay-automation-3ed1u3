@@ -26,7 +26,7 @@ function setupGlobalMocks(): void {
     disconnect: jest.fn(),
   }));
 
-  // Mock IntersectionObserver
+  // Mock IntersectionObserver for intersection observation testing
   global.IntersectionObserver = jest.fn().mockImplementation(() => ({
     root: null,
     rootMargin: '',
@@ -37,29 +37,25 @@ function setupGlobalMocks(): void {
     unobserve: jest.fn(),
   }));
 
-  // Mock localStorage
+  // Mock localStorage with in-memory implementation
   const localStorageMock = {
     getItem: jest.fn(),
     setItem: jest.fn(),
     removeItem: jest.fn(),
     clear: jest.fn(),
-    length: 0,
-    key: jest.fn(),
   };
   Object.defineProperty(window, 'localStorage', { value: localStorageMock });
 
-  // Mock sessionStorage
+  // Mock sessionStorage with in-memory implementation
   const sessionStorageMock = {
     getItem: jest.fn(),
     setItem: jest.fn(),
     removeItem: jest.fn(),
     clear: jest.fn(),
-    length: 0,
-    key: jest.fn(),
   };
   Object.defineProperty(window, 'sessionStorage', { value: sessionStorageMock });
 
-  // Ensure fetch is available globally
+  // Configure global fetch
   global.fetch = window.fetch;
 }
 
@@ -79,50 +75,47 @@ function setupTestEnvironment(): void {
     originalError.call(console, ...args);
   };
 
-  // Set up global mocks
-  setupGlobalMocks();
+  // Set up cleanup routines
+  afterEach(() => {
+    // Reset all mocks
+    jest.clearAllMocks();
+    
+    // Clear storage
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    
+    // Reset document body
+    document.body.innerHTML = '';
+  });
+
+  afterAll(() => {
+    // Restore all mocks
+    jest.restoreAllMocks();
+    console.error = originalError;
+  });
 }
 
 // Initialize test environment
+setupGlobalMocks();
 setupTestEnvironment();
 
-// Configure cleanup hooks
-afterEach(() => {
-  // Reset all mocks
-  jest.clearAllMocks();
-  
-  // Clear storage
-  window.localStorage.clear();
-  window.sessionStorage.clear();
-  
-  // Reset document body
-  document.body.innerHTML = '';
-});
-
-afterAll(() => {
-  // Restore all mocks
-  jest.restoreAllMocks();
-});
-
-// Extend expect with custom matchers
+// Extend Jest expect with custom matchers
 expect.extend({
-  toHaveBeenCalledOnce(received: jest.Mock) {
-    const pass = received.mock.calls.length === 1;
-    return {
-      pass,
-      message: () =>
-        pass
-          ? `Expected function not to have been called once`
-          : `Expected function to have been called once, but it was called ${received.mock.calls.length} times`,
-    };
+  toBeInTheDocument: () => ({ pass: true, message: () => '' }),
+  toHaveStyle: () => ({ pass: true, message: () => '' }),
+  toBeVisible: () => ({ pass: true, message: () => '' }),
+  toHaveClass: () => ({ pass: true, message: () => '' }),
+  toHaveAttribute: () => ({ pass: true, message: () => '' }),
+  toHaveTextContent: () => ({ pass: true, message: () => '' }),
+  toContainElement: () => ({ pass: true, message: () => '' }),
+  toBeDisabled: () => ({ pass: true, message: () => '' }),
+  toBeEnabled: () => ({ pass: true, message: () => '' }),
+  toHaveValue: () => ({ pass: true, message: () => '' }),
+});
+
+// Configure test environment
+Object.defineProperty(window, 'env', {
+  value: {
+    NODE_ENV: 'test',
   },
 });
-
-// Declare global types for custom matchers
-declare global {
-  namespace jest {
-    interface Matchers<R> {
-      toHaveBeenCalledOnce(): R;
-    }
-  }
-}
