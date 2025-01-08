@@ -1,0 +1,62 @@
+[tool.poetry]
+name = "ai-catalog-search-backend"
+version = "1.0.0"
+description = "AI-powered Product Catalog Search System backend with advanced document processing and search capabilities"
+authors = ["Development Team"]
+readme = "README.md"
+packages = [
+    { include = "app" }
+]
+python = "^3.11"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.103.0"
+pydantic = "^2.3.0"
+sqlalchemy = "^2.0.20"
+alembic = "^1.12.0"
+python-jose = "^3.3.0"
+passlib = "^1.7.4"
+celery = "^5.3.4"
+redis = "^5.0.0"
+llama-index = "^0.8.0"
+openai = "^1.3.0"
+azure-storage-blob = "^12.17.0"
+azure-cosmos = "^4.5.1"
+uvicorn = "^0.23.0"
+gunicorn = "^21.2.0"
+python-multipart = "^0.0.6"
+aioredis = "^2.0.1"
+asyncpg = "^0.28.0"
+bcrypt = "^4.0.1"
+azure-identity = "^1.14.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.2"
+pytest-asyncio = "^0.21.1"
+pytest-cov = "^4.1.0"
+black = "^23.7.0"
+isort = "^5.12.0"
+flake8 = "^6.1.0"
+mypy = "^1.5.1"
+pre-commit = "^3.4.0"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = "\.pyi?$"
+extend-exclude = "/migrations/"
+
+[tool.isort]
+profile = "black"
+line_length = 100
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+skip = [".git", "__pycache__", "build", "dist", "migrations"]
+
+[build-system]
+requires = ["poetry-core>=1.7.0"]
+build-backend = "poetry.core.masonry.api"
