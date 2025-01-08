@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0066CC">
+    <meta name="description" content="AI-powered Product Catalog Search System - Intelligent technical documentation search and retrieval">
+    <meta name="application-name" content="Product Catalog Search">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+    <!-- Security Headers -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' ws: wss: https://api.openai.com; script-src 'self' 'wasm-unsafe-eval'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests;">
+    <meta http-equiv="X-Content-Type-Options" content="nosniff">
+    <meta http-equiv="X-Frame-Options" content="DENY">
+    <meta http-equiv="X-XSS-Protection" content="1; mode=block">
+    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+    <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), interest-cohort=()">
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+    <!-- Font Preconnect -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+    <!-- Optimized Font Loading -->
+    <link 
+        rel="stylesheet" 
+        href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Open+Sans:wght@400;600&family=Fira+Mono&display=swap"
+        media="print"
+        onload="this.media='all'"
+    >
+
+    <!-- Fallback for no-JS environments -->
+    <noscript>
+        <link 
+            rel="stylesheet" 
+            href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Open+Sans:wght@400;600&family=Fira+Mono&display=swap"
+        >
+    </noscript>
+
+    <title>Product Catalog Search</title>
+
+    <!-- Critical CSS Inline Styles -->
+    <style>
+        /* Prevent FOUC and ensure proper font loading */
+        html {
+            visibility: hidden;
+        }
+        .fonts-loaded html {
+            visibility: visible;
+        }
+        /* Ensure proper touch targets on mobile */
+        @media (max-width: 768px) {
+            button, [role="button"] {
+                min-height: 44px;
+                min-width: 44px;
+            }
+        }
+        /* Improve text rendering */
+        body {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+        }
+        /* Prevent content shift during loading */
+        #root {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        /* Loading state styles */
+        .initial-loader {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #ffffff;
+        }
+        @media (prefers-color-scheme: dark) {
+            .initial-loader {
+                background-color: #121212;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Application Root with ARIA role -->
+    <div id="root" role="application" aria-label="Product Catalog Search Application">
+        <!-- Initial loading state -->
+        <div class="initial-loader" role="status" aria-label="Loading application">
+            <noscript>
+                <div role="alert">
+                    JavaScript is required to run this application.
+                    Please enable JavaScript in your browser settings.
+                </div>
+            </noscript>
+        </div>
+    </div>
+
+    <!-- Font loading detection script -->
+    <script>
+        if ("fonts" in document) {
+            Promise.all([
+                document.fonts.load("1em Roboto"),
+                document.fonts.load("1em Open Sans"),
+                document.fonts.load("1em Fira Mono")
+            ]).then(() => {
+                document.documentElement.classList.add("fonts-loaded");
+            });
+        } else {
+            document.documentElement.classList.add("fonts-loaded");
+        }
+    </script>
+
+    <!-- Application entry point -->
+    <script type="module" src="/src/index.tsx"></script>
+</body>
+</html>
