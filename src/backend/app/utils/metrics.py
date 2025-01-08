@@ -10,9 +10,9 @@ import asyncio  # Python 3.11+
 import threading  # Python 3.11+
 import contextlib  # Python 3.11+
 from prometheus_client import Counter, Gauge, Histogram, Summary, CollectorRegistry  # version: 0.17.0
-from azure.monitor.opentelemetry import configure_azure_monitor  # version: 1.0.0
+from azure.monitor.opentelemetry import AzureMonitorClient  # version: 1.0.0
 
-from ..config import settings
+from ..config.settings import ENVIRONMENT, AZURE_MONITOR_CONNECTION_STRING, METRIC_BATCH_SIZE
 from .logging import StructuredLogger
 
 # Initialize structured logger
@@ -52,16 +52,12 @@ class MetricsCollector:
         self._labels = {}
         self._lock = threading.Lock()
         self._batch_queue = asyncio.Queue()
-        
-        # Initialize Prometheus registry
         self._prometheus_registry = CollectorRegistry()
-        
-        # Configure Azure Monitor in production
-        if settings.ENVIRONMENT == "production":
-            self._azure_client = configure_azure_monitor(
-                connection_string=settings.AZURE_MONITOR_CONNECTION_STRING,
-                service_name="catalog-search",
-                service_version="1.0.0"
+
+        # Initialize Azure Monitor client in production
+        if ENVIRONMENT == "production":
+            self._azure_client = AzureMonitorClient.from_connection_string(
+                AZURE_MONITOR_CONNECTION_STRING
             )
         else:
             self._azure_client = None
@@ -70,190 +66,126 @@ class MetricsCollector:
         asyncio.create_task(self.process_batch())
 
     @contextlib.contextmanager
-    def record_time(self, metric_name, labels=None, async_mode=False):
-        """Record execution time of a function or code block."""
-        if not metric_name:
-            raise ValueError("Metric name cannot be empty")
-            
-        if labels and len(labels) > MAX_LABEL_COUNT:
-            raise ValueError(f"Too many labels. Maximum allowed: {MAX_LABEL_COUNT}")
+    async def record_time(self, metric_name: str, labels: dict = None, async_mode: bool = True):
+        """Record execution time with async support."""
+        if not labels:
+            labels = {}
+
+        if len(labels) > MAX_LABEL_COUNT:
+            logger.warning(f"Exceeded maximum label count for metric {metric_name}")
+            labels = dict(list(labels.items())[:MAX_LABEL_COUNT])
 
         start_time = time.time()
-        
         try:
+            yield
+        finally:
+            duration = time.time() - start_time
             with self._lock:
                 if metric_name not in self._metrics:
                     self._metrics[metric_name] = Histogram(
                         metric_name,
-                        "Execution time in seconds",
-                        labels.keys() if labels else [],
-                        registry=self._prometheus_registry,
-                        buckets=DEFAULT_BUCKETS
+                        metric_name,
+                        labels.keys(),
+                        buckets=DEFAULT_BUCKETS,
+                        registry=self._prometheus_registry
                     )
-            yield
-        finally:
-            duration = time.time() - start_time
-            
-            with self._lock:
-                # Record in Prometheus
-                if labels:
-                    self._metrics[metric_name].labels(**labels).observe(duration)
-                else:
-                    self._metrics[metric_name].observe(duration)
-                
-                # Add to batch queue for Azure Monitor
-                if self._azure_client:
-                    asyncio.create_task(self._batch_queue.put({
-                        "name": metric_name,
-                        "value": duration,
-                        "type": "histogram",
-                        "labels": labels
-                    }))
-            
-            logger.debug(f"Recorded duration for {metric_name}: {duration}s")
+                self._metrics[metric_name].labels(**labels).observe(duration)
+                await self._batch_queue.put({
+                    "name": metric_name,
+                    "type": "histogram",
+                    "value": duration,
+                    "labels": labels
+                })
 
-    def increment_counter(self, metric_name, value=1.0, labels=None):
-        """Thread-safe increment of a counter metric."""
-        if not metric_name:
-            raise ValueError("Metric name cannot be empty")
-            
-        if not isinstance(value, (int, float)) or value < 0:
-            raise ValueError("Counter increment must be a positive number")
+    def increment_counter(self, metric_name: str, value: float = 1.0, labels: dict = None):
+        """Thread-safe counter increment."""
+        if not labels:
+            labels = {}
 
         with self._lock:
             if metric_name not in self._metrics:
                 self._metrics[metric_name] = Counter(
                     metric_name,
-                    "Counter metric",
-                    labels.keys() if labels else [],
+                    metric_name,
+                    labels.keys(),
                     registry=self._prometheus_registry
                 )
-            
-            # Increment Prometheus counter
-            if labels:
-                self._metrics[metric_name].labels(**labels).inc(value)
-            else:
-                self._metrics[metric_name].inc(value)
-            
-            # Add to batch queue for Azure Monitor
-            if self._azure_client:
-                asyncio.create_task(self._batch_queue.put({
-                    "name": metric_name,
-                    "value": value,
-                    "type": "counter",
-                    "labels": labels
-                }))
-        
-        logger.debug(f"Incremented counter {metric_name} by {value}")
+            self._metrics[metric_name].labels(**labels).inc(value)
+            asyncio.create_task(self._batch_queue.put({
+                "name": metric_name,
+                "type": "counter",
+                "value": value,
+                "labels": labels
+            }))
 
-    def set_gauge(self, metric_name, value, labels=None):
+    def set_gauge(self, metric_name: str, value: float, labels: dict = None):
         """Thread-safe gauge value setting."""
-        if not metric_name:
-            raise ValueError("Metric name cannot be empty")
-            
-        if not isinstance(value, (int, float)):
-            raise ValueError("Gauge value must be a number")
+        if not labels:
+            labels = {}
 
         with self._lock:
             if metric_name not in self._metrics:
                 self._metrics[metric_name] = Gauge(
                     metric_name,
-                    "Gauge metric",
-                    labels.keys() if labels else [],
+                    metric_name,
+                    labels.keys(),
                     registry=self._prometheus_registry
                 )
-            
-            # Set Prometheus gauge
-            if labels:
-                self._metrics[metric_name].labels(**labels).set(value)
-            else:
-                self._metrics[metric_name].set(value)
-            
-            # Add to batch queue for Azure Monitor
-            if self._azure_client:
-                asyncio.create_task(self._batch_queue.put({
-                    "name": metric_name,
-                    "value": value,
-                    "type": "gauge",
-                    "labels": labels
-                }))
-        
-        logger.debug(f"Set gauge {metric_name} to {value}")
+            self._metrics[metric_name].labels(**labels).set(value)
+            asyncio.create_task(self._batch_queue.put({
+                "name": metric_name,
+                "type": "gauge",
+                "value": value,
+                "labels": labels
+            }))
 
-    def observe_value(self, metric_name, value, metric_type="histogram", labels=None):
-        """Thread-safe observation recording for histograms and summaries."""
-        if not metric_name:
-            raise ValueError("Metric name cannot be empty")
-            
-        if metric_type not in ["histogram", "summary"]:
-            raise ValueError("Invalid metric type. Must be 'histogram' or 'summary'")
-            
-        if not isinstance(value, (int, float)):
-            raise ValueError("Observation value must be a number")
+    def observe_value(self, metric_name: str, value: float, metric_type: str = "histogram", labels: dict = None):
+        """Thread-safe observation recording."""
+        if not labels:
+            labels = {}
+
+        if metric_type not in METRIC_TYPES:
+            logger.error(f"Invalid metric type: {metric_type}")
+            return
 
         with self._lock:
             if metric_name not in self._metrics:
-                metric_class = Histogram if metric_type == "histogram" else Summary
+                metric_class = globals()[METRIC_TYPES[metric_type]]
                 self._metrics[metric_name] = metric_class(
                     metric_name,
-                    f"{metric_type.capitalize()} metric",
-                    labels.keys() if labels else [],
-                    registry=self._prometheus_registry,
-                    buckets=DEFAULT_BUCKETS if metric_type == "histogram" else None
+                    metric_name,
+                    labels.keys(),
+                    registry=self._prometheus_registry
                 )
-            
-            # Record observation in Prometheus
-            if labels:
-                self._metrics[metric_name].labels(**labels).observe(value)
-            else:
-                self._metrics[metric_name].observe(value)
-            
-            # Add to batch queue for Azure Monitor
-            if self._azure_client:
-                asyncio.create_task(self._batch_queue.put({
-                    "name": metric_name,
-                    "value": value,
-                    "type": metric_type,
-                    "labels": labels
-                }))
-        
-        logger.debug(f"Recorded {metric_type} observation for {metric_name}: {value}")
+            self._metrics[metric_name].labels(**labels).observe(value)
+            asyncio.create_task(self._batch_queue.put({
+                "name": metric_name,
+                "type": metric_type,
+                "value": value,
+                "labels": labels
+            }))
 
     async def process_batch(self):
-        """Process batched metrics and export to monitoring systems."""
+        """Process batched metrics asynchronously."""
         while True:
+            batch = []
             try:
-                batch = []
-                try:
-                    # Collect metrics for BATCH_TIMEOUT seconds
-                    while True:
-                        try:
-                            metric = await asyncio.wait_for(
-                                self._batch_queue.get(),
-                                timeout=BATCH_TIMEOUT
-                            )
-                            batch.append(metric)
-                        except asyncio.TimeoutError:
-                            break
-                
-                    if not batch:
-                        continue
+                while len(batch) < METRIC_BATCH_SIZE:
+                    try:
+                        metric = await asyncio.wait_for(
+                            self._batch_queue.get(),
+                            timeout=BATCH_TIMEOUT
+                        )
+                        batch.append(metric)
+                    except asyncio.TimeoutError:
+                        break
 
-                    # Export to Azure Monitor if configured
-                    if self._azure_client:
-                        for metric in batch:
-                            try:
-                                self._azure_client.track_metric(
-                                    name=metric["name"],
-                                    value=metric["value"],
-                                    properties=metric["labels"]
-                                )
-                            except Exception as e:
-                                logger.error(f"Failed to export metric to Azure Monitor: {str(e)}")
-                
-                except Exception as e:
-                    logger.error(f"Error in batch processing: {str(e)}")
+                if batch:
+                    if self._azure_client and ENVIRONMENT == "production":
+                        await self._azure_client.export_metrics(batch)
                     
+                    logger.debug(f"Processed batch of {len(batch)} metrics")
+
             except Exception as e:
-                logger.error(f"Critical error in metrics batch processing: {str(e)}")
-                await asyncio.sleep(1)  # Prevent tight loop on persistent errors
+                logger.error(f"Error processing metric batch: {str(e)}")
+                await asyncio.sleep(1)  # Backoff on error
