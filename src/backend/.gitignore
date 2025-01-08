@@ -1,0 +1,103 @@
+# Python Artifacts
+*.py[cod]
+__pycache__/
+*.so
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+share/python-wheels/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment and Local Settings
+.env
+.env.local
+.env.*.local
+*.env
+.env.development
+.env.production
+.env.staging
+*.env.local
+!.env.example
+
+# Testing and Coverage
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.tox/
+nosetests.xml
+.hypothesis/
+.benchmarks/
+test-reports/
+
+# IDE and Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-workspace
+*.sublime-project
+.settings/
+.project
+.classpath
+*.code-workspace
+
+# Logs and Local Data
+logs/
+*.log
+local_data/
+tmp/
+temp/
+*.log.*
+log/
+data/
+*.dump
+*.bak
+*.backup
+
+# Virtual Environment
+venv/
+env/
+.venv/
+.env/
+ENV/
+virtualenv/
+.Python
+pyvenv.cfg
+
+# Dependencies
+.python-version
+pip-log.txt
+pip-delete-this-directory.txt
+poetry.lock
+requirements.txt.lock
+Pipfile.lock
+.pdm.toml
+__pypackages__/
+
+# AI and ML Artifacts
+*.pkl
+*.h5
+*.model
+*.joblib
+model_artifacts/
+embeddings/
+vectors/
+*.onnx
+
+# Docker and CI/CD
+.docker/
+*.dockerfile-*
+.azure/
+.github/
+docker-compose.override.yml
+.dockerignore
+*.dockerfile
