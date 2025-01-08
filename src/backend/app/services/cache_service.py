@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class CacheService:
     """
     Enhanced Redis-based caching service with monitoring and complex object support.
-    Implements efficient caching mechanisms for query results and frequently accessed data.
+    Implements LRU caching strategy with configurable TTL and serialization formats.
     """
 
     def __init__(
@@ -36,7 +36,7 @@ class CacheService:
         db: int,
         password: str,
         config: Optional[Dict] = None
-    ):
+    ) -> None:
         """
         Initialize Redis cache client with enhanced configuration and monitoring.
 
@@ -47,47 +47,57 @@ class CacheService:
             password: Redis authentication password
             config: Optional additional configuration parameters
         """
-        # Initialize Redis client with connection parameters
         self._client = redis.Redis(
             host=host,
             port=port,
             db=db,
             password=password,
-            decode_responses=False,  # Required for binary data handling
+            decode_responses=False,
             socket_timeout=5.0,
             socket_connect_timeout=5.0,
-            retry_on_timeout=True,
-            health_check_interval=30
+            retry_on_timeout=True
         )
-
-        # Set default TTL from configuration
-        self._default_ttl = config.get('default_ttl', DEFAULT_TTL)
-
-        # Configure max memory and eviction policy
-        self._client.config_set('maxmemory', str(MAX_CACHE_SIZE))
-        self._client.config_set('maxmemory-policy', 'allkeys-lru')
 
         # Initialize metrics tracking
         self._metrics = {
             'hits': 0,
             'misses': 0,
-            'stored_keys': 0,
-            'last_eviction': None
+            'set_operations': 0,
+            'errors': 0,
+            'start_time': datetime.now().timestamp()
         }
 
-        # Verify connection and cluster health
+        # Set default TTL and configure max memory
+        self._default_ttl = config.get('default_ttl', DEFAULT_TTL) if config else DEFAULT_TTL
+        
+        # Configure Redis maxmemory and policy
+        self._client.config_set('maxmemory', str(MAX_CACHE_SIZE))
+        self._client.config_set('maxmemory-policy', 'allkeys-lru')
+
+        # Verify connection and log startup
+        self._verify_connection()
+        logger.info(
+            "Cache service initialized",
+            extra={
+                'host': host,
+                'port': port,
+                'db': db,
+                'max_memory': MAX_CACHE_SIZE,
+                'default_ttl': self._default_ttl
+            }
+        )
+
+    def _verify_connection(self) -> None:
+        """Verify Redis connection and cluster health."""
         try:
             self._client.ping()
-            logger.info("Cache service initialized successfully",
-                       extra={'host': host, 'port': port, 'db': db})
         except redis.ConnectionError as e:
-            logger.error("Failed to initialize cache service",
-                        extra={'error': str(e), 'host': host, 'port': port})
+            logger.error(f"Failed to connect to Redis: {str(e)}")
             raise
 
     async def get(self, key: str, default_value: Optional[str] = None) -> Any:
         """
-        Enhanced retrieval of value from cache with type detection.
+        Retrieve value from cache with automatic deserialization.
 
         Args:
             key: Cache key to retrieve
@@ -100,28 +110,28 @@ class CacheService:
             # Check if key exists
             if not await asyncio.to_thread(self._client.exists, key):
                 self._metrics['misses'] += 1
-                logger.debug("Cache miss", extra={'key': key})
+                logger.debug(f"Cache miss for key: {key}")
                 return default_value
 
             # Retrieve raw value and format flag
             raw_value = await asyncio.to_thread(self._client.get, key)
             format_flag = raw_value[0] if raw_value else None
-
+            
             # Deserialize based on format flag
             if format_flag == SERIALIZATION_FORMATS['json']:
                 value = json.loads(raw_value[1:].decode('utf-8'))
             elif format_flag == SERIALIZATION_FORMATS['pickle']:
                 value = pickle.loads(raw_value[1:])
             else:
-                value = raw_value.decode('utf-8')
+                value = raw_value[1:].decode('utf-8')
 
             self._metrics['hits'] += 1
-            logger.debug("Cache hit", extra={'key': key})
+            logger.debug(f"Cache hit for key: {key}")
             return value
 
         except Exception as e:
-            logger.error("Cache retrieval error",
-                        extra={'key': key, 'error': str(e)})
+            self._metrics['errors'] += 1
+            logger.error(f"Error retrieving from cache: {str(e)}", exc_info=True)
             return default_value
 
     async def set(
@@ -132,13 +142,13 @@ class CacheService:
         serialization_format: Optional[str] = None
     ) -> bool:
         """
-        Enhanced storage of value in cache with automatic serialization.
+        Store value in cache with automatic serialization.
 
         Args:
             key: Cache key
             value: Value to cache
-            ttl: Optional time-to-live in seconds
-            serialization_format: Optional format override ('json' or 'pickle')
+            ttl: Optional TTL in seconds
+            serialization_format: Optional serialization format ('json' or 'pickle')
 
         Returns:
             bool: Success status of cache operation
@@ -148,12 +158,9 @@ class CacheService:
             if serialization_format:
                 format_flag = SERIALIZATION_FORMATS[serialization_format]
             else:
-                # Auto-detect best format
-                try:
-                    json.dumps(value)
-                    format_flag = SERIALIZATION_FORMATS['json']
-                except (TypeError, ValueError):
-                    format_flag = SERIALIZATION_FORMATS['pickle']
+                format_flag = (SERIALIZATION_FORMATS['json'] 
+                             if isinstance(value, (dict, list, str, int, float, bool))
+                             else SERIALIZATION_FORMATS['pickle'])
 
             # Serialize value
             if format_flag == SERIALIZATION_FORMATS['json']:
@@ -161,7 +168,7 @@ class CacheService:
             else:
                 serialized = bytes([format_flag]) + pickle.dumps(value)
 
-            # Set value with TTL
+            # Set in cache with TTL
             ttl = ttl if ttl is not None else self._default_ttl
             success = await asyncio.to_thread(
                 self._client.setex,
@@ -171,14 +178,13 @@ class CacheService:
             )
 
             if success:
-                self._metrics['stored_keys'] += 1
-                logger.debug("Cache set successful",
-                           extra={'key': key, 'ttl': ttl})
+                self._metrics['set_operations'] += 1
+                logger.debug(f"Successfully cached key: {key}, ttl: {ttl}")
             return bool(success)
 
         except Exception as e:
-            logger.error("Cache storage error",
-                        extra={'key': key, 'error': str(e)})
+            self._metrics['errors'] += 1
+            logger.error(f"Error setting cache key {key}: {str(e)}", exc_info=True)
             return False
 
     async def get_stats(self) -> Dict:
@@ -192,29 +198,32 @@ class CacheService:
             # Get Redis INFO
             info = await asyncio.to_thread(self._client.info)
             
-            # Calculate hit ratio
+            # Calculate hit rate
             total_ops = self._metrics['hits'] + self._metrics['misses']
-            hit_ratio = (self._metrics['hits'] / total_ops) if total_ops > 0 else 0
+            hit_rate = (self._metrics['hits'] / total_ops * 100) if total_ops > 0 else 0
 
-            stats = {
+            # Calculate uptime
+            uptime = datetime.now().timestamp() - self._metrics['start_time']
+
+            return {
                 'hits': self._metrics['hits'],
                 'misses': self._metrics['misses'],
-                'hit_ratio': hit_ratio,
-                'stored_keys': self._metrics['stored_keys'],
-                'memory_used': info.get('used_memory', 0),
-                'memory_peak': info.get('used_memory_peak', 0),
-                'evicted_keys': info.get('evicted_keys', 0),
-                'connected_clients': info.get('connected_clients', 0),
-                'last_eviction': self._metrics['last_eviction'],
-                'uptime_seconds': info.get('uptime_in_seconds', 0)
+                'hit_rate': round(hit_rate, 2),
+                'set_operations': self._metrics['set_operations'],
+                'errors': self._metrics['errors'],
+                'uptime_seconds': int(uptime),
+                'memory_used_bytes': info['used_memory'],
+                'memory_peak_bytes': info['used_memory_peak'],
+                'total_connections': info['total_connections_received'],
+                'connected_clients': info['connected_clients'],
+                'evicted_keys': info['evicted_keys'],
+                'expired_keys': info['expired_keys'],
+                'last_save_time': datetime.fromtimestamp(info['last_save_time']).isoformat()
             }
 
-            logger.info("Cache stats retrieved", extra={'stats': stats})
-            return stats
-
         except Exception as e:
-            logger.error("Failed to retrieve cache stats", extra={'error': str(e)})
+            logger.error(f"Error retrieving cache stats: {str(e)}", exc_info=True)
             return {
                 'error': str(e),
-                'timestamp': datetime.utcnow().isoformat()
+                'metrics': self._metrics
             }
