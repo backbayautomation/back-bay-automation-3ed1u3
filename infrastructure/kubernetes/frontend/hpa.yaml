@@ -1,4 +1,4 @@
-# Kubernetes HPA configuration for frontend application
+# HPA configuration for frontend React application
 # Using autoscaling/v2 API version (Kubernetes v1.25+)
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -43,26 +43,28 @@ spec:
           type: Utilization
           averageUtilization: 80
 
-  # Scaling behavior configuration for production stability
+  # Sophisticated scaling behavior policies
   behavior:
-    # Scale up configuration
+    # Scale up behavior - responsive but controlled
     scaleUp:
-      # Wait 60 seconds before considering another scale up
+      # Wait 60s before making another scaling decision
       stabilizationWindowSeconds: 60
       policies:
         # Add up to 2 pods every 60 seconds
         - type: Pods
           value: 2
           periodSeconds: 60
+      # Use the most aggressive policy when multiple policies are available
       selectPolicy: Max
 
-    # Scale down configuration
+    # Scale down behavior - conservative approach
     scaleDown:
-      # Conservative 5-minute window before scaling down
+      # Wait 5 minutes before scaling down to prevent thrashing
       stabilizationWindowSeconds: 300
       policies:
-        # Remove 1 pod every 120 seconds
+        # Remove at most 1 pod every 120 seconds
         - type: Pods
           value: 1
           periodSeconds: 120
+      # Use the least aggressive policy when multiple policies are available
       selectPolicy: Min
