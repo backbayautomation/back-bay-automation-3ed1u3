@@ -1,4 +1,6 @@
-# Configure Azure provider requirements
+# Azure Network Infrastructure Module
+# Provider version: hashicorp/azurerm ~> 3.0
+
 terraform {
   required_providers {
     azurerm = {
@@ -8,7 +10,6 @@ terraform {
   }
 }
 
-# Local variables for resource naming and configuration
 locals {
   # Resource naming convention
   name_prefix = "az-${var.environment}"
@@ -20,36 +21,34 @@ locals {
   default_tags = {
     Environment     = var.environment
     ManagedBy      = "terraform"
-    SecurityLevel   = "high"
-    CostCenter     = "networking"
-    LastDeployment = timestamp()
+    Module         = "networking"
+    SecurityLevel  = "high"
+    CostCenter     = "infrastructure"
+    LastUpdated    = timestamp()
   }
   tags = merge(local.default_tags, var.tags)
 
   # Computed subnet configurations
-  subnet_config_with_nsg = {
+  subnet_config_with_names = {
     for name, config in var.subnet_config : name => merge(config, {
-      nsg_name = "${local.name_prefix}-${name}-nsg"
+      name = "${local.name_prefix}-${name}-subnet"
     })
   }
-}
 
-# DDoS Protection Plan
-resource "azurerm_network_ddos_protection_plan" "main" {
-  count               = var.enable_ddos_protection ? 1 : 0
-  name                = local.ddos_name
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  tags                = local.tags
+  # NSG naming
+  nsg_names = {
+    for subnet_name, _ in var.subnet_config : subnet_name => "${local.name_prefix}-${subnet_name}-nsg"
+  }
 }
 
 # Virtual Network
 resource "azurerm_virtual_network" "main" {
   name                = local.vnet_name
-  location            = var.location
   resource_group_name = var.resource_group_name
+  location            = var.location
   address_space       = var.vnet_address_space
-  
+  tags                = local.tags
+
   dynamic "ddos_protection_plan" {
     for_each = var.enable_ddos_protection ? [1] : []
     content {
@@ -57,21 +56,29 @@ resource "azurerm_virtual_network" "main" {
       enable = true
     }
   }
+}
 
-  tags = local.tags
+# DDoS Protection Plan
+resource "azurerm_network_ddos_protection_plan" "main" {
+  count               = var.enable_ddos_protection ? 1 : 0
+  name                = local.ddos_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.tags
 }
 
 # Subnets
-resource "azurerm_subnet" "subnets" {
-  for_each = var.subnet_config
+resource "azurerm_subnet" "main" {
+  for_each = local.subnet_config_with_names
 
-  name                 = "${local.name_prefix}-${each.key}-subnet"
+  name                 = each.value.name
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [each.value.address_prefix]
   service_endpoints    = each.value.service_endpoints
 
-  private_endpoint_network_policies_enabled = each.value.private_endpoint_network_policies_enabled
+  private_endpoint_network_policies_enabled     = each.value.private_endpoint_network_policies_enabled
+  private_link_service_network_policies_enabled = try(each.value.enforce_private_link_endpoint_network_policies, true)
 
   dynamic "delegation" {
     for_each = each.value.delegation != null ? [each.value.delegation] : []
@@ -86,44 +93,44 @@ resource "azurerm_subnet" "subnets" {
 }
 
 # Network Security Groups
-resource "azurerm_network_security_group" "nsgs" {
+resource "azurerm_network_security_group" "main" {
   for_each = var.nsg_rules
 
-  name                = "${local.name_prefix}-${each.key}-nsg"
-  location            = var.location
+  name                = local.nsg_names[each.key]
   resource_group_name = var.resource_group_name
+  location            = var.location
   tags                = local.tags
 
   dynamic "security_rule" {
     for_each = each.value
     content {
-      name                       = security_rule.value.name
-      priority                   = security_rule.value.priority
-      direction                  = security_rule.value.direction
-      access                     = security_rule.value.access
-      protocol                   = security_rule.value.protocol
-      source_port_range          = security_rule.value.source_port_range
-      destination_port_range     = security_rule.value.destination_port_range
-      source_address_prefix      = security_rule.value.source_address_prefix
-      destination_address_prefix = security_rule.value.destination_address_prefix
-      description               = security_rule.value.description
+      name                         = security_rule.value.name
+      priority                     = security_rule.value.priority
+      direction                    = security_rule.value.direction
+      access                       = security_rule.value.access
+      protocol                     = security_rule.value.protocol
+      source_port_range           = security_rule.value.source_port_range
+      destination_port_range      = security_rule.value.destination_port_range
+      source_address_prefix       = security_rule.value.source_address_prefix
+      destination_address_prefix   = security_rule.value.destination_address_prefix
+      description                 = try(security_rule.value.description, null)
     }
   }
 }
 
 # NSG Subnet Associations
-resource "azurerm_subnet_network_security_group_association" "nsg_associations" {
+resource "azurerm_subnet_network_security_group_association" "main" {
   for_each = var.nsg_rules
 
-  subnet_id                 = azurerm_subnet.subnets[each.key].id
-  network_security_group_id = azurerm_network_security_group.nsgs[each.key].id
+  subnet_id                 = azurerm_subnet.main[each.key].id
+  network_security_group_id = azurerm_network_security_group.main[each.key].id
 }
 
 # Application Gateway
 resource "azurerm_application_gateway" "main" {
   name                = local.appgw_name
-  location            = var.location
   resource_group_name = var.resource_group_name
+  location            = var.location
   tags                = local.tags
 
   sku {
@@ -133,47 +140,47 @@ resource "azurerm_application_gateway" "main" {
   }
 
   gateway_ip_configuration {
-    name      = "gateway-ip-config"
-    subnet_id = azurerm_subnet.subnets["appgw"].id
+    name      = "${local.appgw_name}-ip-config"
+    subnet_id = azurerm_subnet.main["appgw"].id
   }
 
   frontend_port {
-    name = "frontend-port"
+    name = "${local.appgw_name}-feport"
     port = var.appgw_config.frontend_port
   }
 
   frontend_ip_configuration {
-    name                          = "frontend-ip-config"
-    subnet_id                     = azurerm_subnet.subnets["appgw"].id
-    private_ip_address_allocation = var.appgw_config.private_ip_allocation != null ? "Static" : "Dynamic"
-    private_ip_address           = var.appgw_config.private_ip_allocation != null ? var.appgw_config.private_ip_allocation.private_ip_address : null
+    name                          = "${local.appgw_name}-feip"
+    subnet_id                     = azurerm_subnet.main["appgw"].id
+    private_ip_address_allocation = try(var.appgw_config.private_ip_allocation.private_ip_address, null) != null ? "Static" : "Dynamic"
+    private_ip_address           = try(var.appgw_config.private_ip_allocation.private_ip_address, null)
   }
 
   backend_address_pool {
-    name = "default-backend-pool"
+    name = "${local.appgw_name}-beap"
   }
 
   backend_http_settings {
-    name                  = "default-http-settings"
+    name                  = "${local.appgw_name}-be-htst"
     cookie_based_affinity = "Disabled"
     port                  = 80
     protocol             = "Http"
-    request_timeout      = 30
+    request_timeout      = 60
   }
 
   http_listener {
-    name                           = "default-listener"
-    frontend_ip_configuration_name = "frontend-ip-config"
-    frontend_port_name            = "frontend-port"
+    name                           = "${local.appgw_name}-httplstn"
+    frontend_ip_configuration_name = "${local.appgw_name}-feip"
+    frontend_port_name            = "${local.appgw_name}-feport"
     protocol                      = "Http"
   }
 
   request_routing_rule {
-    name                       = "default-routing-rule"
+    name                       = "${local.appgw_name}-rqrt"
     rule_type                 = "Basic"
-    http_listener_name        = "default-listener"
-    backend_address_pool_name = "default-backend-pool"
-    backend_http_settings_name = "default-http-settings"
+    http_listener_name        = "${local.appgw_name}-httplstn"
+    backend_address_pool_name = "${local.appgw_name}-beap"
+    backend_http_settings_name = "${local.appgw_name}-be-htst"
     priority                  = 100
   }
 
@@ -192,33 +199,33 @@ resource "azurerm_application_gateway" "main" {
     content {
       enabled                  = true
       firewall_mode           = waf_configuration.value.firewall_mode
-      rule_set_type           = waf_configuration.value.rule_set_type
-      rule_set_version        = waf_configuration.value.rule_set_version
-      file_upload_limit_mb    = waf_configuration.value.file_upload_limit_mb
-      request_body_check      = waf_configuration.value.request_body_check
+      rule_set_type          = waf_configuration.value.rule_set_type
+      rule_set_version       = waf_configuration.value.rule_set_version
+      file_upload_limit_mb   = waf_configuration.value.file_upload_limit_mb
+      request_body_check     = waf_configuration.value.request_body_check
       max_request_body_size_kb = waf_configuration.value.max_request_body_size_kb
 
       dynamic "disabled_rule_group" {
         for_each = waf_configuration.value.disabled_rule_groups != null ? waf_configuration.value.disabled_rule_groups : []
         content {
           rule_group_name = disabled_rule_group.value.rule_group_name
-          rules           = disabled_rule_group.value.rules
+          rules          = disabled_rule_group.value.rules
         }
       }
     }
   }
 }
 
-# Output values
+# Outputs
 output "vnet_id" {
   description = "The ID of the Virtual Network"
   value       = azurerm_virtual_network.main.id
 }
 
 output "subnet_ids" {
-  description = "Map of subnet names to their IDs"
+  description = "Map of subnet names to subnet IDs"
   value       = {
-    for name, subnet in azurerm_subnet.subnets : name => subnet.id
+    for name, subnet in azurerm_subnet.main : name => subnet.id
   }
 }
 
@@ -228,8 +235,8 @@ output "appgw_id" {
 }
 
 output "nsg_ids" {
-  description = "Map of NSG names to their IDs"
+  description = "Map of NSG names to NSG IDs"
   value       = {
-    for name, nsg in azurerm_network_security_group.nsgs : name => nsg.id
+    for name, nsg in azurerm_network_security_group.main : name => nsg.id
   }
 }
