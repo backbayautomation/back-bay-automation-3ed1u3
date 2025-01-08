@@ -1,0 +1,49 @@
+* @system-admins
+
+# Backend code ownership
+src/backend/* @backend-team-leads @security-team
+
+# Core backend components with strict security requirements
+src/backend/app/core/* @backend-team-leads @security-team
+
+# Security-specific implementations
+src/backend/app/core/security.py @security-team @backend-team-leads
+src/backend/app/core/auth.py @security-team @backend-team-leads
+
+# AI and Vector Search implementations
+src/backend/app/services/ai_service.py @ai-team-leads @backend-team-leads
+src/backend/app/services/vector_search.py @ai-team-leads @backend-team-leads
+
+# Frontend code ownership
+src/web/* @frontend-team-leads @security-team
+
+# Infrastructure and deployment configurations
+infrastructure/* @devops-team @security-team
+
+# CI/CD workflow configurations
+.github/workflows/* @devops-team @security-team
+
+# Documentation ownership
+docs/* @system-admins @backend-team-leads @frontend-team-leads
+
+# Test directories requiring respective team reviews
+src/backend/tests/* @backend-team-leads
+src/web/tests/* @frontend-team-leads
+
+# Configuration files requiring security review
+*.config.* @security-team
+*.env.* @security-team
+
+# Database migrations requiring both backend and security review
+src/backend/migrations/* @backend-team-leads @security-team
+
+# API specifications requiring multiple team reviews
+api/* @backend-team-leads @frontend-team-leads @security-team
+
+# Security-related configuration files
+**/security.config.* @security-team
+**/auth.config.* @security-team
+
+# Dependency files requiring security review
+package.json @frontend-team-leads @security-team
+requirements.txt @backend-team-leads @security-team
