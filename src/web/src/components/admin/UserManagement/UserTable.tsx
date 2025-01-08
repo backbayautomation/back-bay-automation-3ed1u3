@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import DataTable, { Column, TableProps } from '../../common/Tables/DataTable';
 import { User, UserRole } from '../../../types/user';
 import { Chip, IconButton, Tooltip } from '@mui/material'; // v5.14.0
@@ -33,13 +33,13 @@ const getRoleLabel = (role: UserRole): string => {
 const getRoleChipColor = (role: UserRole): { bg: string; text: string } => {
   switch (role) {
     case UserRole.SYSTEM_ADMIN:
-      return { bg: '#1976d2', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
+      return { bg: '#1976d2', text: '#ffffff' }; // WCAG AA contrast ratio: 4.5:1
     case UserRole.CLIENT_ADMIN:
-      return { bg: '#2e7d32', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
+      return { bg: '#2e7d32', text: '#ffffff' }; // WCAG AA contrast ratio: 4.5:1
     case UserRole.REGULAR_USER:
-      return { bg: '#ed6c02', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
+      return { bg: '#ed6c02', text: '#ffffff' }; // WCAG AA contrast ratio: 4.5:1
     default:
-      return { bg: '#757575', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
+      return { bg: '#757575', text: '#ffffff' };
   }
 };
 
@@ -55,24 +55,20 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
   ariaLabel = 'User management table',
   ariaDescription = 'Table displaying user information with sorting and filtering capabilities'
 }) => {
-  const columns: Column<User>[] = React.useMemo(() => [
+  const columns = useMemo<Column<User>[]>(() => [
     {
       id: 'fullName',
       label: 'Full Name',
       sortable: true,
       ariaLabel: 'Sort by full name',
-      render: (user: User) => (
-        <span role="cell">{user.fullName}</span>
-      )
+      render: (user: User) => user.fullName
     },
     {
       id: 'email',
       label: 'Email',
       sortable: true,
       ariaLabel: 'Sort by email address',
-      render: (user: User) => (
-        <span role="cell">{user.email}</span>
-      )
+      render: (user: User) => user.email
     },
     {
       id: 'role',
@@ -92,7 +88,6 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
               minWidth: '44px',
               height: '32px'
             }}
-            role="cell"
             aria-label={`Role: ${getRoleLabel(user.role)}`}
           />
         );
@@ -113,7 +108,6 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
             minWidth: '44px',
             height: '32px'
           }}
-          role="cell"
           aria-label={`Status: ${user.isActive ? 'Active' : 'Inactive'}`}
         />
       )
@@ -124,11 +118,11 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
       sortable: false,
       ariaLabel: 'User actions',
       render: (user: User) => (
-        <div role="cell" style={{ whiteSpace: 'nowrap' }}>
+        <div role="group" aria-label={`Actions for ${user.fullName}`}>
           <Tooltip title="Edit user" arrow>
             <IconButton
               onClick={() => onEdit(user)}
-              aria-label={`Edit user ${user.fullName}`}
+              aria-label={`Edit ${user.fullName}`}
               sx={{
                 padding: '8px',
                 minWidth: '44px',
@@ -141,12 +135,13 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
           <Tooltip title="Delete user" arrow>
             <IconButton
               onClick={() => onDelete(user)}
-              aria-label={`Delete user ${user.fullName}`}
+              aria-label={`Delete ${user.fullName}`}
               sx={{
                 padding: '8px',
                 minWidth: '44px',
                 minHeight: '44px'
               }}
+              color="error"
             >
               <Delete />
             </IconButton>
@@ -157,26 +152,21 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
   ], [onEdit, onDelete]);
 
   return (
-    <div
-      role="region"
-      aria-label={ariaLabel}
-      aria-description={ariaDescription}
-      style={{ position: 'relative', minHeight: '400px' }}
-    >
-      <DataTable<User>
-        data={users}
-        columns={columns}
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={onPageChange}
-        loading={loading}
-        ariaLabel={ariaLabel}
-        getRowAriaLabel={(user) => `User: ${user.fullName}, Role: ${getRoleLabel(user.role)}, Status: ${user.isActive ? 'Active' : 'Inactive'}`}
-        enableVirtualization
-        virtualRowHeight={52}
-      />
-    </div>
+    <DataTable<User>
+      data={users}
+      columns={columns}
+      page={page}
+      pageSize={pageSize}
+      total={total}
+      onPageChange={onPageChange}
+      loading={loading}
+      ariaLabel={ariaLabel}
+      ariaLabelledBy="user-table-title"
+      getRowAriaLabel={(user) => `User: ${user.fullName}, Role: ${getRoleLabel(user.role)}`}
+      enableVirtualization={true}
+      virtualRowHeight={52}
+      emptyMessage="No users found"
+    />
   );
 });
 
