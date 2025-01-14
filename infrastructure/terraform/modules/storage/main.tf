@@ -21,15 +21,23 @@ resource "random_string" "suffix" {
 
 # Azure Storage Account for document storage
 resource "azurerm_storage_account" "main" {
-  name                          = "docstore${random_string.suffix.result}"
-  resource_group_name           = var.resource_group_name
-  location                      = var.location
-  account_tier                  = var.storage_account_config.account_tier
-  account_replication_type      = var.storage_account_config.account_replication_type
-  enable_https_traffic_only     = var.storage_account_config.enable_https_traffic_only
-  min_tls_version              = var.storage_account_config.min_tls_version
+  name                     = "docs${random_string.suffix.result}"
+  resource_group_name      = var.resource_group_name
+  location                = var.location
+  account_tier             = var.storage_account_config.account_tier
+  account_replication_type = var.storage_account_config.account_replication_type
+  tags                    = var.tags
+
+  enable_https_traffic_only       = var.storage_account_config.enable_https_traffic_only
+  min_tls_version                = var.storage_account_config.min_tls_version
   allow_nested_items_to_be_public = var.storage_account_config.allow_nested_items_to_be_public
-  tags                         = var.tags
+
+  network_rules {
+    default_action             = var.storage_account_config.network_rules.default_action
+    bypass                     = var.storage_account_config.network_rules.bypass
+    ip_rules                  = var.storage_account_config.network_rules.ip_rules
+    virtual_network_subnet_ids = var.storage_account_config.network_rules.virtual_network_subnet_ids
+  }
 
   blob_properties {
     versioning_enabled = var.storage_account_config.versioning_enabled
@@ -46,13 +54,6 @@ resource "azurerm_storage_account" "main" {
       exposed_headers    = var.storage_account_config.blob_properties.cors_rules.exposed_headers
       max_age_in_seconds = var.storage_account_config.blob_properties.cors_rules.max_age_in_seconds
     }
-  }
-
-  network_rules {
-    default_action             = var.storage_account_config.network_rules.default_action
-    bypass                     = var.storage_account_config.network_rules.bypass
-    ip_rules                   = var.storage_account_config.network_rules.ip_rules
-    virtual_network_subnet_ids = var.storage_account_config.network_rules.virtual_network_subnet_ids
   }
 
   lifecycle_rule {
@@ -72,12 +73,12 @@ resource "azurerm_storage_account" "main" {
 
 # Cosmos DB Account for vector storage
 resource "azurerm_cosmosdb_account" "main" {
-  name                = "vectordb${random_string.suffix.result}"
+  name                = "vectors${random_string.suffix.result}"
+  location            = var.location
   resource_group_name = var.resource_group_name
-  location           = var.location
-  offer_type         = var.cosmos_db_config.offer_type
-  kind              = var.cosmos_db_config.kind
-  tags              = var.tags
+  offer_type          = var.cosmos_db_config.offer_type
+  kind                = var.cosmos_db_config.kind
+  tags                = var.tags
 
   enable_automatic_failover = var.cosmos_db_config.enable_automatic_failover
   enable_multiple_write_locations = var.cosmos_db_config.enable_multiple_write_locations
@@ -107,15 +108,16 @@ resource "azurerm_cosmosdb_account" "main" {
 # Redis Cache for performance optimization
 resource "azurerm_redis_cache" "main" {
   name                = "cache${random_string.suffix.result}"
+  location            = var.location
   resource_group_name = var.resource_group_name
-  location           = var.location
-  capacity           = var.redis_cache_config.capacity
-  family             = var.redis_cache_config.family
-  sku_name           = var.redis_cache_config.sku_name
+  capacity            = var.redis_cache_config.capacity
+  family              = var.redis_cache_config.family
+  sku_name            = var.redis_cache_config.sku_name
+  tags                = var.tags
+
   enable_non_ssl_port = var.redis_cache_config.enable_non_ssl_port
   minimum_tls_version = var.redis_cache_config.minimum_tls_version
-  shard_count        = var.redis_cache_config.shard_count
-  tags               = var.tags
+  shard_count         = var.redis_cache_config.shard_count
 
   redis_configuration {
     maxmemory_reserved = var.redis_cache_config.maxmemory_reserved
@@ -137,8 +139,8 @@ resource "azurerm_redis_cache" "main" {
   }
 
   persistence_config {
-    enabled                = var.redis_cache_config.persistence_config.enabled
-    frequency_in_minutes   = var.redis_cache_config.persistence_config.frequency_in_minutes
+    enabled               = var.redis_cache_config.persistence_config.enabled
+    frequency_in_minutes  = var.redis_cache_config.persistence_config.frequency_in_minutes
   }
 
   firewall_rules {
