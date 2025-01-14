@@ -5,9 +5,9 @@ import {
   DialogContent,
   DialogActions,
   IconButton,
-} from '@mui/material'; // @version 5.14.0
-import { styled, useTheme } from '@mui/material/styles'; // @version 5.14.0
-import CloseIcon from '@mui/icons-material/Close'; // @version 5.14.0
+} from '@mui/material'; // v5.14.0
+import { styled, useTheme } from '@mui/material/styles'; // v5.14.0
+import CloseIcon from '@mui/icons-material/Close'; // v5.14.0
 
 // Modal size constants
 const MODAL_SIZES = {
@@ -16,13 +16,13 @@ const MODAL_SIZES = {
   large: '800px',
 } as const;
 
-// Z-index constants for stacking context
+// Z-index configuration
 const Z_INDEX = {
   modal: 1300,
   modalBackdrop: 1200,
 } as const;
 
-// Animation duration constants
+// Animation durations in ms
 const ANIMATION_DURATION = {
   enter: 225,
   exit: 195,
@@ -45,54 +45,50 @@ export interface ModalProps {
   closeButtonAriaLabel?: string;
 }
 
-// Styled dialog component with responsive design and theme integration
+// Styled Dialog component with responsive design and theme integration
 const StyledDialog = styled(Dialog)(({ theme }) => ({
   '& .MuiDialog-paper': {
     fontFamily: theme.typography.fontFamily,
     padding: theme.spacing(2),
     margin: theme.spacing(2),
+    width: 'auto',
+    maxHeight: `calc(100% - ${theme.spacing(4)})`,
     borderRadius: theme.shape.borderRadius,
     boxShadow: theme.shadows[24],
     
-    [theme.breakpoints.down('sm')]: {
-      margin: theme.spacing(1),
-      padding: theme.spacing(1),
-      width: `calc(100% - ${theme.spacing(2)})`,
-      maxHeight: `calc(100% - ${theme.spacing(2)})`,
+    [theme.breakpoints.up('sm')]: {
+      margin: theme.spacing(4),
+      padding: theme.spacing(3),
     },
     
-    '&:focus': {
-      outline: 'none',
+    '&[data-size="small"]': {
+      maxWidth: MODAL_SIZES.small,
+    },
+    '&[data-size="medium"]': {
+      maxWidth: MODAL_SIZES.medium,
+    },
+    '&[data-size="large"]': {
+      maxWidth: MODAL_SIZES.large,
     },
   },
   
   '& .MuiDialogTitle-root': {
-    padding: theme.spacing(2),
-    paddingRight: theme.spacing(6), // Space for close button
-    '& h2': {
-      fontSize: theme.typography.h6.fontSize,
-      fontWeight: theme.typography.fontWeightMedium,
-    },
+    padding: 0,
+    marginBottom: theme.spacing(2),
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   
   '& .MuiDialogContent-root': {
-    padding: theme.spacing(2),
+    padding: 0,
     overflowY: 'auto',
-    
-    '&:first-child': {
-      paddingTop: theme.spacing(2),
-    },
+    marginBottom: theme.spacing(2),
   },
   
   '& .MuiDialogActions-root': {
-    padding: theme.spacing(1, 2),
-    justifyContent: 'flex-end',
-    gap: theme.spacing(1),
-  },
-  
-  '& .MuiBackdrop-root': {
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    zIndex: Z_INDEX.modalBackdrop,
+    padding: 0,
+    marginTop: theme.spacing(2),
   },
 }));
 
@@ -123,7 +119,7 @@ const Modal = React.memo<ModalProps>(({
     onClose();
   }, [disableBackdropClick, onClose]);
 
-  // Handle escape key press
+  // Handle escape key
   const handleEscapeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (disableEscapeKeyDown) {
       event.stopPropagation();
@@ -137,8 +133,8 @@ const Modal = React.memo<ModalProps>(({
     if (open) {
       const handleTabKey = (e: KeyboardEvent) => {
         if (e.key === 'Tab') {
-          const dialog = document.querySelector('[role="dialog"]');
-          const focusableElements = dialog?.querySelectorAll(
+          const modal = document.querySelector('[role="dialog"]');
+          const focusableElements = modal?.querySelectorAll(
             'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
           );
           
@@ -166,13 +162,13 @@ const Modal = React.memo<ModalProps>(({
     <StyledDialog
       open={open}
       onClose={onClose}
-      aria-labelledby={title ? 'modal-title' : undefined}
+      aria-labelledby={ariaLabel || 'modal-title'}
       aria-describedby={ariaDescribedby}
-      aria-label={ariaLabel}
-      maxWidth={false}
-      fullWidth={fullWidth}
       onClick={handleBackdropClick}
       onKeyDown={handleEscapeKeyDown}
+      data-size={size}
+      fullWidth={fullWidth}
+      maxWidth={maxWidth ? size : false}
       TransitionProps={{
         timeout: {
           enter: ANIMATION_DURATION.enter,
@@ -181,9 +177,8 @@ const Modal = React.memo<ModalProps>(({
       }}
       sx={{
         zIndex: Z_INDEX.modal,
-        '& .MuiDialog-paper': {
-          width: fullWidth ? '100%' : MODAL_SIZES[size],
-          maxWidth: maxWidth ? MODAL_SIZES[size] : 'none',
+        '& .MuiBackdrop-root': {
+          zIndex: Z_INDEX.modalBackdrop,
         },
       }}
     >
@@ -193,11 +188,11 @@ const Modal = React.memo<ModalProps>(({
           <IconButton
             aria-label={closeButtonAriaLabel}
             onClick={onClose}
+            size="large"
             sx={{
               position: 'absolute',
               right: theme.spacing(1),
               top: theme.spacing(1),
-              color: theme.palette.grey[500],
             }}
           >
             <CloseIcon />
@@ -205,10 +200,10 @@ const Modal = React.memo<ModalProps>(({
         </DialogTitle>
       )}
       
-      <DialogContent dividers={!!title}>
+      <DialogContent>
         {children}
       </DialogContent>
-
+      
       {actions && (
         <DialogActions>
           {actions}
