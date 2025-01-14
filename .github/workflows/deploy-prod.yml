@@ -8,20 +8,11 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      approval_comment:
-        description: 'Approval comment for production deployment'
+      approval_required:
+        description: 'Require manual approval'
         required: true
-
-concurrency:
-  group: production
-  cancel-in-progress: false
-
-permissions:
-  id-token: write
-  contents: read
-  packages: write
-  deployments: write
-  environments: write
+        default: true
+        type: boolean
 
 env:
   ENVIRONMENT: production
@@ -32,6 +23,17 @@ env:
   PRIMARY_RESOURCE_GROUP: ${{ secrets.PROD_PRIMARY_RESOURCE_GROUP }}
   SECONDARY_RESOURCE_GROUP: ${{ secrets.PROD_SECONDARY_RESOURCE_GROUP }}
   TERRAFORM_VERSION: '1.5.0'
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+  deployments: write
+  environments: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
 
 jobs:
   deploy-infrastructure:
@@ -59,24 +61,21 @@ jobs:
       - name: Initialize Terraform
         working-directory: infrastructure/terraform/environments/prod
         run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ env.PRIMARY_RESOURCE_GROUP }}" \
-            -backend-config="storage_account_name=${{ secrets.PROD_TERRAFORM_STORAGE }}" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=prod.tfstate"
+          terraform init -backend-config="resource_group_name=${{ env.PRIMARY_RESOURCE_GROUP }}"
+          terraform workspace select production || terraform workspace new production
 
       - name: Plan Infrastructure Changes
         working-directory: infrastructure/terraform/environments/prod
         run: |
-          terraform plan \
-            -var-file="terraform.tfvars" \
-            -out=tfplan
+          terraform plan -var-file=terraform.tfvars -out=tfplan
+          terraform show -json tfplan > tfplan.json
 
       - name: Manual Approval Gate
+        if: github.event.inputs.approval_required == 'true'
         uses: trstringer/manual-approval@v1
         with:
           secret: ${{ github.token }}
-          approvers: ${{ secrets.PROD_APPROVERS }}
+          approvers: admin-team
           minimum-approvals: 2
           timeout-minutes: 30
 
@@ -101,8 +100,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up Docker Buildx
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v2
+        with:
+          buildkitd-flags: --debug
 
       - name: Login to Azure Container Registry
         uses: docker/login-action@v2
@@ -149,6 +150,9 @@ jobs:
     needs: build-and-push-images
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    environment:
+      name: production
+      url: https://prod.example.com
 
     steps:
       - name: Checkout code
@@ -157,13 +161,13 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3
 
-      - name: Get AKS Credentials
-        uses: azure/aks-set-context@v3
+      - name: Azure Login
+        uses: azure/login@v1
         with:
-          resource-group: ${{ env.PRIMARY_RESOURCE_GROUP }}
-          cluster-name: ${{ env.PRIMARY_CLUSTER_NAME }}
-          admin: 'false'
-          use-kubelogin: 'true'
+          creds: ${{ env.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: az aks get-credentials --resource-group ${{ env.PRIMARY_RESOURCE_GROUP }} --name ${{ env.PRIMARY_CLUSTER_NAME }}
 
       - name: Deploy with Rolling Update
         run: |
@@ -175,7 +179,7 @@ jobs:
       - name: Run Integration Tests
         run: |
           kubectl apply -f infrastructure/kubernetes/tests/integration-tests.yaml
-          kubectl wait --for=condition=complete job/integration-tests -n production --timeout=600s
+          kubectl wait --for=condition=complete --timeout=300s job/integration-tests -n production
 
       - name: Verify Deployment Health
         run: |
@@ -196,13 +200,13 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v3
 
-      - name: Get AKS Credentials
-        uses: azure/aks-set-context@v3
+      - name: Azure Login
+        uses: azure/login@v1
         with:
-          resource-group: ${{ env.SECONDARY_RESOURCE_GROUP }}
-          cluster-name: ${{ env.SECONDARY_CLUSTER_NAME }}
-          admin: 'false'
-          use-kubelogin: 'true'
+          creds: ${{ env.AZURE_CREDENTIALS }}
+
+      - name: Get AKS Credentials
+        run: az aks get-credentials --resource-group ${{ env.SECONDARY_RESOURCE_GROUP }} --name ${{ env.SECONDARY_CLUSTER_NAME }}
 
       - name: Deploy with Rolling Update
         run: |
@@ -214,19 +218,23 @@ jobs:
       - name: Verify Cross-Region Replication
         run: |
           kubectl get pods -n production
-          kubectl get services -n production
-          kubectl get ingress -n production
+          kubectl exec deploy/backend -n production -- curl -f http://localhost:8000/api/v1/health
+          kubectl logs deploy/backend -n production --tail=100
 
       - name: Test Failover Scenarios
         run: |
           kubectl apply -f infrastructure/kubernetes/tests/failover-tests.yaml
-          kubectl wait --for=condition=complete job/failover-tests -n production --timeout=600s
+          kubectl wait --for=condition=complete --timeout=300s job/failover-tests -n production
 
       - name: Update Deployment Status
         if: always()
-        uses: chrnorm/deployment-status@v2
-        with:
-          token: ${{ github.token }}
-          environment-url: https://prod.example.com
-          state: ${{ job.status }}
-          deployment-id: ${{ github.event.deployment.id }}
+        run: |
+          if [[ ${{ job.status }} == 'success' ]]; then
+            echo "Deployment completed successfully"
+            kubectl annotate deployment backend -n production deployment.kubernetes.io/revision="$(date +%s)"
+          else
+            echo "Deployment failed, initiating rollback"
+            kubectl rollout undo deployment/backend -n production
+            kubectl rollout undo deployment/frontend -n production
+            exit 1
+          fi
