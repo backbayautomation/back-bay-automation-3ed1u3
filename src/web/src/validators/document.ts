@@ -1,5 +1,5 @@
 /**
- * Document validation module implementing comprehensive security controls,
+ * Document validation module implementing strict security controls,
  * multi-format document validation, and advanced metadata verification.
  * @version 1.0.0
  */
@@ -53,7 +53,7 @@ export const documentMetadataSchema = z.object({
     (mime) => Object.values(ALLOWED_DOCUMENT_TYPES).flat().includes(mime),
     { message: 'Invalid MIME type' }
   ),
-  languages: z.array(z.string()),
+  languages: z.array(z.string()).min(1),
   encoding: z.string(),
   has_text_content: z.boolean(),
   requires_ocr: z.boolean(),
@@ -76,63 +76,59 @@ export const documentUploadSchema = z.object({
  * Validates and sanitizes document metadata with enhanced security checks
  * @param metadata - Document metadata to validate
  * @param securityConfig - Security configuration for validation
- * @returns Validation result with status and errors
+ * @returns Validation result with detailed status and errors
  */
 export const validateDocumentMetadata = (
   metadata: DocumentMetadata,
   securityConfig: DocumentSecurityConfig
-): ValidationResult => {
+): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
-  let sanitizedMetadata = { ...metadata };
 
   try {
-    // Validate schema compliance
+    // Validate metadata schema
     documentMetadataSchema.parse(metadata);
 
-    // Validate page count
-    if (metadata.page_count <= 0) {
-      errors.push('Page count must be a positive number');
+    // Validate file size against limits
+    if (metadata.file_size_bytes > MAX_FILE_SIZE[metadata.mime_type as DocumentType]) {
+      errors.push(`File size exceeds maximum allowed size for type ${metadata.mime_type}`);
     }
 
-    // Validate file size
-    const maxSize = MAX_FILE_SIZE[metadata.mime_type as DocumentType];
-    if (metadata.file_size_bytes > maxSize) {
-      errors.push(`File size exceeds maximum allowed size of ${maxSize} bytes`);
-    }
-
-    // Validate and sanitize MIME type
-    const isValidMimeType = Object.values(ALLOWED_DOCUMENT_TYPES)
-      .flat()
-      .includes(metadata.mime_type);
-    if (!isValidMimeType) {
+    // Validate MIME type
+    const documentType = Object.entries(ALLOWED_DOCUMENT_TYPES)
+      .find(([_, mimes]) => mimes.includes(metadata.mime_type))?.[0];
+    
+    if (!documentType) {
       errors.push('Invalid MIME type');
     }
 
+    // Sanitize string fields
+    metadata.languages = metadata.languages.map(sanitizeString);
+    metadata.encoding = sanitizeString(metadata.encoding);
+
     // Perform content security validation
     const securityResult = validateContentSecurity(metadata, securityConfig);
-    if (!securityResult.success) {
+    if (!securityResult.isValid) {
       errors.push(...securityResult.errors);
     }
 
-    // Sanitize string fields
-    sanitizedMetadata = {
-      ...sanitizedMetadata,
-      languages: metadata.languages.map(lang => sanitizeString(lang)),
-      encoding: sanitizeString(metadata.encoding)
-    };
+    // Validate processing requirements
+    if (metadata.requires_ocr && !metadata.has_text_content) {
+      if (!securityConfig.allowOcrProcessing) {
+        errors.push('OCR processing is not allowed for this document type');
+      }
+    }
 
   } catch (error) {
     if (error instanceof z.ZodError) {
       errors.push(...error.errors.map(err => err.message));
     } else {
-      errors.push('Metadata validation failed');
+      errors.push('Invalid metadata format');
     }
   }
 
   return {
-    success: errors.length === 0,
-    errors,
-    sanitizedMetadata
+    isValid: errors.length === 0,
+    errors
   };
 };
 
@@ -143,77 +139,67 @@ export const validateDocumentMetadata = (
  */
 export const validateDocumentUpload = (
   request: DocumentUploadRequest
-): ValidationResult => {
+): { isValid: boolean; errors: string[] } => {
   const errors: string[] = [];
 
   try {
-    // Validate schema compliance
+    // Validate request schema
     documentUploadSchema.parse(request);
 
-    // Validate file presence and basic structure
+    // Validate file
     const fileValidation = validateFileUpload(request.file);
     if (fileValidation.length > 0) {
-      errors.push(...fileValidation);
+      errors.push(...fileValidation.map(err => err.message));
     }
 
-    // Validate file size against type-specific limits
-    const maxSize = MAX_FILE_SIZE[request.type];
-    if (request.file.size > maxSize) {
-      errors.push(`File size exceeds maximum allowed size of ${maxSize} bytes for ${request.type}`);
-    }
-
-    // Validate and sanitize filename
+    // Validate filename
     const sanitizedFilename = sanitizeString(request.file.name);
     if (sanitizedFilename.length > MAX_FILENAME_LENGTH) {
       errors.push(`Filename exceeds maximum length of ${MAX_FILENAME_LENGTH} characters`);
     }
 
-    // Verify MIME type authenticity
-    const allowedMimeTypes = ALLOWED_DOCUMENT_TYPES[request.type];
-    if (!allowedMimeTypes.includes(request.file.type)) {
-      errors.push(`Invalid MIME type for ${request.type}`);
+    // Validate file size
+    if (request.file.size > MAX_FILE_SIZE[request.type]) {
+      errors.push(`File size exceeds maximum allowed size for type ${request.type}`);
     }
 
-    // Validate metadata if provided
-    if (request.metadata) {
-      const metadataValidation = validateDocumentMetadata(
-        request.metadata as DocumentMetadata,
-        { maxSizeBytes: maxSize }
-      );
-      if (!metadataValidation.success) {
-        errors.push(...metadataValidation.errors);
-      }
+    // Validate MIME type
+    if (!ALLOWED_DOCUMENT_TYPES[request.type].includes(request.file.type)) {
+      errors.push(`Invalid MIME type for document type ${request.type}`);
     }
 
     // Validate tags
-    if (request.tags) {
-      request.tags = request.tags.map(tag => sanitizeString(tag));
+    request.tags = request.tags.map(sanitizeString).filter(Boolean);
+    if (request.tags.some(tag => tag.length > 50)) {
+      errors.push('Tag length cannot exceed 50 characters');
+    }
+
+    // Validate metadata if provided
+    if (Object.keys(request.metadata).length > 0) {
+      const metadataValidation = validateDocumentMetadata(
+        request.metadata as DocumentMetadata,
+        {
+          allowOcrProcessing: true,
+          maxMetadataSize: 10240, // 10KB
+          allowedLanguages: ['en'],
+          securityScanEnabled: true
+        }
+      );
+      if (!metadataValidation.isValid) {
+        errors.push(...metadataValidation.errors);
+      }
     }
 
   } catch (error) {
     if (error instanceof z.ZodError) {
       errors.push(...error.errors.map(err => err.message));
     } else {
-      errors.push('Document upload validation failed');
+      errors.push('Invalid upload request format');
     }
   }
 
   return {
-    success: errors.length === 0,
-    errors,
-    sanitizedRequest: {
-      ...request,
-      filename: sanitizeString(request.file.name)
-    }
+    isValid: errors.length === 0,
+    errors
   };
 };
-
-/**
- * Interface for validation results with error tracking and sanitized data
- */
-interface ValidationResult {
-  success: boolean;
-  errors: string[];
-  sanitizedMetadata?: DocumentMetadata;
-  sanitizedRequest?: DocumentUploadRequest;
-}
