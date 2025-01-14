@@ -4,7 +4,7 @@
  * @version 1.0.0
  */
 
-import { LoginCredentials, AuthTokens, UserProfile, UserRole, isAuthTokens, isUserProfile } from '../types/auth';
+import { LoginCredentials, AuthTokens, UserProfile, UserRole, authTokensSchema } from '../types/auth';
 import jwtDecode from 'jwt-decode'; // v3.1.2
 import * as CryptoJS from 'crypto-js'; // v4.1.1
 import { encryptData, decryptData } from '@crypto/encryption'; // v2.0.0
@@ -21,13 +21,14 @@ const MAX_AUTH_ATTEMPTS = 5;
 const auditLogger = winston.createLogger({
     level: 'info',
     format: winston.format.json(),
+    defaultMeta: { service: 'auth-service' },
     transports: [
         new winston.transports.File({ filename: 'auth-audit.log' })
     ]
 });
 
 /**
- * Enhanced authentication service with enterprise security features
+ * Enterprise authentication service with enhanced security features
  */
 export class AuthService {
     private tokens: AuthTokens | null = null;
@@ -37,81 +38,99 @@ export class AuthService {
     private refreshTimer: NodeJS.Timeout | null = null;
 
     constructor() {
-        this.initializeAuth();
+        this.initializeService();
     }
 
     /**
-     * Initialize authentication state with secure token loading
+     * Initialize the authentication service with secure token loading
      */
-    private async initializeAuth(): Promise<void> {
+    private async initializeService(): Promise<void> {
         try {
             const encryptedTokens = localStorage.getItem(AUTH_STORAGE_KEY);
             if (encryptedTokens) {
                 const decryptedTokens = await decryptData(encryptedTokens);
-                if (this.validateTokenIntegrity(decryptedTokens)) {
-                    this.tokens = decryptedTokens;
+                const parsedTokens = JSON.parse(decryptedTokens);
+                
+                if (this.validateTokenIntegrity(parsedTokens)) {
+                    this.tokens = parsedTokens;
                     this.setupTokenRefresh();
                 }
             }
         } catch (error) {
-            auditLogger.error('Auth initialization failed', { error });
-            this.clearAuth();
+            auditLogger.error('Failed to initialize auth service', { error });
+            this.clearAuthData();
         }
     }
 
     /**
      * Authenticate user with rate limiting and MFA support
+     * @param credentials User login credentials with optional MFA code
      */
     public async authenticateUser(credentials: LoginCredentials): Promise<{ user: UserProfile; tokens: AuthTokens }> {
-        // Rate limiting check
-        const now = Date.now();
-        if (now - this.lastAuthAttempt < RATE_LIMIT_WINDOW) {
-            this.authAttempts++;
-            if (this.authAttempts > MAX_AUTH_ATTEMPTS) {
-                auditLogger.warn('Rate limit exceeded', { email: credentials.email });
-                throw new Error('Too many authentication attempts. Please try again later.');
-            }
-        } else {
-            this.authAttempts = 1;
-        }
-        this.lastAuthAttempt = now;
-
         try {
-            const response = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(credentials)
-            });
+            // Rate limiting check
+            const now = Date.now();
+            if (now - this.lastAuthAttempt < RATE_LIMIT_WINDOW) {
+                this.authAttempts++;
+                if (this.authAttempts >= MAX_AUTH_ATTEMPTS) {
+                    auditLogger.warn('Rate limit exceeded', { email: credentials.email });
+                    throw new Error('Too many authentication attempts. Please try again later.');
+                }
+            } else {
+                this.authAttempts = 1;
+            }
+            this.lastAuthAttempt = now;
 
-            if (!response.ok) {
+            // Authenticate with retry logic
+            let attempt = 0;
+            let authResponse;
+            
+            while (attempt < MAX_RETRY_ATTEMPTS) {
+                try {
+                    authResponse = await fetch('/api/auth/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(credentials)
+                    });
+                    break;
+                } catch (error) {
+                    attempt++;
+                    if (attempt === MAX_RETRY_ATTEMPTS) throw error;
+                    await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+                }
+            }
+
+            if (!authResponse?.ok) {
                 throw new Error('Authentication failed');
             }
 
-            const { tokens, user } = await response.json();
+            const { tokens, user } = await authResponse.json();
 
-            if (!isAuthTokens(tokens) || !isUserProfile(user)) {
-                throw new Error('Invalid response format');
-            }
+            // Validate token schema
+            const validatedTokens = authTokensSchema.parse(tokens);
 
-            // Encrypt tokens before storage
-            const encryptedTokens = await encryptData(tokens);
+            // Encrypt and store tokens
+            const encryptedTokens = await encryptData(JSON.stringify(validatedTokens));
             localStorage.setItem(AUTH_STORAGE_KEY, encryptedTokens);
 
-            this.tokens = tokens;
+            this.tokens = validatedTokens;
             this.currentUser = user;
+
+            // Setup automatic token refresh
             this.setupTokenRefresh();
 
             auditLogger.info('User authenticated successfully', {
                 userId: user.id,
-                orgId: user.orgId,
-                role: user.role
+                role: user.role,
+                orgId: user.orgId
             });
 
-            return { user, tokens };
+            return { user, tokens: validatedTokens };
+
         } catch (error) {
             auditLogger.error('Authentication failed', {
-                email: credentials.email,
-                error: error.message
+                error,
+                email: credentials.email
             });
             throw error;
         }
@@ -120,116 +139,102 @@ export class AuthService {
     /**
      * Secure token refresh with encryption and validation
      */
-    private async secureTokenRefresh(): Promise<AuthTokens> {
-        if (!this.tokens?.refreshToken) {
-            throw new Error('No refresh token available');
-        }
-
-        let retryCount = 0;
-        while (retryCount < MAX_RETRY_ATTEMPTS) {
-            try {
-                const response = await fetch('/api/auth/refresh', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${this.tokens.refreshToken}`
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error('Token refresh failed');
-                }
-
-                const newTokens: AuthTokens = await response.json();
-                if (!this.validateTokenIntegrity(newTokens)) {
-                    throw new Error('Invalid tokens received');
-                }
-
-                // Encrypt and store new tokens
-                const encryptedTokens = await encryptData(newTokens);
-                localStorage.setItem(AUTH_STORAGE_KEY, encryptedTokens);
-
-                this.tokens = newTokens;
-                this.setupTokenRefresh();
-
-                auditLogger.info('Tokens refreshed successfully', {
-                    userId: this.currentUser?.id
-                });
-
-                return newTokens;
-            } catch (error) {
-                retryCount++;
-                if (retryCount === MAX_RETRY_ATTEMPTS) {
-                    auditLogger.error('Token refresh failed after max retries', {
-                        userId: this.currentUser?.id,
-                        error: error.message
-                    });
-                    this.clearAuth();
-                    throw error;
-                }
-                // Exponential backoff
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+    public async secureTokenRefresh(): Promise<AuthTokens> {
+        try {
+            if (!this.tokens?.refreshToken) {
+                throw new Error('No refresh token available');
             }
-        }
 
-        throw new Error('Token refresh failed');
+            const response = await fetch('/api/auth/refresh', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${this.tokens.refreshToken}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Token refresh failed');
+            }
+
+            const newTokens = await response.json();
+            const validatedTokens = authTokensSchema.parse(newTokens);
+
+            // Encrypt and store new tokens
+            const encryptedTokens = await encryptData(JSON.stringify(validatedTokens));
+            localStorage.setItem(AUTH_STORAGE_KEY, encryptedTokens);
+
+            this.tokens = validatedTokens;
+            this.setupTokenRefresh();
+
+            auditLogger.info('Tokens refreshed successfully', {
+                userId: this.currentUser?.id
+            });
+
+            return validatedTokens;
+
+        } catch (error) {
+            auditLogger.error('Token refresh failed', { error });
+            this.clearAuthData();
+            throw error;
+        }
     }
 
     /**
      * Validate token integrity and authenticity
      */
-    private validateTokenIntegrity(tokens: AuthTokens): boolean {
+    public validateTokenIntegrity(tokens: AuthTokens): boolean {
         try {
-            if (!tokens.accessToken || !tokens.refreshToken) {
-                return false;
-            }
+            if (!tokens.accessToken) return false;
 
-            const decodedAccess = jwtDecode<{ exp: number; sub: string }>(tokens.accessToken);
-            const decodedRefresh = jwtDecode<{ exp: number; sub: string }>(tokens.refreshToken);
+            const decoded = jwtDecode<{
+                exp: number;
+                iat: number;
+                sub: string;
+                role: UserRole;
+                orgId: string;
+            }>(tokens.accessToken);
 
             // Validate token expiration
-            const now = Date.now() / 1000;
-            if (decodedAccess.exp < now || decodedRefresh.exp < now) {
+            if (decoded.exp * 1000 < Date.now()) {
                 return false;
             }
 
-            // Validate token subject matches
-            if (decodedAccess.sub !== decodedRefresh.sub) {
+            // Validate required claims
+            if (!decoded.sub || !decoded.role || !decoded.orgId) {
                 return false;
             }
 
             return true;
+
         } catch (error) {
-            auditLogger.error('Token validation failed', { error: error.message });
+            auditLogger.error('Token validation failed', { error });
             return false;
         }
     }
 
     /**
-     * Set up automatic token refresh
+     * Setup automatic token refresh before expiration
      */
     private setupTokenRefresh(): void {
         if (this.refreshTimer) {
             clearTimeout(this.refreshTimer);
         }
 
-        if (!this.tokens) return;
+        if (!this.tokens?.expiresIn) return;
 
-        const expiresIn = this.tokens.expiresIn * 1000; // Convert to milliseconds
-        const refreshTime = expiresIn - TOKEN_REFRESH_THRESHOLD;
-
+        const refreshTime = (this.tokens.expiresIn * 1000) - TOKEN_REFRESH_THRESHOLD;
         this.refreshTimer = setTimeout(() => {
             this.secureTokenRefresh().catch(error => {
-                auditLogger.error('Automatic token refresh failed', { error: error.message });
-                this.clearAuth();
+                auditLogger.error('Automatic token refresh failed', { error });
             });
         }, refreshTime);
     }
 
     /**
-     * Clear authentication state securely
+     * Clear authentication data and local storage
      */
-    private clearAuth(): void {
+    private clearAuthData(): void {
         this.tokens = null;
         this.currentUser = null;
         localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -239,44 +244,39 @@ export class AuthService {
     }
 
     /**
-     * Get current authenticated user
+     * Get current authentication status
+     */
+    public isAuthenticated(): boolean {
+        return !!this.tokens && this.validateTokenIntegrity(this.tokens);
+    }
+
+    /**
+     * Get current user profile
      */
     public getCurrentUser(): UserProfile | null {
         return this.currentUser;
     }
 
     /**
-     * Check if user is authenticated
-     */
-    public isAuthenticated(): boolean {
-        return !!this.tokens && !!this.currentUser;
-    }
-
-    /**
-     * Logout user securely
+     * Logout user and clear all auth data
      */
     public async logout(): Promise<void> {
         try {
-            if (this.tokens) {
+            if (this.tokens?.refreshToken) {
                 await fetch('/api/auth/logout', {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${this.tokens.accessToken}`
+                        'Authorization': `Bearer ${this.tokens.refreshToken}`
                     }
                 });
             }
         } catch (error) {
-            auditLogger.error('Logout failed', {
-                userId: this.currentUser?.id,
-                error: error.message
-            });
+            auditLogger.error('Logout failed', { error });
         } finally {
-            this.clearAuth();
+            this.clearAuthData();
             auditLogger.info('User logged out', {
                 userId: this.currentUser?.id
             });
         }
     }
 }
-
-export default new AuthService();
