@@ -1,5 +1,5 @@
-import React, { useMemo, useCallback } from 'react'; // v18.2.0
-import { Box, Typography, useTheme } from '@mui/material'; // v5.14.0
+import React, { useMemo, useCallback } from 'react'; // react@18.2.0
+import { Box, Typography, useTheme } from '@mui/material'; // @mui/material@5.14.0
 import {
   LineChart as RechartsLineChart,
   Line,
@@ -8,8 +8,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-} from 'recharts'; // v2.7.0
-import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
+} from 'recharts'; // recharts@2.7.0
+import { ErrorBoundary } from 'react-error-boundary'; // react-error-boundary@4.0.11
 
 import { TimeSeriesData } from '../../../../types/analytics';
 import ContentLoader from '../../../common/Loaders/ContentLoader';
@@ -25,14 +25,25 @@ interface LineChartProps {
   tooltipFormatter?: (value: number) => string;
 }
 
-const useFormattedData = (data: TimeSeriesData[]) => {
+interface FormattedChartData {
+  timestamp: string;
+  value: number;
+  formattedDate: string;
+}
+
+const useFormattedData = (data: TimeSeriesData[]): FormattedChartData[] => {
   return useMemo(() => {
     return data
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-      .map(point => ({
-        timestamp: new Date(point.timestamp).toLocaleDateString(),
-        value: typeof point.value === 'number' ? point.value : 0,
-        metricName: point.metricName,
+      .map((item) => ({
+        timestamp: item.timestamp,
+        value: typeof item.value === 'number' ? item.value : 0,
+        formattedDate: new Date(item.timestamp).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        }),
       }));
   }, [data]);
 };
@@ -41,24 +52,26 @@ const useChartColor = (userColor?: string) => {
   const theme = useTheme();
   return useMemo(() => {
     if (userColor) return userColor;
-    return theme.palette.mode === 'light' 
-      ? theme.palette.primary.main 
+    return theme.palette.mode === 'light'
+      ? theme.palette.primary.main
       : theme.palette.primary.light;
-  }, [theme.palette.mode, userColor, theme.palette.primary]);
+  }, [theme.palette.mode, theme.palette.primary, userColor]);
 };
 
-const ErrorFallback = ({ error }: { error: Error }) => (
+const ErrorFallback = () => (
   <Box
     sx={{
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       height: '100%',
-      padding: 2,
+      padding: '16px',
       color: 'error.main',
     }}
   >
-    <Typography variant="body2">Error loading chart: {error.message}</Typography>
+    <Typography variant="body2">
+      An error occurred while rendering the chart. Please try again later.
+    </Typography>
   </Box>
 );
 
@@ -68,7 +81,7 @@ const LineChart: React.FC<LineChartProps> = ({
   loading = false,
   height = 300,
   color,
-  ariaLabel = 'Analytics line chart',
+  ariaLabel = 'Time series line chart',
   animate = true,
   tooltipFormatter = (value: number) => value.toFixed(2),
 }) => {
@@ -76,22 +89,21 @@ const LineChart: React.FC<LineChartProps> = ({
   const formattedData = useFormattedData(data);
   const chartColor = useChartColor(color);
 
-  const renderTooltip = useCallback(({ active, payload, label }: any) => {
+  const CustomTooltip = useCallback(({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
         <Box
           sx={{
             backgroundColor: theme.palette.background.paper,
-            padding: 1.5,
+            padding: theme.spacing(1),
             border: `1px solid ${theme.palette.divider}`,
-            borderRadius: 1,
-            boxShadow: theme.shadows[2],
+            borderRadius: theme.shape.borderRadius,
           }}
         >
-          <Typography variant="body2" color="text.primary">
+          <Typography variant="body2" color="textPrimary">
             {label}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" color="primary">
             Value: {tooltipFormatter(payload[0].value)}
           </Typography>
         </Box>
@@ -103,7 +115,10 @@ const LineChart: React.FC<LineChartProps> = ({
   if (loading) {
     return (
       <Box sx={{ width: '100%', height }}>
-        <ContentLoader height={height} ariaLabel={`Loading ${title} chart`} />
+        <ContentLoader
+          height={height}
+          ariaLabel={`Loading ${title} chart`}
+        />
       </Box>
     );
   }
@@ -113,7 +128,7 @@ const LineChart: React.FC<LineChartProps> = ({
       <Box
         sx={{
           width: '100%',
-          height,
+          minHeight: height,
           padding: 2,
           position: 'relative',
         }}
@@ -128,7 +143,7 @@ const LineChart: React.FC<LineChartProps> = ({
         >
           {title}
         </Typography>
-        <ResponsiveContainer width="100%" height={height - 60}>
+        <ResponsiveContainer width="100%" height={height}>
           <RechartsLineChart
             data={formattedData}
             margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
@@ -140,24 +155,26 @@ const LineChart: React.FC<LineChartProps> = ({
               stroke={theme.palette.divider}
             />
             <XAxis
-              dataKey="timestamp"
+              dataKey="formattedDate"
               stroke={theme.palette.text.secondary}
               tick={{ fill: theme.palette.text.secondary }}
+              tickLine={{ stroke: theme.palette.divider }}
             />
             <YAxis
               stroke={theme.palette.text.secondary}
               tick={{ fill: theme.palette.text.secondary }}
+              tickLine={{ stroke: theme.palette.divider }}
             />
-            <Tooltip content={renderTooltip} />
+            <Tooltip content={CustomTooltip} />
             <Line
               type="monotone"
               dataKey="value"
               stroke={chartColor}
               strokeWidth={2}
               dot={{ r: 4, fill: chartColor }}
-              activeDot={{ r: 6 }}
+              activeDot={{ r: 6, fill: chartColor }}
               isAnimationActive={animate}
-              animationDuration={1500}
+              animationDuration={1000}
               animationEasing="ease-in-out"
             />
           </RechartsLineChart>
