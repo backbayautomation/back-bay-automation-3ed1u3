@@ -1,25 +1,28 @@
 """
-Enhanced WebSocket notification handler for real-time system events and notifications.
-Implements secure multi-tenant isolation, performance monitoring, and comprehensive error handling.
+Enhanced WebSocket notification handler with security, monitoring, and performance features.
+Implements multi-tenant isolation, notification batching, and comprehensive error handling.
 
 Version: 1.0.0
 """
 
 # External imports
-from fastapi import WebSocket  # version: ^0.103.0
+from fastapi import WebSocket  # version: 0.103.0
 import asyncio  # Python 3.11+
 import json  # Python 3.11+
 import logging  # Python 3.11+
-from prometheus_client import Counter, Histogram  # version: ^0.17.0
-from tenacity import retry, stop_after_attempt, wait_exponential  # version: ^8.2.0
-from jose import jwt  # version: ^3.3.0
+from prometheus_client import Counter, Histogram  # version: 0.17.0
+from tenacity import retry, stop_after_attempt  # version: 8.2.0
+from jose import jwt  # version: 3.3.0
+from typing import Dict, List, Optional
+from datetime import datetime
 
 # Internal imports
 from .connection_manager import ConnectionManager
 from ..services.analytics_service import AnalyticsService
+from ..utils.logging import StructuredLogger
 
 # Initialize structured logger
-logger = logging.getLogger(__name__)
+logger = StructuredLogger(__name__)
 
 # Constants for notification handling
 NOTIFICATION_TYPES = {
@@ -37,7 +40,7 @@ RATE_LIMIT = 1000  # Notifications per hour
 class NotificationHandler:
     """
     Enhanced notification handler with security, monitoring, and performance features.
-    Implements real-time notifications with multi-tenant isolation and comprehensive metrics.
+    Implements real-time notifications with multi-tenant isolation and comprehensive monitoring.
     """
 
     def __init__(self, connection_manager: ConnectionManager, analytics_service: AnalyticsService):
@@ -50,27 +53,28 @@ class NotificationHandler:
         """
         self._connection_manager = connection_manager
         self._analytics_service = analytics_service
-        self._background_tasks = {}
-        self._notification_queues = {}
-
-        # Initialize Prometheus metrics
+        
+        # Background tasks tracking
+        self._background_tasks: Dict[str, asyncio.Task] = {}
+        
+        # Notification queues for batching
+        self._notification_queues: Dict[str, List] = {}
+        
+        # Prometheus metrics
         self._notification_counter = Counter(
             'notification_total',
             'Total number of notifications sent',
-            ['type', 'client_id']
+            ['client_id', 'type']
         )
         self._notification_latency = Histogram(
             'notification_latency_seconds',
             'Notification processing latency',
-            ['type', 'client_id']
+            ['client_id']
         )
+        
+        logger.info("NotificationHandler initialized with enhanced monitoring")
 
-        logger.info("NotificationHandler initialized with monitoring")
-
-    @retry(
-        stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
-        wait=wait_exponential(multiplier=1, min=4, max=10)
-    )
+    @retry(stop=stop_after_attempt(MAX_RETRY_ATTEMPTS))
     async def start_status_monitor(self, client_id: str) -> None:
         """
         Start enhanced status monitoring with retry mechanism.
@@ -81,53 +85,26 @@ class NotificationHandler:
         try:
             # Validate client connection
             if not await self._connection_manager.validate_client_connection(client_id):
-                logger.error(f"Invalid client connection: {client_id}")
-                return
+                raise ValueError(f"Invalid client connection: {client_id}")
 
             # Initialize monitoring task
             if client_id in self._background_tasks:
                 self._background_tasks[client_id].cancel()
 
-            async def monitor_status():
-                while True:
-                    try:
-                        # Get system metrics
-                        metrics = await self._analytics_service.get_system_metrics()
-                        
-                        # Prepare status notification
-                        status_notification = {
-                            "type": NOTIFICATION_TYPES["system"],
-                            "timestamp": metrics["timestamp"],
-                            "data": {
-                                "cpu_usage": metrics["cpu_usage"],
-                                "memory_usage": metrics["memory_usage"],
-                                "active_connections": metrics["active_connections"],
-                                "processing_queue": metrics["processing_queue"]
-                            }
-                        }
-
-                        # Send status update
-                        await self.send_system_notification(
-                            client_id,
-                            json.dumps(status_notification),
-                            "info",
-                            {"correlation_id": metrics["correlation_id"]}
-                        )
-
-                        await asyncio.sleep(STATUS_CHECK_INTERVAL)
-
-                    except Exception as e:
-                        logger.error(f"Status monitoring error: {str(e)}")
-                        await asyncio.sleep(STATUS_CHECK_INTERVAL)
-
-            # Start monitoring task
-            task = asyncio.create_task(monitor_status())
+            # Create and store monitoring task
+            task = asyncio.create_task(self._monitor_status(client_id))
             self._background_tasks[client_id] = task
 
-            logger.info(f"Status monitoring started for client: {client_id}")
+            logger.info(
+                "Status monitoring started",
+                extra={"client_id": client_id}
+            )
 
         except Exception as e:
-            logger.error(f"Failed to start status monitor: {str(e)}")
+            logger.error(
+                "Failed to start status monitoring",
+                extra={"client_id": client_id, "error": str(e)}
+            )
             raise
 
     async def process_notification_queue(self, client_id: str) -> bool:
@@ -141,38 +118,45 @@ class NotificationHandler:
             bool: Queue processing status
         """
         try:
-            if client_id not in self._notification_queues:
+            queue = self._notification_queues.get(client_id, [])
+            if not queue:
                 return True
 
-            queue = self._notification_queues[client_id]
-            if len(queue) < BATCH_SIZE:
-                return True
+            # Apply rate limiting
+            if len(queue) > RATE_LIMIT:
+                logger.warning(
+                    "Rate limit exceeded for client",
+                    extra={"client_id": client_id, "queue_size": len(queue)}
+                )
+                return False
 
             # Process notifications in batches
-            while queue and len(queue) >= BATCH_SIZE:
+            while queue:
                 batch = queue[:BATCH_SIZE]
                 queue = queue[BATCH_SIZE:]
 
                 # Send batch with monitoring
-                with self._notification_latency.labels(
-                    type="batch",
-                    client_id=client_id
-                ).time():
+                with self._notification_latency.labels(client_id=client_id).time():
                     await self._connection_manager.broadcast_to_client(
                         json.dumps(batch),
                         client_id
                     )
 
+                # Update metrics
                 self._notification_counter.labels(
-                    type="batch",
-                    client_id=client_id
+                    client_id=client_id,
+                    type="batch"
                 ).inc(len(batch))
 
+            # Clear processed queue
             self._notification_queues[client_id] = queue
             return True
 
         except Exception as e:
-            logger.error(f"Queue processing error: {str(e)}")
+            logger.error(
+                "Error processing notification queue",
+                extra={"client_id": client_id, "error": str(e)}
+            )
             return False
 
     @retry(stop=stop_after_attempt(MAX_RETRY_ATTEMPTS))
@@ -180,8 +164,8 @@ class NotificationHandler:
         self,
         client_id: str,
         message: str,
-        level: str,
-        metadata: dict
+        level: str = "info",
+        metadata: Optional[Dict] = None
     ) -> bool:
         """
         Send encrypted system notification with monitoring.
@@ -190,30 +174,28 @@ class NotificationHandler:
             client_id: Client identifier
             message: Notification message
             level: Notification level (info/warning/error)
-            metadata: Additional notification metadata
+            metadata: Optional additional metadata
 
         Returns:
-            bool: Notification status
+            bool: Notification sending status
         """
         try:
             # Validate client access
             if not await self._connection_manager.validate_client_connection(client_id):
-                logger.error(f"Invalid client for notification: {client_id}")
-                return False
+                raise ValueError(f"Invalid client connection: {client_id}")
 
             # Prepare notification payload
             notification = {
                 "type": NOTIFICATION_TYPES["system"],
-                "timestamp": metadata.get("timestamp", ""),
-                "level": level,
                 "message": message,
-                "correlation_id": metadata.get("correlation_id", "")
+                "level": level,
+                "timestamp": datetime.utcnow().isoformat(),
+                "metadata": metadata or {}
             }
 
             # Add to notification queue
             if client_id not in self._notification_queues:
                 self._notification_queues[client_id] = []
-            
             self._notification_queues[client_id].append(notification)
 
             # Process queue if threshold reached
@@ -222,20 +204,65 @@ class NotificationHandler:
 
             # Update metrics
             self._notification_counter.labels(
-                type="system",
-                client_id=client_id
+                client_id=client_id,
+                type="system"
             ).inc()
 
+            # Record analytics
+            await self._analytics_service.record_notification_metrics(
+                client_id=client_id,
+                notification_type="system",
+                level=level
+            )
+
             logger.info(
-                f"System notification queued",
+                "System notification queued",
                 extra={
                     "client_id": client_id,
                     "level": level,
-                    "correlation_id": metadata.get("correlation_id")
+                    "queue_size": len(self._notification_queues[client_id])
                 }
             )
             return True
 
         except Exception as e:
-            logger.error(f"Notification error: {str(e)}")
+            logger.error(
+                "Failed to send system notification",
+                extra={"client_id": client_id, "error": str(e)}
+            )
             return False
+
+    async def _monitor_status(self, client_id: str) -> None:
+        """
+        Internal status monitoring implementation with health checks.
+
+        Args:
+            client_id: Client identifier for monitoring
+        """
+        try:
+            while True:
+                # Get system metrics
+                metrics = await self._analytics_service.get_system_metrics(client_id)
+
+                # Send status notification
+                await self.send_system_notification(
+                    client_id=client_id,
+                    message="System status update",
+                    level="info",
+                    metadata=metrics
+                )
+
+                # Wait for next check interval
+                await asyncio.sleep(STATUS_CHECK_INTERVAL)
+
+        except asyncio.CancelledError:
+            logger.info(
+                "Status monitoring cancelled",
+                extra={"client_id": client_id}
+            )
+        except Exception as e:
+            logger.error(
+                "Error in status monitoring",
+                extra={"client_id": client_id, "error": str(e)}
+            )
+            raise
