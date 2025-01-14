@@ -5,23 +5,27 @@ Welcome to the AI-powered Product Catalog Search System project. This guide outl
 ## Introduction
 
 ### Project Architecture Overview
-The system is built on a modern tech stack utilizing React for frontend, Python for backend services, and Azure cloud infrastructure. The architecture follows a microservices pattern with containerized deployments via Kubernetes.
+The system is built using a microservices architecture deployed on Azure Kubernetes Service, utilizing:
+- Frontend: React 18 with TypeScript
+- Backend: Python 3.11 with FastAPI
+- AI Processing: GPT-4, NVidia OCR, and LLamaindex
+- Infrastructure: Azure Cloud Services
 
-### Technology Stack
-- Frontend: React 18, TypeScript, Material-UI
-- Backend: Python 3.11+, FastAPI, LLamaindex
-- Infrastructure: Azure Kubernetes Service, Docker
-- AI/ML: GPT-4, NVidia OCR
-- Testing: Jest, Pytest, Cypress
+### Technology Stack Details
+- **Frontend**: React 18.2+, TypeScript 5.0+, Material-UI 5.14+
+- **Backend**: Python 3.11+, FastAPI 0.103+, LLamaindex 0.8+
+- **Database**: Azure SQL, Azure Cosmos DB, Redis Cache
+- **Infrastructure**: Azure Kubernetes Service, Docker, Terraform
 
 ### Repository Structure
 ```
 /
-├── frontend/          # React client application
-├── backend/          # Python backend services
-├── infrastructure/   # Terraform and K8s configs
-├── docs/            # Documentation
-└── tests/           # Integration and E2E tests
+├── frontend/          # React application
+├── backend/          # Python FastAPI services
+├── ai/              # AI processing services
+├── infrastructure/  # Terraform configurations
+├── tests/          # Test suites
+└── docs/           # Documentation
 ```
 
 ### Getting Started Guide
@@ -33,187 +37,195 @@ The system is built on a modern tech stack utilizing React for frontend, Python 
 
 ## Development Environment Setup
 
-### Required Tools
-- Python 3.11+ with Poetry
-- Node.js 18+ with npm
-- Docker Desktop latest
-- Azure CLI 2.50+
-- VS Code with recommended extensions
-- Git 2.40+
+1. **Required Tools**
+   - Python 3.11+ with Poetry (`poetry version 1.4+`)
+   - Node.js 18+ with npm (`npm version 9+`)
+   - Docker Desktop (latest)
+   - Azure CLI 2.50+
+   - VS Code with recommended extensions
+   - Git 2.40+
 
-### Environment Configuration
-1. Clone your fork:
+2. **Environment Configuration**
 ```bash
-git clone https://github.com/your-username/product-catalog-search.git
-cd product-catalog-search
-```
+# Clone repository
+git clone https://github.com/yourusername/product-catalog-search.git
 
-2. Install dependencies:
-```bash
-# Backend
+# Frontend setup
+cd frontend
+npm install
+
+# Backend setup
+cd backend
 poetry install
 
-# Frontend
-npm install
-```
+# AI service setup
+cd ai
+poetry install
 
-3. Configure environment variables:
-```bash
+# Configure environment variables
 cp .env.example .env
-# Edit .env with your local configuration
 ```
 
 ## Development Workflow
 
-### 1. Branch Creation
-```bash
-git checkout -b feature/your-feature-name
-```
-Branch naming convention: `^(feature|bugfix|hotfix|docs)/[a-z0-9-]+$`
+1. **Fork and Branch**
+   - Fork the repository on GitHub
+   - Create a feature branch following the pattern:
+     ```
+     feature/description-of-feature
+     bugfix/description-of-bug
+     hotfix/urgent-fix-description
+     docs/documentation-update
+     ```
 
-### 2. Development Process
-1. Write tests first (TDD approach)
-2. Implement your changes
-3. Ensure all tests pass
-4. Update documentation
-5. Run local security checks
+2. **Local Development**
+   - Make changes in your feature branch
+   - Follow code standards and testing requirements
+   - Commit using conventional commit messages:
+     ```
+     feat: add new feature
+     fix: resolve bug issue
+     docs: update documentation
+     style: format code
+     refactor: restructure code
+     test: add tests
+     chore: update dependencies
+     ```
 
-### 3. Code Review Process
-- Create a draft pull request early
-- Address automated check failures
-- Request review when ready
-- Respond to feedback promptly
+3. **Testing Requirements**
+   - Run unit tests: `poetry run pytest` or `npm test`
+   - Ensure 85% minimum coverage
+   - Run integration tests
+   - Perform security scans
+   - Validate performance benchmarks
 
-### 4. Pull Request Submission
-- Follow the pull request template
-- Ensure all checks pass
-- Link related issues
-- Provide comprehensive description
+4. **Pull Request Process**
+   - Update documentation
+   - Run full test suite
+   - Create detailed PR description
+   - Request code review
+   - Address feedback
 
 ## Code Standards
 
 ### Backend Standards
-- Code formatting:
-```bash
-black . --line-length 88
-isort . --profile black
-```
-
-- Linting:
-```bash
-flake8 --config=setup.cfg
-mypy . --strict
-```
-
-- Testing:
-```bash
-pytest --cov=. --cov-report=xml --cov-fail-under=85
-```
+- **Code Formatting**
+  ```bash
+  # Install tools
+  poetry add black isort flake8 mypy pytest
+  
+  # Run formatters
+  black . --line-length 88
+  isort . --profile black
+  flake8 .
+  mypy . --strict
+  ```
 
 ### Frontend Standards
-- Code formatting:
-```bash
-npm run format
-npm run lint
-```
+- **Code Formatting**
+  ```bash
+  # Install tools
+  npm install eslint prettier typescript jest
+  
+  # Run formatters
+  npm run lint
+  npm run format
+  ```
 
-- TypeScript:
-```json
-{
-  "compilerOptions": {
-    "strict": true,
-    "noImplicitAny": true
-  }
-}
-```
-
-- Testing:
-```bash
-npm run test -- --coverage
-```
+### Common Requirements
+- Comprehensive documentation
+- Type annotations
+- Error handling
+- Performance optimization
+- Security best practices
 
 ## Testing Requirements
 
-### Unit Testing
-- Minimum 85% code coverage
-- Test all edge cases
-- Mock external dependencies
-- Follow AAA pattern (Arrange-Act-Assert)
+1. **Unit Testing**
+   - 85% minimum coverage
+   - Test all edge cases
+   - Mock external dependencies
+   - Validate error handling
 
-### Integration Testing
-- Test all API endpoints
-- Verify database operations
-- Check authentication flows
-- Validate business logic
+2. **Integration Testing**
+   - API endpoint testing
+   - Service interaction testing
+   - Database operation testing
+   - Cache behavior testing
 
-### E2E Testing
-- Cover critical user journeys
-- Test cross-service interactions
-- Verify UI workflows
-- Performance benchmarks
+3. **E2E Testing**
+   - Critical user flows
+   - Performance testing
+   - Load testing
+   - Security testing
 
 ## Security Guidelines
 
-### Code Security
-- Follow OWASP top 10 guidelines
-- Use approved cryptographic methods
-- Implement proper input validation
-- Avoid hardcoded secrets
+1. **Code Security**
+   - Follow OWASP top 10 guidelines
+   - Regular dependency updates
+   - No sensitive data in code
+   - Input validation
+   - Output sanitization
 
-### Dependency Management
-- Regular dependency updates
-- Security vulnerability scanning
-- License compliance checks
-- Version pinning
+2. **Security Testing**
+   - Daily dependency scanning
+   - Monthly vulnerability assessment
+   - Quarterly penetration testing
+   - Continuous security code review
 
-### Security Testing
-- SAST (Static Application Security Testing)
-- DAST (Dynamic Application Security Testing)
-- Dependency auditing
-- Secret scanning
-
-### Vulnerability Reporting
-1. **Do not** create public issues for security vulnerabilities
-2. Follow responsible disclosure practices
-3. Report via security@example.com
-4. Provide detailed reproduction steps
+3. **Reporting Security Issues**
+   - Report vulnerabilities privately
+   - Include reproduction steps
+   - Provide impact assessment
+   - Maintain confidentiality
 
 ## Validation Rules
 
-### Commit Messages
-Format: `^(feat|fix|docs|style|refactor|test|chore): .+`
+### Branch Naming
+- Pattern: `^(feature|bugfix|hotfix|docs)/[a-z0-9-]+$`
+- Examples:
+  ```
+  feature/add-search-capability
+  bugfix/fix-authentication-issue
+  docs/update-api-documentation
+  ```
 
-Examples:
-- `feat: add user authentication flow`
-- `fix: resolve memory leak in vector search`
-- `docs: update API documentation`
+### Commit Messages
+- Pattern: `^(feat|fix|docs|style|refactor|test|chore): .+`
+- Examples:
+  ```
+  feat: implement vector search functionality
+  fix: resolve memory leak in processing service
+  docs: update deployment instructions
+  ```
 
 ### Code Coverage
 - Minimum threshold: 85%
-- Includes unit and integration tests
-- Excludes test files
-- Coverage reports in CI/CD
+- Run coverage reports:
+  ```bash
+  # Backend
+  poetry run pytest --cov=.
+  
+  # Frontend
+  npm run test:coverage
+  ```
 
 ### Security Compliance
 All contributions must pass:
-- SAST scanning
-- DAST scanning
-- Dependency audit
+- SAST (Static Application Security Testing)
+- DAST (Dynamic Application Security Testing)
+- Dependency vulnerability audit
 - Secret scanning
-- Container scanning
+- Container security scanning
 
 ## Additional Resources
 
 - [Code of Conduct](CODE_OF_CONDUCT.md)
 - [Pull Request Template](.github/pull_request_template.md)
 - [Bug Report Template](.github/ISSUE_TEMPLATE/bug_report.md)
-- [Project Documentation](docs/README.md)
+- [Azure Documentation](https://docs.microsoft.com/azure)
+- [React Documentation](https://reactjs.org/docs)
+- [FastAPI Documentation](https://fastapi.tiangolo.com)
 
-## Questions and Support
-
-- Create a discussion for questions
-- Join our Slack channel
-- Check existing issues and discussions
-- Review documentation first
-
-Thank you for contributing to the AI-powered Product Catalog Search System!
+Thank you for contributing to the AI-powered Product Catalog Search System project!
