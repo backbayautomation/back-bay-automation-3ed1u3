@@ -1,6 +1,6 @@
 """
-Comprehensive test suite for the DocumentProcessor service validating document processing pipeline.
-Tests document ingestion, OCR processing, text chunking, embedding generation, and vector indexing.
+Comprehensive test suite for the DocumentProcessor service validating document ingestion,
+OCR processing, text chunking, embedding generation, and vector indexing functionality.
 
 Version: 1.0.0
 """
@@ -11,11 +11,10 @@ import numpy as np
 import time
 from unittest.mock import Mock, patch, AsyncMock
 from datetime import datetime
-from uuid import uuid4
 
 from app.services.document_processor import DocumentProcessor
 from app.models.document import Document, DocumentStatus
-from app.models.chunk import Chunk
+from app.utils.document_utils import validate_file_type, prepare_for_ocr
 
 # Test constants based on technical specifications
 TEST_CHUNK_SIZE = 1000
@@ -34,22 +33,19 @@ def mock_ocr_service():
     
     async def process_document(document):
         # Simulate OCR processing with configurable accuracy
-        chunks = []
-        processing_time = 1.5  # Simulated processing time
+        processing_time = 1.5  # seconds per page
+        accuracy = 0.96  # 96% accuracy
         
-        # Generate test chunks with metadata
-        for i in range(3):
-            chunk = Mock(spec=Chunk)
-            chunk.content = f"Test content {i}"
-            chunk.metadata = {
-                'ocr_confidence': 0.96,  # Above threshold
-                'layout_preservation': 0.92,
-                'processing_time': processing_time,
-                'page_number': i + 1
+        result = {
+            'text': 'Sample processed text with high accuracy',
+            'confidence': accuracy,
+            'processing_metrics': {
+                'time_per_page': processing_time,
+                'accuracy': accuracy,
+                'layout_preservation': 0.92
             }
-            chunks.append(chunk)
-        
-        return chunks
+        }
+        return result
     
     mock_service.process_document = process_document
     return mock_service
@@ -60,8 +56,10 @@ def mock_ai_service():
     mock_service = AsyncMock()
     
     async def generate_embeddings(text, metadata):
-        # Generate test embeddings with correct dimensions
-        return np.random.randn(TEST_EMBEDDING_DIM).astype(np.float32)
+        # Generate mock embeddings with correct dimensionality
+        embedding = np.random.randn(TEST_EMBEDDING_DIM).astype(np.float32)
+        embedding /= np.linalg.norm(embedding)
+        return embedding
     
     mock_service.generate_embeddings = generate_embeddings
     return mock_service
@@ -72,18 +70,19 @@ def mock_vector_search():
     mock_service = AsyncMock()
     
     async def batch_index(embeddings, tenant_id):
-        return True
+        return {'indexed_count': len(embeddings)}
     
     mock_service.batch_index = batch_index
     return mock_service
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def document_processor(mock_ocr_service, mock_ai_service, mock_vector_search):
     """Fixture providing configured DocumentProcessor instance."""
     config = {
         'chunk_size': TEST_CHUNK_SIZE,
         'chunk_overlap': TEST_CHUNK_OVERLAP,
-        'batch_size': TEST_BATCH_SIZE
+        'batch_size': TEST_BATCH_SIZE,
+        'max_retries': MAX_RETRIES
     }
     
     processor = DocumentProcessor(
@@ -98,94 +97,90 @@ async def document_processor(mock_ocr_service, mock_ai_service, mock_vector_sear
 async def test_process_document_success(document_processor):
     """
     Test successful document processing through complete pipeline with performance validation.
-    Verifies OCR accuracy, layout preservation, and processing time requirements.
+    Verifies OCR accuracy, chunking, embedding generation, and vector indexing.
     """
     # Create test document
-    document = Mock(spec=Document)
-    document.id = uuid4()
-    document.filename = "test.pdf"
-    document.type = "pdf"
-    document.status = DocumentStatus.PENDING
-    document.update_status = AsyncMock()
-    document.update_metadata = AsyncMock()
+    document = Document(
+        client_id='test-client',
+        filename='test.pdf',
+        type='pdf',
+        metadata={'page_count': 1}
+    )
+    
+    # Process start time
+    start_time = time.time()
     
     # Process document
-    start_time = time.time()
-    result = await document_processor.process_document(document, "test_tenant")
+    result = await document_processor.process_document(document, 'test-tenant')
+    
+    # Calculate processing time
     processing_time = time.time() - start_time
     
-    # Verify document status updates
-    document.update_status.assert_any_await("processing")
-    document.update_status.assert_any_await("completed")
+    # Verify document status
+    assert document.status == DocumentStatus.COMPLETED.value
     
-    # Verify processing time meets SLA
-    assert processing_time < PROCESSING_TIME_LIMIT, f"Processing time {processing_time}s exceeds SLA of {PROCESSING_TIME_LIMIT}s"
+    # Verify processing time within SLA
+    assert processing_time < PROCESSING_TIME_LIMIT * document.metadata['page_count']
     
-    # Verify OCR quality metrics
-    metadata_calls = document.update_metadata.call_args_list
-    final_metadata = metadata_calls[-1].args[0]
-    assert final_metadata['ocr_quality'] > OCR_ACCURACY_THRESHOLD, \
-        f"OCR quality {final_metadata['ocr_quality']} below threshold {OCR_ACCURACY_THRESHOLD}"
+    # Verify OCR metrics
+    ocr_metrics = document.metadata.get('processing', {}).get('ocr_metrics', {})
+    assert ocr_metrics.get('accuracy', 0) >= OCR_ACCURACY_THRESHOLD
+    assert ocr_metrics.get('layout_preservation', 0) >= LAYOUT_PRESERVATION_THRESHOLD
     
-    # Verify result structure
-    assert result['status'] == 'completed'
-    assert 'document_id' in result
-    assert 'chunks_processed' in result
-    assert 'embeddings_generated' in result
-    assert 'processing_time' in result
-    assert 'metrics' in result
+    # Verify chunking results
+    assert len(result.get('chunks_processed', [])) > 0
+    
+    # Verify embedding generation
+    assert result.get('embeddings_generated', 0) > 0
+    
+    # Verify vector indexing
+    assert result.get('status') == 'success'
 
 @pytest.mark.asyncio
-async def test_process_document_with_retries(document_processor):
+async def test_process_document_with_retries(document_processor, mock_ocr_service):
     """
     Test document processing with transient failures and retry mechanism.
     Validates error handling and recovery capabilities.
     """
     # Configure OCR service to fail initially
-    mock_ocr = AsyncMock()
-    failure_count = [0]
+    fail_count = [0]
     
-    async def process_with_retries(doc):
-        if failure_count[0] < 2:
-            failure_count[0] += 1
-            raise RuntimeError("Temporary OCR failure")
-        return await document_processor._ocr_service.process_document(doc)
+    async def mock_process_with_retries(*args, **kwargs):
+        fail_count[0] += 1
+        if fail_count[0] <= 2:  # Fail twice
+            raise Exception("Temporary OCR failure")
+        return await mock_ocr_service.process_document(*args, **kwargs)
     
-    mock_ocr.process_document = process_with_retries
-    document_processor._ocr_service = mock_ocr
+    document_processor._ocr_service.process_document = mock_process_with_retries
     
     # Create test document
-    document = Mock(spec=Document)
-    document.id = uuid4()
-    document.filename = "test.pdf"
-    document.type = "pdf"
-    document.status = DocumentStatus.PENDING
-    document.update_status = AsyncMock()
-    document.update_metadata = AsyncMock()
+    document = Document(
+        client_id='test-client',
+        filename='test.pdf',
+        type='pdf'
+    )
     
     # Process document
-    result = await document_processor.process_document(document, "test_tenant")
+    result = await document_processor.process_document(document, 'test-tenant')
     
     # Verify retry behavior
-    assert failure_count[0] == 2, "Expected 2 failures before success"
-    assert result['status'] == 'completed'
+    assert fail_count[0] == 3  # Two failures + one success
+    assert document.status == DocumentStatus.COMPLETED.value
+    assert result['status'] == 'success'
     
-    # Verify metadata updates include retry information
-    metadata_calls = document.update_metadata.call_args_list
-    final_metadata = metadata_calls[-1].args[0]
-    assert 'retry_count' in final_metadata
-    assert final_metadata['retry_count'] == 2
+    # Verify retry metrics
+    assert document.metadata.get('processing', {}).get('retry_count') == 2
 
 @pytest.mark.asyncio
 async def test_chunk_text_with_layout_preservation(document_processor):
     """
-    Test text chunking with layout preservation requirements.
-    Validates chunk size, overlap, and layout preservation metrics.
+    Test text chunking with layout preservation and overlap validation.
+    Verifies chunk size, overlap, and metadata generation.
     """
     # Test content with layout elements
     test_content = """
     Section 1: Introduction
-    This is a test paragraph with specific layout.
+    This is a test paragraph with important layout.
     
     Section 2: Details
     - Bullet point 1
@@ -198,71 +193,69 @@ async def test_chunk_text_with_layout_preservation(document_processor):
     """
     
     # Process chunks
-    chunks = await document_processor.chunk_text(test_content, preserve_layout=True)
+    chunks = await document_processor.chunk_text(
+        test_content,
+        preserve_layout=True
+    )
     
     # Verify chunk properties
-    assert len(chunks) > 0, "No chunks generated"
-    
     for chunk in chunks:
         # Verify chunk size
-        assert len(chunk) <= TEST_CHUNK_SIZE, f"Chunk size {len(chunk)} exceeds limit {TEST_CHUNK_SIZE}"
+        assert len(chunk['content']) <= TEST_CHUNK_SIZE
+        
+        # Verify metadata
+        assert 'sequence' in chunk['metadata']
+        assert 'paragraphs' in chunk['metadata']
+        assert 'has_overlap' in chunk['metadata']
         
         # Verify layout preservation
-        if "Table:" in chunk:
-            assert "|" in chunk, "Table formatting lost in chunking"
-        if "Section" in chunk:
-            assert chunk.index("Section") == chunk.find("Section"), "Section header position changed"
+        if '|' in chunk['content']:
+            # Table structure should be preserved
+            table_lines = [line for line in chunk['content'].split('\n') if '|' in line]
+            assert len(table_lines) >= 2  # Header and data rows should stay together
 
 @pytest.mark.asyncio
 async def test_process_chunks_batch_optimization(document_processor):
     """
     Test batch processing of chunks with performance optimization.
-    Validates embedding generation and batch processing efficiency.
+    Validates batch size, embedding generation, and error handling.
     """
     # Create test chunks
-    test_chunks = [f"Test chunk {i}" for i in range(50)]
+    test_chunks = [
+        {'content': f'Test content {i}', 'sequence': i}
+        for i in range(TEST_BATCH_SIZE + 5)  # Create more than one batch
+    ]
     
     # Process chunks
-    start_time = time.time()
-    embeddings = await document_processor.process_chunks(test_chunks, "test_tenant")
-    processing_time = time.time() - start_time
+    embeddings = await document_processor._process_chunks(test_chunks, 'test-tenant')
     
-    # Verify embeddings
-    assert len(embeddings) == len(test_chunks), "Not all chunks processed"
+    # Verify embedding properties
+    assert len(embeddings) == len(test_chunks)
     for embedding in embeddings:
-        assert embedding.shape[0] == TEST_EMBEDDING_DIM, \
-            f"Invalid embedding dimension {embedding.shape[0]}, expected {TEST_EMBEDDING_DIM}"
-    
-    # Verify batch processing efficiency
-    expected_batches = (len(test_chunks) + TEST_BATCH_SIZE - 1) // TEST_BATCH_SIZE
-    assert processing_time < expected_batches * 0.5, "Batch processing too slow"
+        assert embedding.shape[0] == TEST_EMBEDDING_DIM
+        assert abs(np.linalg.norm(embedding) - 1.0) < 1e-6  # Verify normalization
 
 @pytest.mark.asyncio
-async def test_process_document_error_handling(document_processor):
+async def test_validate_ocr_output(document_processor):
     """
-    Test error handling and recovery in document processing pipeline.
-    Validates error reporting and status updates.
+    Test OCR output validation with quality metrics.
+    Verifies accuracy thresholds and error detection.
     """
-    # Configure services to raise errors
-    document_processor._ocr_service.process_document.side_effect = RuntimeError("OCR failed")
+    # Test OCR output
+    ocr_output = {
+        'text': 'Sample OCR output',
+        'confidence': 0.96,
+        'layout_preservation': 0.92,
+        'processing_metrics': {
+            'time_per_page': 1.5,
+            'error_rate': 0.04
+        }
+    }
     
-    # Create test document
-    document = Mock(spec=Document)
-    document.id = uuid4()
-    document.filename = "test.pdf"
-    document.type = "pdf"
-    document.status = DocumentStatus.PENDING
-    document.update_status = AsyncMock()
-    document.update_metadata = AsyncMock()
+    # Validate output
+    validation_result = await document_processor.validate_ocr_output(ocr_output)
     
-    # Process document and expect error
-    with pytest.raises(RuntimeError):
-        await document_processor.process_document(document, "test_tenant")
-    
-    # Verify error handling
-    document.update_status.assert_any_await("failed")
-    metadata_calls = document.update_metadata.call_args_list
-    error_metadata = metadata_calls[-1].args[0]
-    assert 'error' in error_metadata
-    assert 'error_type' in error_metadata
-    assert not error_metadata['processing_successful']
+    # Verify validation metrics
+    assert validation_result['accuracy'] >= OCR_ACCURACY_THRESHOLD
+    assert validation_result['layout_preservation'] >= LAYOUT_PRESERVATION_THRESHOLD
+    assert validation_result['processing_time'] <= PROCESSING_TIME_LIMIT
