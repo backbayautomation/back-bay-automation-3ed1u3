@@ -1,47 +1,43 @@
 /**
- * Enhanced Chat Service Implementation
- * Version: 1.0.0
- * Dependencies:
- * - uuid: 9.0.0
- * - @azure/logger: 1.0.0
- * - @security/utils: 2.0.0
+ * @fileoverview Enhanced chat service implementation with reliability, security, and monitoring features
+ * @version 1.0.0
  */
 
 import { v4 as uuidv4 } from 'uuid'; // v9.0.0
 import { Logger } from '@azure/logger'; // v1.0.0
 import { SecurityUtils } from '@security/utils'; // v2.0.0
-import { WebSocketClient, WS_EVENTS } from '../api/websocket';
+import { WebSocketClient, WS_EVENTS, WS_CONFIG } from '../api/websocket';
 import { 
     Message, 
     ChatSession, 
     MessageRole, 
     ChatSessionStatus,
     WebSocketStatus,
-    MessageMetadata
+    MessageMetadata,
+    NewMessage 
 } from '../types/chat';
 
-// Constants for rate limiting and monitoring
-const RATE_LIMITS = {
-    MESSAGES_PER_MINUTE: 60,
-    MAX_MESSAGE_LENGTH: 4000,
-    MAX_RETRIES: 3
-} as const;
-
-// Interface for chat service configuration
-interface ChatServiceConfig {
-    wsUrl: string;
-    token: string;
-    securityConfig: {
-        encryptionKey: string;
-        enableMessageSigning: boolean;
-    };
-    loggerConfig: {
-        level: string;
-        enableMetrics: boolean;
-    };
+/**
+ * Configuration interface for chat service security settings
+ */
+interface SecurityConfig {
+    encryptionKey: string;
+    rateLimitPerMinute: number;
+    maxMessageSize: number;
 }
 
-// Interface for message queue item
+/**
+ * Configuration interface for chat service logging
+ */
+interface LoggerConfig {
+    level: string;
+    enableMetrics: boolean;
+    metricsInterval: number;
+}
+
+/**
+ * Interface for message queue entry
+ */
 interface QueuedMessage {
     content: string;
     sessionId: string;
@@ -50,7 +46,7 @@ interface QueuedMessage {
 }
 
 /**
- * Enhanced ChatService with reliability, security, and monitoring features
+ * Enhanced chat service with reliability, security, and monitoring features
  */
 export class ChatService {
     private wsClient: WebSocketClient;
@@ -58,235 +54,218 @@ export class ChatService {
     private messageQueue: QueuedMessage[] = [];
     private securityUtils: SecurityUtils;
     private logger: Logger;
-    private messageRateTracker: Map<string, number> = new Map();
-    private lastCleanupTime: number = Date.now();
+    private messagesSentThisMinute: number = 0;
+    private lastRateLimitReset: Date = new Date();
+    private readonly rateLimitPerMinute: number;
+    private readonly maxMessageSize: number;
 
-    constructor(private config: ChatServiceConfig) {
-        // Initialize WebSocket client with enhanced reliability
-        this.wsClient = new WebSocketClient(
-            config.wsUrl,
-            config.token,
-            {
-                reconnectMaxAttempts: 5,
-                heartbeatInterval: 30000,
-                connectionTimeout: 5000
-            }
-        );
+    /**
+     * Initializes chat service with enhanced features
+     */
+    constructor(
+        wsUrl: string,
+        token: string,
+        securityConfig: SecurityConfig,
+        loggerConfig: LoggerConfig
+    ) {
+        // Initialize WebSocket client with reconnection settings
+        this.wsClient = new WebSocketClient(wsUrl, token, {
+            reconnectMaxAttempts: WS_CONFIG.RECONNECT_MAX_ATTEMPTS,
+            heartbeatInterval: WS_CONFIG.HEARTBEAT_INTERVAL
+        });
 
         // Initialize security utilities
-        this.securityUtils = new SecurityUtils(config.securityConfig);
+        this.securityUtils = new SecurityUtils(securityConfig.encryptionKey);
+        this.rateLimitPerMinute = securityConfig.rateLimitPerMinute;
+        this.maxMessageSize = securityConfig.maxMessageSize;
 
-        // Initialize logger with monitoring
-        this.logger = new Logger('ChatService', config.loggerConfig);
+        // Initialize logger
+        this.logger = new Logger('ChatService');
+        this.logger.setLogLevel(loggerConfig.level);
 
         // Set up WebSocket event handlers
         this.setupWebSocketHandlers();
 
-        // Initialize rate limiting cleanup
-        this.setupRateLimitingCleanup();
+        // Start metrics collection if enabled
+        if (loggerConfig.enableMetrics) {
+            this.startMetricsCollection(loggerConfig.metricsInterval);
+        }
     }
 
     /**
-     * Creates a new chat session with security context
+     * Creates a new secure chat session with metadata
      */
     public async createSession(title: string, metadata?: MessageMetadata): Promise<ChatSession> {
         try {
             const sessionId = uuidv4();
             const session: ChatSession = {
                 id: sessionId,
-                title: this.securityUtils.sanitizeInput(title),
+                title,
                 createdAt: new Date(),
                 updatedAt: new Date(),
                 messages: [],
                 status: ChatSessionStatus.ACTIVE
             };
 
-            this.logger.info(`Creating new chat session: ${sessionId}`);
             this.currentSession = session;
-
-            await this.wsClient.send(WS_EVENTS.CHAT_MESSAGE, {
-                type: 'session_created',
-                sessionId,
-                metadata
-            });
+            this.logger.info(`Created new chat session: ${sessionId}`);
 
             return session;
         } catch (error) {
-            this.logger.error('Failed to create chat session', error);
+            this.logger.error(`Failed to create chat session: ${error}`);
             throw error;
         }
     }
 
     /**
-     * Sends a message with encryption and reliability guarantees
+     * Sends an encrypted message with reliability guarantees
      */
-    public async sendMessage(content: string, sessionId: string, options: { retry?: boolean } = {}): Promise<Message> {
+    public async sendMessage(content: string, sessionId: string, options: Partial<MessageMetadata> = {}): Promise<Message> {
         try {
             // Rate limiting check
-            if (!this.checkRateLimit(sessionId)) {
+            if (!this.checkRateLimit()) {
                 throw new Error('Rate limit exceeded');
             }
 
-            // Input validation and sanitization
-            const sanitizedContent = this.securityUtils.sanitizeInput(content);
-            if (sanitizedContent.length > RATE_LIMITS.MAX_MESSAGE_LENGTH) {
-                throw new Error('Message exceeds maximum length');
+            // Message size validation
+            if (content.length > this.maxMessageSize) {
+                throw new Error(`Message exceeds maximum size of ${this.maxMessageSize} characters`);
             }
 
-            // Create message object
+            // Encrypt message content
+            const encryptedContent = await this.securityUtils.encrypt(content);
+
             const message: Message = {
                 id: uuidv4(),
-                content: sanitizedContent,
+                content: encryptedContent,
                 role: MessageRole.USER,
                 timestamp: new Date(),
                 sessionId,
                 metadata: {
-                    hasMarkdown: false,
-                    hasCodeBlock: false,
-                    codeLanguage: null,
+                    hasMarkdown: options.hasMarkdown || false,
+                    hasCodeBlock: options.hasCodeBlock || false,
+                    codeLanguage: options.codeLanguage || null,
                     renderOptions: {
-                        enableLatex: true,
-                        enableDiagrams: true,
-                        syntaxHighlighting: true
+                        enableLatex: options.renderOptions?.enableLatex || false,
+                        enableDiagrams: options.renderOptions?.enableDiagrams || false,
+                        syntaxHighlighting: options.renderOptions?.syntaxHighlighting || false
                     }
                 }
             };
 
-            // Encrypt message content if configured
-            if (this.config.securityConfig.enableMessageSigning) {
-                message.content = await this.securityUtils.encryptMessage(message.content);
+            // Queue message if offline
+            if (this.wsClient.getConnectionStatus() !== WebSocketStatus.CONNECTED) {
+                this.queueMessage({
+                    content: encryptedContent,
+                    sessionId,
+                    timestamp: new Date(),
+                    retryCount: 0
+                });
+                return message;
             }
 
             // Send message with retry logic
-            await this.sendMessageWithRetry(message, options);
-
+            await this.wsClient.send(WS_EVENTS.CHAT_MESSAGE, message, { retry: true });
+            
             // Update session state
             if (this.currentSession && this.currentSession.id === sessionId) {
                 this.currentSession.messages.push(message);
                 this.currentSession.updatedAt = new Date();
             }
 
-            this.logger.info(`Message sent: ${message.id}`);
+            this.messagesSentThisMinute++;
+            this.logger.info(`Message sent successfully: ${message.id}`);
+
             return message;
         } catch (error) {
-            this.logger.error('Failed to send message', error);
+            this.logger.error(`Failed to send message: ${error}`);
             throw error;
         }
     }
 
     /**
-     * Reconnects WebSocket with enhanced reliability
-     */
-    public async reconnect(): Promise<void> {
-        try {
-            await this.wsClient.connect();
-            this.processMessageQueue();
-        } catch (error) {
-            this.logger.error('Failed to reconnect', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Returns current connection status
+     * Retrieves current connection status
      */
     public getConnectionStatus(): WebSocketStatus {
-        return this.wsClient ? WebSocketStatus.CONNECTED : WebSocketStatus.DISCONNECTED;
+        return this.wsClient.getConnectionStatus();
     }
 
     /**
-     * Returns service metrics for monitoring
+     * Retrieves chat service metrics
      */
     public getMetrics() {
         return {
-            messageCount: this.messageRateTracker.size,
-            queueLength: this.messageQueue.length,
+            messagesSentThisMinute: this.messagesSentThisMinute,
+            queuedMessages: this.messageQueue.length,
             connectionStatus: this.getConnectionStatus()
         };
     }
 
-    private async sendMessageWithRetry(message: Message, options: { retry?: boolean }): Promise<void> {
-        let retryCount = 0;
-        while (retryCount < RATE_LIMITS.MAX_RETRIES) {
-            try {
-                await this.wsClient.send(WS_EVENTS.CHAT_MESSAGE, message, {
-                    retry: options.retry,
-                    encrypt: this.config.securityConfig.enableMessageSigning
-                });
-                return;
-            } catch (error) {
-                retryCount++;
-                if (retryCount === RATE_LIMITS.MAX_RETRIES) {
-                    this.queueMessage(message);
-                    throw error;
-                }
-                await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
-            }
-        }
-    }
-
-    private queueMessage(message: Message): void {
-        this.messageQueue.push({
-            content: message.content,
-            sessionId: message.sessionId,
-            timestamp: message.timestamp,
-            retryCount: 0
-        });
-    }
-
-    private async processMessageQueue(): Promise<void> {
-        while (this.messageQueue.length > 0) {
-            const queuedMessage = this.messageQueue[0];
-            try {
-                await this.sendMessage(queuedMessage.content, queuedMessage.sessionId, { retry: true });
-                this.messageQueue.shift();
-            } catch (error) {
-                this.logger.error('Failed to process queued message', error);
-                break;
-            }
-        }
-    }
-
+    /**
+     * Sets up WebSocket event handlers
+     */
     private setupWebSocketHandlers(): void {
         this.wsClient.on(WS_EVENTS.CHAT_MESSAGE, this.handleIncomingMessage.bind(this));
         this.wsClient.on(WS_EVENTS.ERROR, this.handleWebSocketError.bind(this));
-        this.wsClient.on(WS_EVENTS.CONNECTION_HEALTH, this.handleConnectionHealth.bind(this));
+        this.wsClient.on(WS_EVENTS.SYSTEM_STATUS, this.handleSystemStatus.bind(this));
     }
 
-    private handleIncomingMessage(message: Message): void {
-        if (this.currentSession && message.sessionId === this.currentSession.id) {
-            this.currentSession.messages.push(message);
-            this.currentSession.updatedAt = new Date();
-        }
-    }
-
-    private handleWebSocketError(error: Error): void {
-        this.logger.error('WebSocket error', error);
-    }
-
-    private handleConnectionHealth(status: { connected: boolean }): void {
-        this.logger.info(`Connection status: ${status.connected ? 'connected' : 'disconnected'}`);
-    }
-
-    private checkRateLimit(sessionId: string): boolean {
-        const now = Date.now();
-        const messageCount = this.messageRateTracker.get(sessionId) || 0;
-        
-        if (messageCount >= RATE_LIMITS.MESSAGES_PER_MINUTE) {
-            return false;
-        }
-
-        this.messageRateTracker.set(sessionId, messageCount + 1);
-        return true;
-    }
-
-    private setupRateLimitingCleanup(): void {
-        setInterval(() => {
-            const now = Date.now();
-            if (now - this.lastCleanupTime >= 60000) {
-                this.messageRateTracker.clear();
-                this.lastCleanupTime = now;
+    /**
+     * Handles incoming messages with decryption
+     */
+    private async handleIncomingMessage(message: Message): Promise<void> {
+        try {
+            message.content = await this.securityUtils.decrypt(message.content);
+            if (this.currentSession && message.sessionId === this.currentSession.id) {
+                this.currentSession.messages.push(message);
+                this.currentSession.updatedAt = new Date();
             }
-        }, 60000);
+        } catch (error) {
+            this.logger.error(`Failed to handle incoming message: ${error}`);
+        }
+    }
+
+    /**
+     * Handles WebSocket errors
+     */
+    private handleWebSocketError(error: Error): void {
+        this.logger.error(`WebSocket error: ${error}`);
+    }
+
+    /**
+     * Handles system status updates
+     */
+    private handleSystemStatus(status: any): void {
+        this.logger.info(`System status update: ${JSON.stringify(status)}`);
+    }
+
+    /**
+     * Checks rate limiting
+     */
+    private checkRateLimit(): boolean {
+        const now = new Date();
+        if (now.getTime() - this.lastRateLimitReset.getTime() > 60000) {
+            this.messagesSentThisMinute = 0;
+            this.lastRateLimitReset = now;
+        }
+        return this.messagesSentThisMinute < this.rateLimitPerMinute;
+    }
+
+    /**
+     * Queues message for later delivery
+     */
+    private queueMessage(message: QueuedMessage): void {
+        this.messageQueue.push(message);
+        this.logger.info(`Message queued for later delivery: ${message.sessionId}`);
+    }
+
+    /**
+     * Starts metrics collection
+     */
+    private startMetricsCollection(interval: number): void {
+        setInterval(() => {
+            const metrics = this.getMetrics();
+            this.logger.info(`Chat service metrics: ${JSON.stringify(metrics)}`);
+        }, interval);
     }
 }
