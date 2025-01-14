@@ -1,16 +1,14 @@
 /**
- * API service module for handling natural language queries and chat interactions.
- * Implements enterprise-grade search capabilities with comprehensive error handling.
+ * API service module for handling natural language queries and chat interactions
+ * with the AI-powered catalog search system.
  * @version 1.0.0
  */
 
-// External imports
 import axios from 'axios'; // v1.5.0
-
-// Internal imports
 import { ApiResponse } from './types';
 import { Message, ChatSession } from '../types/chat';
 import { API_ENDPOINTS, createApiClient } from '../config/api';
+import { UUID } from '../types/common';
 
 /**
  * Interface for search query requests
@@ -19,19 +17,16 @@ export interface SearchQuery {
     query: string;
     limit?: number;
     threshold?: number;
-    clientId?: string;
-    metadata?: Record<string, unknown>;
 }
 
 /**
  * Interface for document reference in search results
  */
-export interface Document {
-    id: string;
+interface Document {
+    id: UUID;
     title: string;
     relevance: number;
     excerpt: string;
-    metadata: Record<string, unknown>;
 }
 
 /**
@@ -41,11 +36,6 @@ export interface SearchResult {
     answer: string;
     relevantDocuments: Document[];
     confidence: number;
-    metadata: {
-        processingTime: number;
-        modelVersion: string;
-        sourceCount: number;
-    };
 }
 
 /**
@@ -53,57 +43,55 @@ export interface SearchResult {
  */
 export interface ChatQuery {
     message: string;
-    sessionId: string;
+    sessionId: UUID;
     context?: Message[];
-    metadata?: Record<string, unknown>;
 }
 
 /**
- * Cache implementation for search results
+ * Cache configuration for search results
+ */
+const CACHE_CONFIG = {
+    TTL: 3600000, // 1 hour
+    MAX_SIZE: 1000
+} as const;
+
+/**
+ * Local cache for search results
  */
 const searchCache = new Map<string, { result: SearchResult; timestamp: number }>();
-const CACHE_TTL = 3600000; // 1 hour in milliseconds
 
 /**
  * Submits a natural language query to search through product catalogs
- * @param query Search query parameters
+ * @param query - Search query parameters
  * @returns Promise resolving to search results with relevant documents
  */
 export async function submitQuery(
     query: SearchQuery
 ): Promise<ApiResponse<SearchResult>> {
+    // Input validation
+    if (!query.query.trim()) {
+        throw new Error('Search query cannot be empty');
+    }
+
+    // Check cache for existing results
+    const cacheKey = JSON.stringify(query);
+    const cachedResult = searchCache.get(cacheKey);
+    if (cachedResult && Date.now() - cachedResult.timestamp < CACHE_CONFIG.TTL) {
+        return {
+            data: cachedResult.result,
+            success: true
+        };
+    }
+
     try {
-        // Input validation
-        if (!query.query.trim()) {
-            throw new Error('Search query cannot be empty');
-        }
-
-        // Check cache for recent identical queries
-        const cacheKey = JSON.stringify(query);
-        const cached = searchCache.get(cacheKey);
-        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-            return {
-                data: cached.result,
-                success: true,
-                message: 'Results retrieved from cache',
-                statusCode: 200,
-                metadata: { cached: true }
-            };
-        }
-
-        // Create API client with enhanced configuration
         const apiClient = createApiClient();
-
-        // Execute search request with timeout and retry logic
         const response = await apiClient.post<ApiResponse<SearchResult>>(
             API_ENDPOINTS.QUERIES.SEARCH,
+            query,
             {
-                ...query,
-                timestamp: new Date().toISOString()
-            },
-            {
-                timeout: 30000,
-                validateStatus: (status) => status === 200
+                headers: {
+                    'X-Search-Context': 'product-catalog'
+                }
             }
         );
 
@@ -113,6 +101,13 @@ export async function submitQuery(
                 result: response.data.data,
                 timestamp: Date.now()
             });
+
+            // Cleanup old cache entries
+            if (searchCache.size > CACHE_CONFIG.MAX_SIZE) {
+                const oldestKey = Array.from(searchCache.entries())
+                    .sort(([, a], [, b]) => a.timestamp - b.timestamp)[0][0];
+                searchCache.delete(oldestKey);
+            }
         }
 
         return response.data;
@@ -128,32 +123,29 @@ export async function submitQuery(
 
 /**
  * Sends a chat message and receives AI-generated response
- * @param query Chat query parameters
- * @returns Promise resolving to AI assistant's response
+ * @param query - Chat query parameters
+ * @returns Promise resolving to AI assistant's response message
  */
 export async function sendChatMessage(
     query: ChatQuery
 ): Promise<ApiResponse<Message>> {
+    // Input validation
+    if (!query.message.trim()) {
+        throw new Error('Chat message cannot be empty');
+    }
+
+    if (!query.sessionId) {
+        throw new Error('Session ID is required');
+    }
+
     try {
-        // Input validation
-        if (!query.message.trim() || !query.sessionId) {
-            throw new Error('Invalid chat message or session ID');
-        }
-
-        // Create API client with WebSocket support
         const apiClient = createApiClient();
-
-        // Send chat message with context
         const response = await apiClient.post<ApiResponse<Message>>(
             API_ENDPOINTS.QUERIES.CHAT,
+            query,
             {
-                ...query,
-                timestamp: new Date().toISOString()
-            },
-            {
-                timeout: 45000, // Extended timeout for complex responses
                 headers: {
-                    'X-Session-ID': query.sessionId
+                    'X-Chat-Session': query.sessionId
                 }
             }
         );
@@ -171,33 +163,20 @@ export async function sendChatMessage(
 
 /**
  * Retrieves paginated chat history for a specific session
- * @param sessionId Unique identifier for the chat session
+ * @param sessionId - Unique identifier for the chat session
  * @returns Promise resolving to list of chat messages
  */
 export async function getChatHistory(
-    sessionId: string
+    sessionId: UUID
 ): Promise<ApiResponse<Message[]>> {
+    if (!sessionId) {
+        throw new Error('Session ID is required');
+    }
+
     try {
-        // Input validation
-        if (!sessionId) {
-            throw new Error('Session ID is required');
-        }
-
-        // Create API client
         const apiClient = createApiClient();
-
-        // Retrieve chat history with pagination
         const response = await apiClient.get<ApiResponse<Message[]>>(
-            `${API_ENDPOINTS.QUERIES.HISTORY}/${sessionId}`,
-            {
-                params: {
-                    limit: 50,
-                    order: 'desc'
-                },
-                headers: {
-                    'X-Session-ID': sessionId
-                }
-            }
+            `${API_ENDPOINTS.QUERIES.HISTORY}/${sessionId}`
         );
 
         return response.data;
