@@ -1,7 +1,3 @@
-# Production environment Terraform variable definitions for AI-powered Product Catalog Search System
-# Version: 1.0.0
-# terraform ~> 1.0
-
 # AKS Cluster Configuration
 aks_config = {
   cluster_name         = "aks-catalog-search-prod"
@@ -87,9 +83,9 @@ storage_config = {
   enable_versioning           = true
   enable_hierarchical_namespace = true
   network_rules = {
-    default_action = "Deny"
-    bypass         = ["AzureServices"]
-    ip_rules       = []
+    default_action             = "Deny"
+    bypass                    = ["AzureServices"]
+    ip_rules                  = []
     virtual_network_subnet_ids = []
   }
   containers = {
@@ -113,28 +109,28 @@ network_config = {
   subnets = {
     aks = {
       name                                          = "snet-aks"
-      address_prefix                                = "10.0.0.0/22"
-      service_endpoints                             = ["Microsoft.Sql", "Microsoft.Storage"]
+      address_prefix                               = "10.0.0.0/22"
+      service_endpoints                            = ["Microsoft.Sql", "Microsoft.Storage"]
       enforce_private_link_endpoint_network_policies = true
     }
     db = {
       name                                          = "snet-db"
-      address_prefix                                = "10.0.4.0/24"
-      service_endpoints                             = ["Microsoft.Sql"]
+      address_prefix                               = "10.0.4.0/24"
+      service_endpoints                            = ["Microsoft.Sql"]
       enforce_private_link_endpoint_network_policies = true
     }
     private_endpoints = {
       name                                          = "snet-pe"
-      address_prefix                                = "10.0.5.0/24"
+      address_prefix                               = "10.0.5.0/24"
       enforce_private_link_endpoint_network_policies = true
     }
   }
   network_security_rules = {
-    allow_azure_lb         = true
-    allow_azure_monitor    = true
+    allow_azure_lb        = true
+    allow_azure_monitor   = true
     deny_internet_outbound = true
-    allow_gateway_manager  = true
-    allow_load_balancer    = true
+    allow_gateway_manager = true
+    allow_load_balancer   = true
   }
   ddos_protection_plan = {
     enable = true
@@ -144,21 +140,21 @@ network_config = {
 
 # Monitoring Configuration
 monitoring_config = {
-  workspace_name            = "log-catalog-search-prod"
-  retention_in_days        = 90
+  workspace_name           = "log-catalog-search-prod"
+  retention_in_days       = 90
   enable_container_insights = true
-  enable_vm_insights       = true
-  daily_quota_gb           = 100
+  enable_vm_insights      = true
+  daily_quota_gb         = 100
   alerts = {
-    cpu_threshold          = 80
-    memory_threshold       = 85
-    disk_threshold         = 85
-    pod_restart_threshold  = 5
-    node_ready_threshold   = "5m"
-    action_group_name      = "ag-catalog-search-prod"
+    cpu_threshold         = 80
+    memory_threshold      = 85
+    disk_threshold       = 85
+    pod_restart_threshold = 5
+    node_ready_threshold  = "5m"
+    action_group_name     = "ag-catalog-search-prod"
     action_group_short_name = "ag-prod"
     enable_email_notification = true
-    enable_webhook           = true
+    enable_webhook        = true
   }
   diagnostic_settings = {
     retention_policy_days = 90
