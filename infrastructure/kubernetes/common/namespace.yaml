@@ -1,5 +1,5 @@
 # Kubernetes API Version: v1.25+
-# Purpose: Defines isolated namespace for AI-powered Product Catalog Search System
+# Purpose: Defines the isolated namespace for AI-powered Product Catalog Search System
 # with enhanced security, monitoring, and compliance features
 
 apiVersion: v1
@@ -28,7 +28,7 @@ metadata:
     # Security configurations
     security.istio.io/tlsMode: "strict"
     
-    # Monitoring and observability
+    # Monitoring and metrics
     monitoring.prometheus.io/scrape: "true"
     
     # Backup configuration
@@ -37,5 +37,5 @@ metadata:
     # Security monitoring
     policy.falco.org/enabled: "true"
     
-    # Audit configuration
+    # Audit logging
     audit.kubernetes.io/level: "RequestResponse"
