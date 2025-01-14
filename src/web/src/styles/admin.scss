@@ -1,13 +1,12 @@
 // =============================================================================
-// Admin Portal Stylesheet
-// Enhanced styles for admin interface with WCAG 2.1 AA compliance,
-// dark mode support, and responsive design patterns
+// Admin Portal Styles
+// Enhanced admin interface styles with accessibility and responsive features
 // Version: 1.0.0
 // =============================================================================
 
-@import './variables';
-@import './theme';
-@import './common';
+@use 'variables' as *;
+@use 'theme' as *;
+@use 'common' as *;
 
 // =============================================================================
 // Admin Layout
@@ -24,10 +23,14 @@
   @container (width < #{$breakpoint-tablet}) {
     grid-template-columns: 1fr;
   }
+
+  @media print {
+    display: block;
+  }
 }
 
 .admin-sidebar {
-  background-color: var(--background-secondary);
+  background-color: var(--background-color);
   border-right: 1px solid var(--border-color, rgba($text-primary, 0.1));
   padding: $spacing-md;
   position: fixed;
@@ -37,10 +40,6 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
 
-  @media (prefers-reduced-motion: reduce) {
-    transition: none;
-  }
-
   @container (width < #{$breakpoint-tablet}) {
     position: fixed;
     transform: translateX(-100%);
@@ -49,6 +48,14 @@
     &.is-open {
       transform: translateX(0);
     }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    transition: none;
+  }
+
+  @media print {
+    display: none;
   }
 }
 
@@ -60,9 +67,17 @@
   display: grid;
   gap: $spacing-lg;
   padding: $spacing-lg;
-  
-  @container (width >= #{$breakpoint-tablet}) {
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  align-items: start;
+
+  @container (width < #{$breakpoint-tablet}) {
+    padding: $spacing-md;
+    gap: $spacing-md;
+  }
+
+  @media print {
+    gap: $spacing-md;
+    page-break-inside: avoid;
   }
 }
 
@@ -71,7 +86,7 @@
   display: flex;
   flex-direction: column;
   gap: $spacing-sm;
-
+  
   &__title {
     color: var(--text-secondary);
     font-size: $font-size-sm;
@@ -81,9 +96,9 @@
   }
 
   &__value {
-    font-size: $font-size-xxl;
+    font-size: $font-size-xl;
     font-weight: $font-weight-bold;
-    line-height: 1;
+    line-height: 1.2;
   }
 
   &__trend {
@@ -105,8 +120,8 @@
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  background-color: var(--surface-color);
-  border-radius: $border-radius-lg;
+  background-color: var(--background-color);
+  border-radius: $border-radius-md;
   overflow: hidden;
 
   th, td {
@@ -118,18 +133,26 @@
   th {
     background-color: var(--background-secondary);
     font-weight: $font-weight-medium;
-    color: var(--text-secondary);
     white-space: nowrap;
   }
 
-  tr:last-child td {
-    border-bottom: none;
+  tbody tr {
+    transition: background-color 0.2s ease;
+
+    &:hover {
+      background-color: var(--background-secondary);
+    }
   }
 
-  @media (max-width: #{$breakpoint-tablet}) {
+  @container (width < #{$breakpoint-tablet}) {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+
+    th, td {
+      padding: $spacing-sm;
+      min-width: 120px;
+    }
   }
 
   @media print {
@@ -141,12 +164,17 @@
 .client-form {
   display: grid;
   gap: $spacing-lg;
-  max-width: 600px;
-  margin: $spacing-lg auto;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: $spacing-lg;
+
+  &__section {
+    display: grid;
+    gap: $spacing-md;
+  }
 
   &__group {
-    display: flex;
-    flex-direction: column;
+    display: grid;
     gap: $spacing-xs;
   }
 
@@ -158,15 +186,21 @@
   &__input {
     padding: $spacing-sm;
     border: 1px solid var(--border-color, rgba($text-primary, 0.2));
-    border-radius: $border-radius-md;
-    background-color: var(--surface-color);
+    border-radius: $border-radius-sm;
+    background-color: var(--background-color);
     color: var(--text-primary);
-    font-family: $font-family-primary;
     
     &:focus-visible {
-      outline: 2px solid $primary;
-      outline-offset: 2px;
+      @extend .a11y-focus-visible;
     }
+  }
+
+  @container (width < #{$breakpoint-tablet}) {
+    padding: $spacing-md;
+  }
+
+  @media print {
+    padding: 0;
   }
 }
 
@@ -175,40 +209,38 @@
 // =============================================================================
 
 .processing-queue {
-  @extend .components-card;
-  
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+
   &__item {
+    @extend .components-card;
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr auto;
+    align-items: center;
     gap: $spacing-md;
-    padding: $spacing-md;
-    border-bottom: 1px solid var(--border-color, rgba($text-primary, 0.1));
 
-    &:last-child {
-      border-bottom: none;
-    }
+    &-progress {
+      height: 4px;
+      background-color: var(--background-secondary);
+      border-radius: $border-radius-pill;
+      overflow: hidden;
 
-    @container (width < #{$breakpoint-tablet}) {
-      grid-template-columns: 1fr;
-      gap: $spacing-sm;
+      &-bar {
+        height: 100%;
+        background-color: $primary;
+        transition: width 0.3s ease;
+
+        @media (prefers-reduced-motion: reduce) {
+          transition: none;
+        }
+      }
     }
   }
 
-  &__progress {
-    width: 100%;
-    height: 4px;
-    background-color: var(--background-secondary);
-    border-radius: $border-radius-pill;
-    overflow: hidden;
-
-    &-bar {
-      height: 100%;
-      background-color: $primary;
-      transition: width 0.3s ease;
-
-      @media (prefers-reduced-motion: reduce) {
-        transition: none;
-      }
+  @media print {
+    .processing-queue__item-progress {
+      border: 1px solid #000;
     }
   }
 }
@@ -219,43 +251,22 @@
 
 @media (prefers-color-scheme: dark) {
   .admin-sidebar {
-    --border-color: rgba(#{$dark-text-primary}, 0.1);
+    border-right-color: rgba($dark-text-primary, 0.1);
   }
 
   .client-table {
-    --border-color: rgba(#{$dark-text-primary}, 0.1);
-  }
+    th {
+      background-color: rgba($dark-text-primary, 0.05);
+    }
 
-  .processing-queue {
-    --border-color: rgba(#{$dark-text-primary}, 0.1);
-  }
-}
-
-// =============================================================================
-// Print Styles
-// =============================================================================
-
-@media print {
-  .admin-sidebar,
-  .processing-queue__actions {
-    display: none;
-  }
-
-  .admin-layout {
-    display: block;
-  }
-
-  .dashboard-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .metrics-card {
-    break-inside: avoid;
+    tbody tr:hover {
+      background-color: rgba($dark-text-primary, 0.05);
+    }
   }
 }
 
 // =============================================================================
-// High Contrast Mode
+// High Contrast Mode Support
 // =============================================================================
 
 @media (forced-colors: active) {
@@ -269,11 +280,7 @@
     }
   }
 
-  .processing-queue__progress {
+  .processing-queue__item-progress {
     border: 1px solid CanvasText;
-    
-    &-bar {
-      background-color: Highlight;
-    }
   }
 }
