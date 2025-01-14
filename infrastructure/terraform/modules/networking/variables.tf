@@ -1,4 +1,4 @@
-# Resource group configuration
+# Resource group name variable with validation
 variable "resource_group_name" {
   description = "Name of the resource group where networking resources will be deployed"
   type        = string
@@ -8,7 +8,7 @@ variable "resource_group_name" {
   }
 }
 
-# Location configuration
+# Location variable with validation
 variable "location" {
   description = "Azure region where networking resources will be deployed"
   type        = string
@@ -18,7 +18,7 @@ variable "location" {
   }
 }
 
-# Environment configuration
+# Environment variable with validation
 variable "environment" {
   description = "Environment name (dev, staging, prod) for resource naming and tagging"
   type        = string
@@ -28,7 +28,7 @@ variable "environment" {
   }
 }
 
-# Virtual Network configuration
+# Virtual Network address space variable with validation
 variable "vnet_address_space" {
   description = "Address space for the Virtual Network in CIDR notation"
   type        = list(string)
@@ -39,11 +39,11 @@ variable "vnet_address_space" {
   }
 }
 
-# Subnet configuration
+# Subnet configuration variable with validation
 variable "subnet_config" {
   description = "Configuration map for subnet definitions including address spaces and service endpoints"
   type = map(object({
-    address_prefix                                = string
+    address_prefix                               = string
     service_endpoints                            = list(string)
     private_endpoint_network_policies_enabled    = bool
     delegation = optional(object({
@@ -61,14 +61,14 @@ variable "subnet_config" {
   }
 }
 
-# DDoS Protection configuration
+# DDoS protection variable
 variable "enable_ddos_protection" {
   description = "Enable or disable Azure DDoS Protection Standard"
   type        = bool
   default     = true
 }
 
-# Network Security Group rules configuration
+# NSG rules variable with validation
 variable "nsg_rules" {
   description = "Map of network security group rules for each subnet"
   type = map(list(object({
@@ -89,7 +89,7 @@ variable "nsg_rules" {
   }
 }
 
-# Application Gateway configuration
+# Application Gateway configuration variable with validation
 variable "appgw_config" {
   description = "Application Gateway configuration including SKU, capacity, and WAF settings"
   type = object({
@@ -100,14 +100,14 @@ variable "appgw_config" {
     })
     frontend_port = number
     waf_enabled  = bool
-    waf_config = optional(object({
+    waf_config   = optional(object({
       firewall_mode            = string
       rule_set_type           = string
       rule_set_version        = string
       file_upload_limit_mb    = number
       request_body_check      = bool
       max_request_body_size_kb = number
-      disabled_rule_groups = optional(list(object({
+      disabled_rule_groups    = optional(list(object({
         rule_group_name = string
         rules          = optional(list(number))
       })))
@@ -129,7 +129,7 @@ variable "appgw_config" {
   }
 }
 
-# Resource tagging configuration
+# Tags variable
 variable "tags" {
   description = "Resource tags to be applied to all networking resources"
   type        = map(string)
