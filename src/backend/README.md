@@ -9,14 +9,14 @@
 
 The AI-powered Product Catalog Search System backend is a high-performance, scalable solution that leverages advanced AI technologies to automate the extraction, processing, and retrieval of product information from technical documentation. Built with Python 3.11+ and utilizing cutting-edge frameworks and services, the system provides enterprise-grade capabilities for document processing, vector search, and natural language understanding.
 
-### Key Features
-
+Key Features:
 - Advanced OCR processing with NVIDIA GPU acceleration
-- Vector-based semantic search using LLamaindex
+- Vector-based semantic search powered by LLamaindex
 - Natural language understanding with GPT-4 integration
-- Async processing pipeline for high-performance operations
-- Multi-tenant architecture with data isolation
-- Enterprise-grade security and monitoring
+- Distributed task processing for scalable document handling
+- Multi-tenant data isolation and security
+- Real-time chat capabilities with streaming responses
+- Comprehensive API documentation and monitoring
 
 ## Prerequisites
 
@@ -32,21 +32,22 @@ The AI-powered Product Catalog Search System backend is a high-performance, scal
 ## Technology Stack
 
 ### Core Technologies
-- FastAPI 0.103+ (Web Framework)
-- SQLAlchemy 2.0+ (ORM with async support)
-- Celery 5.3+ (Task Queue)
-- Redis 6+ (Cache & Message Broker)
-- PostgreSQL 15+ with pgvector extension
+- FastAPI (0.103.0+) - High-performance async web framework
+- SQLAlchemy (2.0.0+) - Async-capable ORM
+- Celery (5.3.0+) - Distributed task queue
+- Redis (6.0.0+) - Caching and message broker
+- PostgreSQL (15.0+) - Primary database with vector extension
 
 ### AI/ML Components
-- LLamaindex 0.8+ (Vector Search)
-- OpenAI GPT-4 API (Latest)
-- NVIDIA OCR SDK (Latest)
+- LLamaindex (0.8.0+) - Vector search and retrieval
+- OpenAI GPT-4 API - Natural language processing
+- NVIDIA OCR SDK - Document processing
+- Azure Machine Learning - Model deployment
 
-### Cloud Services
+### Infrastructure
 - Azure Kubernetes Service (AKS)
-- Azure Storage
-- Azure Monitor
+- Azure Blob Storage
+- Azure Monitor and Application Insights
 - Azure Key Vault
 
 ## Getting Started
@@ -64,11 +65,12 @@ pre-commit install
 ```bash
 curl -sSL https://install.python-poetry.org | python3 -
 poetry config virtualenvs.in-project true
+poetry env use python3.11
 ```
 
 3. Install project dependencies:
 ```bash
-poetry install
+poetry install --with dev,gpu
 ```
 
 4. Configure environment variables:
@@ -80,6 +82,7 @@ cp .env.example .env
 5. Initialize development database:
 ```bash
 poetry run alembic upgrade head
+poetry run python -m scripts.seed_data
 ```
 
 ### Development Setup
@@ -89,29 +92,22 @@ poetry run alembic upgrade head
 docker-compose up -d
 ```
 
-2. Run database migrations and seed data:
-```bash
-poetry run python -m scripts.seed_data
-```
-
-3. Start development server:
+2. Start development server:
 ```bash
 poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-4. Access API documentation:
-- OpenAPI UI: http://localhost:8000/docs
+3. Access API documentation:
+- Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
-## Development Guidelines
+### Development Guidelines
 
-### Code Quality
-
-- Follow PEP 8 style guide
+- Follow PEP 8 style guide with a maximum line length of 88 characters
+- Write comprehensive docstrings using Google style
 - Maintain test coverage above 85%
 - Use type hints consistently
-- Document all public APIs
-- Run pre-commit hooks before commits
+- Follow conventional commits specification
 
 ### Testing
 
@@ -119,36 +115,24 @@ poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # Run unit tests
 poetry run pytest
 
-# Run with coverage
-poetry run pytest --cov=app
+# Run with coverage report
+poetry run pytest --cov=app --cov-report=html
 
 # Run integration tests
 poetry run pytest tests/integration
-```
-
-### Database Migrations
-
-```bash
-# Create new migration
-poetry run alembic revision --autogenerate -m "description"
-
-# Apply migrations
-poetry run alembic upgrade head
-
-# Rollback migration
-poetry run alembic downgrade -1
 ```
 
 ## Deployment
 
 ### Production Requirements
 
-- AKS cluster with GPU nodes (NVIDIA Tesla T4 or better)
-- Azure SQL Database (Business Critical tier)
-- Azure Redis Cache (Premium tier)
+- Azure subscription with appropriate permissions
+- Azure Container Registry access
+- Kubernetes cluster with NVIDIA GPU support
+- SSL certificates for domain
 - Azure Key Vault for secrets management
 
-### Deployment Process
+### Deployment Steps
 
 1. Build production Docker image:
 ```bash
@@ -161,35 +145,29 @@ az aks get-credentials --resource-group myResourceGroup --name myAKSCluster
 kubectl apply -f k8s/
 ```
 
-3. Verify deployment:
-```bash
-kubectl get pods -n product-search
-kubectl logs -f deployment/backend-deployment
-```
+## Documentation
+
+- [API Documentation](docs/api.md)
+- [Database Schema](docs/schema.md)
+- [Deployment Guide](docs/deployment.md)
+- [Security Guidelines](docs/security.md)
+- [Contributing Guide](CONTRIBUTING.md)
 
 ## Monitoring and Maintenance
 
-### Health Checks
-
-- Readiness probe: `/health/ready`
-- Liveness probe: `/health/live`
-- Metrics endpoint: `/metrics`
-
-### Logging
-
-- Application logs: Azure Application Insights
-- System metrics: Azure Monitor
-- Audit logs: Azure Storage
-
-## Support and Contact
-
-For technical support or questions:
-- Email: dev-team@example.com
-- Internal Documentation: [Wiki](https://github.com/organization/project/wiki)
+- Application metrics available in Azure Application Insights
+- Log aggregation through Azure Monitor
+- Performance monitoring dashboard in Azure Portal
+- Automated alerts for critical metrics
+- Regular security scanning and updates
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details
+
+## Contact
+
+Development Team - dev-team@example.com
 
 ---
 Last Updated: 2024-01-20
