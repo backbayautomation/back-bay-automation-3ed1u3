@@ -57,10 +57,7 @@ jobs:
         working-directory: infrastructure/terraform/environments/staging
         run: |
           terraform init -backend-config="resource_group_name=${{ env.RESOURCE_GROUP }}"
-
-      - name: Select Terraform Workspace
-        working-directory: infrastructure/terraform/environments/staging
-        run: terraform workspace select ${{ env.TF_WORKSPACE }}
+          terraform workspace select ${{ env.TF_WORKSPACE }} || terraform workspace new ${{ env.TF_WORKSPACE }}
 
       - name: Validate Terraform
         working-directory: infrastructure/terraform/environments/staging
@@ -102,8 +99,8 @@ jobs:
           file: src/backend/Dockerfile
           push: true
           tags: ${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:latest
-          cache-to: type=inline
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:cache
+          cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/backend:cache,mode=max
           build-args: |
             ENVIRONMENT=staging
 
@@ -114,8 +111,8 @@ jobs:
           file: src/web/Dockerfile
           push: true
           tags: ${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
-          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:latest
-          cache-to: type=inline
+          cache-from: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:cache
+          cache-to: type=registry,ref=${{ env.ACR_NAME }}.azurecr.io/frontend:cache,mode=max
           build-args: |
             ENVIRONMENT=staging
 
@@ -142,59 +139,61 @@ jobs:
         with:
           version: 'v1.27.3'
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ env.AZURE_CREDENTIALS }}
-
       - name: Get AKS Credentials
-        run: |
-          az aks get-credentials \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --name ${{ env.CLUSTER_NAME }}
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.RESOURCE_GROUP }}
+          cluster-name: ${{ env.CLUSTER_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
 
       - name: Deploy Blue Environment
         run: |
           kubectl apply -f infrastructure/kubernetes/backend/deployment-blue.yaml
           kubectl apply -f infrastructure/kubernetes/frontend/deployment-blue.yaml
+          kubectl set image deployment/backend-blue backend=${{ env.ACR_NAME }}.azurecr.io/backend:${{ github.sha }}
+          kubectl set image deployment/frontend-blue frontend=${{ env.ACR_NAME }}.azurecr.io/frontend:${{ github.sha }}
+
+      - name: Wait for Deployments
+        run: |
           kubectl rollout status deployment/backend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
           kubectl rollout status deployment/frontend-blue -n staging --timeout=${{ env.DEPLOY_TIMEOUT }}s
 
       - name: Run Integration Tests
         run: |
-          for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
-            if curl -f https://staging-blue.example.com/health; then
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
+          kubectl apply -f infrastructure/kubernetes/tests/integration-tests.yaml
+          kubectl wait --for=condition=complete --timeout=${{ env.DEPLOY_TIMEOUT }}s job/integration-tests
 
       - name: Execute Load Tests
         run: |
-          k6 run load-tests/staging.js \
-            --duration ${{ env.LOAD_TEST_DURATION }}s \
-            --vus 50
+          kubectl apply -f infrastructure/kubernetes/tests/load-tests.yaml
+          kubectl wait --for=condition=complete --timeout=${{ env.LOAD_TEST_DURATION }}s job/load-tests
 
       - name: Switch Traffic
         if: success()
         run: |
-          kubectl apply -f infrastructure/kubernetes/ingress-blue.yaml
-          sleep 30
-          kubectl delete -f infrastructure/kubernetes/ingress-green.yaml
+          kubectl apply -f infrastructure/kubernetes/ingress/blue-green-switch.yaml
+          kubectl rollout status deployment/backend-blue -n staging --timeout=300s
+          kubectl rollout status deployment/frontend-blue -n staging --timeout=300s
 
       - name: Monitor Deployment Health
         run: |
-          kubectl get events --sort-by='.lastTimestamp' -n staging
-          kubectl top pods -n staging
-          kubectl get pods,svc,ingress -n staging
+          for i in $(seq 1 ${{ env.HEALTH_CHECK_RETRIES }}); do
+            if kubectl get pods -n staging -l environment=staging | grep -q "Running"; then
+              echo "Deployment healthy"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "Deployment health check failed"
+          exit 1
 
       - name: Rollback on Failure
         if: failure()
         run: |
           kubectl rollout undo deployment/backend-blue -n staging
           kubectl rollout undo deployment/frontend-blue -n staging
-          kubectl apply -f infrastructure/kubernetes/ingress-green.yaml
+          kubectl apply -f infrastructure/kubernetes/ingress/rollback.yaml
 
       - name: Update Deployment Status
         if: always()
