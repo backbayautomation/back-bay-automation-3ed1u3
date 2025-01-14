@@ -1,43 +1,43 @@
-# Output the AKS cluster resource ID
+# Cluster resource identifier
 output "cluster_id" {
   value       = azurerm_kubernetes_cluster.main.id
   description = "The Azure resource ID of the AKS cluster"
 }
 
-# Output the standard kubeconfig for cluster access
+# Standard kubeconfig for cluster access
 output "kube_config" {
   value       = azurerm_kubernetes_cluster.main.kube_config_raw
-  description = "The kubeconfig file content for standard cluster access"
+  description = "Raw kubeconfig file content for standard cluster access with RBAC permissions"
   sensitive   = true
 }
 
-# Output the admin kubeconfig for privileged access
+# Admin kubeconfig for privileged operations
 output "kube_admin_config" {
   value       = azurerm_kubernetes_cluster.main.kube_admin_config_raw
-  description = "The kubeconfig file content for admin/privileged cluster access"
+  description = "Raw admin kubeconfig file content for privileged cluster operations"
   sensitive   = true
 }
 
-# Output the managed node resource group name
+# Node resource group name
 output "node_resource_group" {
   value       = azurerm_kubernetes_cluster.main.node_resource_group
   description = "The name of the resource group containing the AKS cluster nodes"
 }
 
-# Output the cluster's public FQDN
+# Public cluster FQDN
 output "cluster_fqdn" {
   value       = azurerm_kubernetes_cluster.main.fqdn
-  description = "The FQDN of the AKS cluster's API server endpoint"
+  description = "The FQDN of the AKS cluster control plane"
 }
 
-# Output the cluster's private FQDN
+# Private cluster FQDN
 output "private_fqdn" {
   value       = azurerm_kubernetes_cluster.main.private_fqdn
-  description = "The private FQDN of the AKS cluster's API server endpoint"
+  description = "The private FQDN of the AKS cluster control plane when private cluster is enabled"
 }
 
-# Output the cluster's managed identity information
+# Cluster managed identity
 output "cluster_identity" {
   value       = azurerm_kubernetes_cluster.main.identity
-  description = "The managed identity assigned to the AKS cluster"
+  description = "The managed identity information for the AKS cluster including principal_id and tenant_id"
 }
