@@ -1,8 +1,9 @@
 .env
 .env.local
-.env.*.local
-*.env
+.env.*
 !.env.example
+*.env
+!*.env.example
 config.local.js
 *.config.local.js
 config.*.local.js
@@ -43,7 +44,7 @@ out/
 .swc/
 .eslintcache
 
-# IDE and Editor
+# IDE and Editor Files
 .idea/
 .vscode/
 *.swp
@@ -110,3 +111,7 @@ pnpm-lock.yaml
 .yarn/unplugged
 .yarn/build-state.yml
 .yarn/install-state.gz
+
+# Project-specific files
+# Keep example templates
+!templates/**/*.example.*
