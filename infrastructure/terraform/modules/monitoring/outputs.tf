@@ -1,4 +1,4 @@
-# Log Analytics workspace outputs
+# Log Analytics Workspace outputs
 output "log_analytics_workspace_id" {
   description = "ID of the Log Analytics workspace used for centralized logging, metrics collection, and security monitoring"
   value       = azurerm_log_analytics_workspace.main.id
