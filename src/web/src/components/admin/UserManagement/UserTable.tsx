@@ -1,48 +1,37 @@
-import React from 'react';
-import DataTable, { Column, TableProps } from '../../common/Tables/DataTable';
-import { User, UserRole } from '../../../types/user';
+import React, { useMemo } from 'react';
 import { Chip, IconButton, Tooltip } from '@mui/material'; // v5.14.0
 import { Edit, Delete } from '@mui/icons-material'; // v5.14.0
 
+import DataTable, { Column } from '../../common/Tables/DataTable';
+import { User, UserRole } from '../../../types/user';
+import { PaginationParams } from '../../../types/common';
+
+// Props interface with enhanced accessibility support
 interface UserTableProps {
   users: User[];
   page: number;
   pageSize: number;
   total: number;
-  onPageChange: TableProps<User>['onPageChange'];
+  onPageChange: (params: PaginationParams) => void;
   onEdit: (user: User) => void;
   onDelete: (user: User) => void;
-  loading?: boolean;
+  loading: boolean;
   ariaLabel?: string;
   ariaDescription?: string;
 }
 
+// Helper function to get accessible role labels
 const getRoleLabel = (role: UserRole): string => {
-  switch (role) {
-    case UserRole.SYSTEM_ADMIN:
-      return 'System Administrator';
-    case UserRole.CLIENT_ADMIN:
-      return 'Client Administrator';
-    case UserRole.REGULAR_USER:
-      return 'Regular User';
-    default:
-      return 'Unknown Role';
-  }
+  const labels = {
+    [UserRole.SYSTEM_ADMIN]: 'System Administrator',
+    [UserRole.CLIENT_ADMIN]: 'Client Administrator',
+    [UserRole.REGULAR_USER]: 'Regular User',
+    [UserRole.API_SERVICE]: 'API Service',
+  };
+  return labels[role] || 'Unknown Role';
 };
 
-const getRoleChipColor = (role: UserRole): { bg: string; text: string } => {
-  switch (role) {
-    case UserRole.SYSTEM_ADMIN:
-      return { bg: '#1976d2', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
-    case UserRole.CLIENT_ADMIN:
-      return { bg: '#2e7d32', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
-    case UserRole.REGULAR_USER:
-      return { bg: '#ed6c02', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
-    default:
-      return { bg: '#757575', text: '#ffffff' }; // WCAG AA compliant - 4.5:1
-  }
-};
-
+// Memoized user table component with accessibility features
 const UserTable: React.FC<UserTableProps> = React.memo(({
   users,
   page,
@@ -51,18 +40,21 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
   onPageChange,
   onEdit,
   onDelete,
-  loading = false,
+  loading,
   ariaLabel = 'User management table',
   ariaDescription = 'Table displaying user information with sorting and filtering capabilities'
 }) => {
-  const columns: Column<User>[] = React.useMemo(() => [
+  // Memoized table columns with accessibility support
+  const columns = useMemo<Column<User>[]>(() => [
     {
       id: 'fullName',
       label: 'Full Name',
       sortable: true,
       ariaLabel: 'Sort by full name',
       render: (user: User) => (
-        <span role="cell">{user.fullName}</span>
+        <span role="cell" aria-label={`User: ${user.fullName}`}>
+          {user.fullName}
+        </span>
       )
     },
     {
@@ -71,7 +63,9 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
       sortable: true,
       ariaLabel: 'Sort by email address',
       render: (user: User) => (
-        <span role="cell">{user.email}</span>
+        <span role="cell" aria-label={`Email: ${user.email}`}>
+          {user.email}
+        </span>
       )
     },
     {
@@ -79,24 +73,16 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
       label: 'Role',
       sortable: true,
       ariaLabel: 'Sort by user role',
-      render: (user: User) => {
-        const { bg, text } = getRoleChipColor(user.role);
-        return (
-          <Chip
-            label={getRoleLabel(user.role)}
-            sx={{
-              backgroundColor: bg,
-              color: text,
-              margin: '0 8px',
-              fontWeight: 500,
-              minWidth: '44px',
-              height: '32px'
-            }}
-            role="cell"
-            aria-label={`Role: ${getRoleLabel(user.role)}`}
-          />
-        );
-      }
+      render: (user: User) => (
+        <Chip
+          label={getRoleLabel(user.role)}
+          sx={{
+            ...styles['role-chip'],
+            ...styles[user.role.toLowerCase()],
+          }}
+          aria-label={`Role: ${getRoleLabel(user.role)}`}
+        />
+      )
     },
     {
       id: 'status',
@@ -107,13 +93,9 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
         <Chip
           label={user.isActive ? 'Active' : 'Inactive'}
           sx={{
-            backgroundColor: user.isActive ? '#4caf50' : '#d32f2f',
-            color: '#ffffff',
-            margin: '0 8px',
-            minWidth: '44px',
-            height: '32px'
+            ...styles['status-chip'],
+            ...(user.isActive ? styles['active-status'] : styles['inactive-status']),
           }}
-          role="cell"
           aria-label={`Status: ${user.isActive ? 'Active' : 'Inactive'}`}
         />
       )
@@ -124,16 +106,12 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
       sortable: false,
       ariaLabel: 'User actions',
       render: (user: User) => (
-        <div role="cell" style={{ whiteSpace: 'nowrap' }}>
+        <div role="group" aria-label={`Actions for ${user.fullName}`}>
           <Tooltip title="Edit user" arrow>
             <IconButton
               onClick={() => onEdit(user)}
-              aria-label={`Edit user ${user.fullName}`}
-              sx={{
-                padding: '8px',
-                minWidth: '44px',
-                minHeight: '44px'
-              }}
+              sx={styles['action-button']}
+              aria-label={`Edit ${user.fullName}`}
             >
               <Edit />
             </IconButton>
@@ -141,12 +119,9 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
           <Tooltip title="Delete user" arrow>
             <IconButton
               onClick={() => onDelete(user)}
-              aria-label={`Delete user ${user.fullName}`}
-              sx={{
-                padding: '8px',
-                minWidth: '44px',
-                minHeight: '44px'
-              }}
+              sx={styles['action-button']}
+              color="error"
+              aria-label={`Delete ${user.fullName}`}
             >
               <Delete />
             </IconButton>
@@ -157,29 +132,68 @@ const UserTable: React.FC<UserTableProps> = React.memo(({
   ], [onEdit, onDelete]);
 
   return (
-    <div
-      role="region"
-      aria-label={ariaLabel}
-      aria-description={ariaDescription}
-      style={{ position: 'relative', minHeight: '400px' }}
-    >
-      <DataTable<User>
-        data={users}
-        columns={columns}
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={onPageChange}
-        loading={loading}
-        ariaLabel={ariaLabel}
-        getRowAriaLabel={(user) => `User: ${user.fullName}, Role: ${getRoleLabel(user.role)}, Status: ${user.isActive ? 'Active' : 'Inactive'}`}
-        enableVirtualization
-        virtualRowHeight={52}
-      />
-    </div>
+    <DataTable<User>
+      data={users}
+      columns={columns}
+      page={page}
+      pageSize={pageSize}
+      total={total}
+      onPageChange={onPageChange}
+      loading={loading}
+      ariaLabel={ariaLabel}
+      ariaLabelledBy="user-table-title"
+      getRowAriaLabel={(user) => `User row: ${user.fullName}`}
+      enableVirtualization
+      virtualRowHeight={52}
+    />
   );
 });
 
+// Styles following design system specifications with accessibility considerations
+const styles = {
+  'role-chip': {
+    margin: '0 8px',
+    fontWeight: 500,
+    minWidth: '44px',
+    height: '32px',
+  },
+  'status-chip': {
+    margin: '0 8px',
+    minWidth: '44px',
+    height: '32px',
+  },
+  'action-button': {
+    padding: '8px',
+    minWidth: '44px',
+    minHeight: '44px',
+  },
+  'system_admin': {
+    backgroundColor: '#1976d2',
+    color: 'white',
+  },
+  'client_admin': {
+    backgroundColor: '#2e7d32',
+    color: 'white',
+  },
+  'regular_user': {
+    backgroundColor: '#ed6c02',
+    color: 'white',
+  },
+  'api_service': {
+    backgroundColor: '#9c27b0',
+    color: 'white',
+  },
+  'active-status': {
+    backgroundColor: '#4caf50',
+    color: 'white',
+  },
+  'inactive-status': {
+    backgroundColor: '#d32f2f',
+    color: 'white',
+  },
+} as const;
+
+// Display name for debugging
 UserTable.displayName = 'UserTable';
 
 export default UserTable;
