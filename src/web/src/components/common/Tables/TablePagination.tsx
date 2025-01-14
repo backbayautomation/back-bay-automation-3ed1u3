@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { Pagination, Select, MenuItem, Box, Typography, useTheme } from '@mui/material'; // v5.14.0
 import { PaginationParams } from '../../../types/common';
 
@@ -50,14 +50,12 @@ const TablePagination: React.FC<TablePaginationProps> = ({
     });
   }, [loading, onPageChange, pageSize]);
 
-  // Handle page size change with validation
+  // Handle page size change
   const handlePageSizeChange = useCallback((
     event: React.ChangeEvent<{ value: unknown }>
   ) => {
     if (loading) return;
     const newPageSize = Number(event.target.value);
-    if (isNaN(newPageSize) || newPageSize < 1) return;
-
     onPageChange({
       page: 1, // Reset to first page when changing page size
       pageSize: newPageSize,
@@ -79,47 +77,62 @@ const TablePagination: React.FC<TablePaginationProps> = ({
       aria-label={ariaLabel}
     >
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
-        <Typography
-          component="label"
-          htmlFor="page-size-select"
-          sx={{
-            marginRight: 1,
-            color: theme.palette.text.secondary,
-            typography: 'body2',
-          }}
-        >
-          Rows per page:
-        </Typography>
+        {/* Page size selector */}
         <Select
-          id="page-size-select"
           value={pageSize}
           onChange={handlePageSizeChange}
           disabled={loading}
-          size="small"
           sx={{
             marginRight: 2,
             minWidth: 120,
-            '& .MuiSelect-select': {
-              padding: 1, // 8px (base unit)
-            },
+            '& .MuiSelect-select': { padding: 1 },
           }}
-          aria-label="Select number of rows per page"
+          aria-label="Items per page"
+          inputProps={{
+            'aria-label': 'Select number of items per page',
+          }}
         >
           {pageSizeOptions.map(size => (
             <MenuItem key={size} value={size}>
-              {size}
+              {size} items
             </MenuItem>
           ))}
         </Select>
+
+        {/* Total items count */}
+        <Typography
+          variant="body2"
+          sx={{
+            color: theme.palette.text.secondary,
+          }}
+          component="span"
+        >
+          {/* Screen reader text */}
+          <span
+            style={{
+              position: 'absolute',
+              width: 1,
+              height: 1,
+              padding: 0,
+              margin: -1,
+              overflow: 'hidden',
+              clip: 'rect(0,0,0,0)',
+              border: 0,
+            }}
+          >
+            Total items:
+          </span>
+          {total} items
+        </Typography>
       </Box>
 
+      {/* Pagination controls */}
       <Pagination
         page={page}
         count={totalPages}
         onChange={handlePageChange}
         disabled={loading}
         color="primary"
-        size="medium"
         showFirstButton
         showLastButton
         siblingCount={1}
@@ -136,40 +149,15 @@ const TablePagination: React.FC<TablePaginationProps> = ({
             },
           },
         }}
-        aria-label="Navigate table pages"
-      />
-
-      <Typography
-        variant="body2"
-        sx={{
-          marginLeft: 2,
-          color: theme.palette.text.secondary,
+        aria-label="Pagination navigation"
+        role="navigation"
+        getItemAriaLabel={(type, page, selected) => {
+          if (type === 'page') {
+            return `${selected ? 'Current page, ' : ''}Page ${page}`;
+          }
+          return `Go to ${type} page`;
         }}
-        role="status"
-        aria-live="polite"
-      >
-        {total} {total === 1 ? 'item' : 'items'} total
-      </Typography>
-
-      {/* Screen reader only text for loading state */}
-      {loading && (
-        <span
-          style={{
-            position: 'absolute',
-            width: 1,
-            height: 1,
-            padding: 0,
-            margin: -1,
-            overflow: 'hidden',
-            clip: 'rect(0,0,0,0)',
-            border: 0,
-          }}
-          role="alert"
-          aria-live="assertive"
-        >
-          Loading table data
-        </span>
-      )}
+      />
     </Box>
   );
 };
