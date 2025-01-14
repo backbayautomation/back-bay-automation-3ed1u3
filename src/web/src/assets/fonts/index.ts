@@ -1,13 +1,11 @@
 /**
- * Font Asset Management and Typography System Configuration
- * Version: 1.0.0
- * 
- * This module centralizes font management and typography configuration,
- * implementing the design system requirements while ensuring WCAG compliance
- * and cross-browser compatibility.
+ * @fileoverview Typography system configuration and font asset management
+ * Implements design system typography requirements with accessibility compliance
+ * and cross-browser compatibility
+ * @version 1.0.0
  */
 
-// Font file paths with WOFF2 format for optimal loading performance
+// Font file paths using WOFF2 format for optimal loading and browser support
 export const RobotoRegular = '/assets/fonts/Roboto-Regular.woff2';
 export const RobotoMedium = '/assets/fonts/Roboto-Medium.woff2';
 export const RobotoBold = '/assets/fonts/Roboto-Bold.woff2';
@@ -16,8 +14,8 @@ export const OpenSansBold = '/assets/fonts/OpenSans-Bold.woff2';
 export const FiraMono = '/assets/fonts/FiraMono-Regular.woff2';
 
 /**
- * Standardized font weights following the W3C specifications
- * for consistent typography and accessibility compliance
+ * Standardized font weights following Material Design guidelines
+ * Ensures consistent typography across the application
  */
 export const fontWeights = {
   normal: 400,
@@ -27,8 +25,8 @@ export const fontWeights = {
 
 /**
  * Font family definitions with comprehensive fallback chains
- * ensuring consistent rendering across different operating systems and browsers.
- * Fallbacks are ordered by similarity to maintain design integrity.
+ * Ensures consistent rendering across different operating systems and browsers
+ * Follows WCAG guidelines for readability and accessibility
  */
 export const fontFamilies = {
   primary: "Roboto, -apple-system, BlinkMacSystemFont, 'Segoe UI', Oxygen, Ubuntu, sans-serif",
@@ -38,65 +36,17 @@ export const fontFamilies = {
 
 /**
  * Type definitions for font weights to ensure type safety
- * when consuming these values throughout the application
  */
 export type FontWeight = typeof fontWeights[keyof typeof fontWeights];
 
 /**
  * Type definitions for font families to ensure type safety
- * when consuming these values throughout the application
  */
 export type FontFamily = typeof fontFamilies[keyof typeof fontFamilies];
 
 /**
- * Font configuration interface for type-safe font management
- */
-export interface FontConfig {
-  family: FontFamily;
-  weight: FontWeight;
-  path: string;
-}
-
-/**
- * Mapping of font configurations for internal reference
- * This helps maintain consistency when applying fonts throughout the application
- */
-export const fontConfigs: Record<string, FontConfig> = {
-  robotoRegular: {
-    family: fontFamilies.primary,
-    weight: fontWeights.normal,
-    path: RobotoRegular,
-  },
-  robotoMedium: {
-    family: fontFamilies.primary,
-    weight: fontWeights.medium,
-    path: RobotoMedium,
-  },
-  robotoBold: {
-    family: fontFamilies.primary,
-    weight: fontWeights.bold,
-    path: RobotoBold,
-  },
-  openSansRegular: {
-    family: fontFamilies.secondary,
-    weight: fontWeights.normal,
-    path: OpenSansRegular,
-  },
-  openSansBold: {
-    family: fontFamilies.secondary,
-    weight: fontWeights.bold,
-    path: OpenSansBold,
-  },
-  firaMono: {
-    family: fontFamilies.code,
-    weight: fontWeights.normal,
-    path: FiraMono,
-  },
-} as const;
-
-/**
- * Font scaling values following the design system specifications
- * These values ensure consistent typography scaling across the application
+ * Font scaling configuration following design system specifications
+ * Ensures consistent typography scaling across different screen sizes
  */
 export const fontSizes = {
   xs: '12px',
@@ -108,21 +58,19 @@ export const fontSizes = {
 } as const;
 
 /**
- * Line height values optimized for readability and WCAG compliance
- * Following WCAG 2.1 Success Criterion 1.4.12 Text Spacing
+ * Type definitions for font sizes to ensure type safety
  */
-export const lineHeights = {
-  tight: 1.2,
-  normal: 1.5,
-  relaxed: 1.75,
-} as const;
+export type FontSize = typeof fontSizes[keyof typeof fontSizes];
 
 /**
- * Letter spacing values for enhanced readability
- * Particularly important for heading and display text
+ * Font configuration object for easy consumption by style sheets
+ * Referenced by variables.scss and theme.scss
  */
-export const letterSpacing = {
-  tight: '-0.025em',
-  normal: '0em',
-  wide: '0.025em',
+export const typography = {
+  weights: fontWeights,
+  families: fontFamilies,
+  sizes: fontSizes,
 } as const;
+
+// Default export for convenient import of all typography settings
+export default typography;
