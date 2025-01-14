@@ -1,7 +1,12 @@
+"""
+Pydantic schema models for client data validation and serialization in the multi-tenant architecture.
+Implements comprehensive validation rules and ORM integration for client management.
+"""
+
 # pydantic v2.0.0
-from datetime import datetime
-from typing import Optional, Any
 from pydantic import BaseModel, UUID4, constr, Field, ConfigDict
+from datetime import datetime
+from typing import Optional, List, Any
 
 from app.schemas.organization import Organization
 
@@ -10,13 +15,13 @@ class ClientBase(BaseModel):
     name: constr(min_length=3, max_length=100, strip_whitespace=True, pattern='^[a-zA-Z0-9\s\-_]+$') = Field(
         ...,
         description="Client name with alphanumeric characters, spaces, hyphens and underscores",
-        examples=["Tech Corp", "Client_123", "Enterprise-Solutions"]
+        examples=["Tech Corp", "Client_123"]
     )
     config: dict = Field(
         default_factory=dict,
         description="Client-specific configuration settings",
         examples=[{
-            "features_enabled": ["chat", "export"],
+            "features_enabled": ["search", "export"],
             "user_limit": 100,
             "storage_quota": "10GB"
         }]
@@ -25,7 +30,6 @@ class ClientBase(BaseModel):
         default_factory=dict,
         description="Client portal branding configuration",
         examples=[{
-            "theme": "light",
             "logo_url": "https://example.com/logo.png",
             "primary_color": "#0066CC",
             "secondary_color": "#4CAF50"
@@ -39,12 +43,14 @@ class ClientBase(BaseModel):
             "example": {
                 "name": "Tech Solutions Inc",
                 "config": {
-                    "features_enabled": ["chat", "export"],
-                    "user_limit": 100
+                    "features_enabled": ["search", "export"],
+                    "user_limit": 100,
+                    "storage_quota": "10GB"
                 },
                 "branding": {
-                    "theme": "light",
-                    "logo_url": "https://example.com/logo.png"
+                    "logo_url": "https://example.com/logo.png",
+                    "primary_color": "#0066CC",
+                    "secondary_color": "#4CAF50"
                 }
             }
         }
@@ -54,7 +60,7 @@ class ClientCreate(ClientBase):
     """Pydantic model for creating a new client with enhanced validation."""
     org_id: UUID4 = Field(
         ...,
-        description="Organization ID that owns this client",
+        description="Organization ID this client belongs to",
         examples=["123e4567-e89b-12d3-a456-426614174000"]
     )
 
@@ -80,8 +86,11 @@ class ClientUpdate(BaseModel):
             "example": {
                 "name": "Tech Solutions Updated",
                 "config": {
-                    "features_enabled": ["chat", "export", "analytics"],
+                    "features_enabled": ["search", "export", "analytics"],
                     "user_limit": 150
+                },
+                "branding": {
+                    "primary_color": "#1E88E5"
                 }
             }
         }
@@ -95,7 +104,7 @@ class ClientInDB(ClientBase):
     )
     org_id: UUID4 = Field(
         ...,
-        description="Organization ID that owns this client"
+        description="Organization ID this client belongs to"
     )
     created_at: datetime = Field(
         ...,
@@ -106,27 +115,22 @@ class ClientInDB(ClientBase):
         description="Timestamp of last client update"
     )
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        strict=True
-    )
-
 class Client(ClientInDB):
     """Pydantic model for complete client response data with relationship handling."""
     organization: Optional[Organization] = Field(
         None,
-        description="Organization that owns this client"
+        description="Organization this client belongs to"
     )
 
     @classmethod
-    def from_orm(cls, orm_model: Any) -> 'Client':
+    def from_orm(cls, orm_model: Any) -> "Client":
         """Create Client schema from ORM model with enhanced error handling.
         
         Args:
             orm_model: SQLAlchemy ORM model instance
             
         Returns:
-            Client: Validated Client schema instance
+            Client: Validated client schema instance
             
         Raises:
             ValueError: If ORM model is invalid or missing required fields
@@ -149,24 +153,28 @@ class Client(ClientInDB):
             
             # Create and validate Client instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Client from ORM model: {str(e)}")
 
     model_config = ConfigDict(
         from_attributes=True,
+        populate_by_name=True,
         strict=True,
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
-                "org_id": "987fcdeb-51a2-43f7-9876-543210987654",
+                "org_id": "987fcdeb-51a2-43f7-9012-345678901234",
                 "name": "Tech Solutions Inc",
                 "config": {
-                    "features_enabled": ["chat", "export"],
-                    "user_limit": 100
+                    "features_enabled": ["search", "export"],
+                    "user_limit": 100,
+                    "storage_quota": "10GB"
                 },
                 "branding": {
-                    "theme": "light",
-                    "logo_url": "https://example.com/logo.png"
+                    "logo_url": "https://example.com/logo.png",
+                    "primary_color": "#0066CC",
+                    "secondary_color": "#4CAF50"
                 },
                 "created_at": "2024-01-20T12:00:00Z",
                 "updated_at": "2024-01-20T12:00:00Z",
