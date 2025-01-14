@@ -1,59 +1,70 @@
-import { configureStore } from '@reduxjs/toolkit'; // v1.9.5
-import { describe, test, expect, jest, beforeEach, afterEach } from '@jest/globals'; // v29.7.0
-import reducer, {
+import { configureStore } from '@reduxjs/toolkit';
+import { describe, test, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import {
+    reducer as authReducer,
     loginUser,
     logoutUser,
     refreshToken,
     getCurrentUser,
-    setLoading,
-    clearAuth,
-    setSessionTimeout,
-    updateOrganizationContext
+    actions
 } from '../../src/redux/slices/authSlice';
 import type { AuthState } from '../../src/types/auth';
+import { UserRole } from '../../src/types/auth';
 
-// Mock secure storage
+// Mock secure storage and encryption services
 jest.mock('@secure-storage/browser', () => ({
     SecureStorage: jest.fn().mockImplementation(() => ({
-        setItem: jest.fn(),
-        getItem: jest.fn(),
-        removeItem: jest.fn()
+        get: jest.fn(),
+        set: jest.fn(),
+        clear: jest.fn()
     }))
 }));
 
-// Mock auth service
-jest.mock('../../src/services/auth', () => ({
-    AuthService: {
-        authenticateUser: jest.fn(),
-        validateTokenIntegrity: jest.fn(),
-        logAuthEvent: jest.fn(),
-        refreshAuthToken: jest.fn(),
-        getCurrentUser: jest.fn(),
-        logout: jest.fn()
-    }
-}));
-
-// Mock encryption service
+// Mock crypto service
 jest.mock('@crypto/encryption', () => ({
     encryptData: jest.fn(),
     decryptData: jest.fn()
 }));
+
+// Mock auth service with enhanced security features
+const mockAuthService = {
+    authenticateUser: jest.fn(),
+    secureTokenRefresh: jest.fn(),
+    validateTokenIntegrity: jest.fn(),
+    logout: jest.fn(),
+    getCurrentUser: jest.fn()
+};
+
+// Mock rate limiter service
+const mockRateLimiter = {
+    checkLimit: jest.fn(),
+    incrementAttempts: jest.fn(),
+    resetAttempts: jest.fn()
+};
+
+// Mock audit logger service
+const mockAuditLogger = {
+    logEvent: jest.fn(),
+    logError: jest.fn(),
+    logWarning: jest.fn()
+};
 
 describe('Auth Slice', () => {
     let store: ReturnType<typeof configureStore>;
 
     beforeEach(() => {
         store = configureStore({
-            reducer: { auth: reducer }
+            reducer: { auth: authReducer }
         });
-    });
-
-    afterEach(() => {
         jest.clearAllMocks();
     });
 
+    afterEach(() => {
+        jest.resetAllMocks();
+    });
+
     describe('Initial State', () => {
-        test('should return the initial state with security defaults', () => {
+        test('should have correct initial state with security properties', () => {
             const state = store.getState().auth;
             expect(state).toEqual({
                 isAuthenticated: false,
@@ -61,8 +72,9 @@ describe('Auth Slice', () => {
                 user: null,
                 tokens: null,
                 error: null,
-                organization: null,
-                sessionTimeout: null
+                organizationId: null,
+                mfaRequired: false,
+                auditLog: []
             });
         });
     });
@@ -70,65 +82,62 @@ describe('Auth Slice', () => {
     describe('Login Flow', () => {
         const mockCredentials = {
             email: 'test@example.com',
-            password: 'securePassword123'
+            password: 'SecurePass123!'
         };
 
         const mockSuccessResponse = {
             user: {
-                id: '123',
+                id: 'user-123',
                 email: 'test@example.com',
-                role: 'CLIENT_ADMIN',
-                orgId: 'org123'
+                fullName: 'Test User',
+                role: UserRole.CLIENT_ADMIN,
+                orgId: 'org-123',
+                organization: {
+                    id: 'org-123',
+                    name: 'Test Org'
+                }
             },
             tokens: {
                 accessToken: 'mock-access-token',
                 refreshToken: 'mock-refresh-token',
                 expiresIn: 3600,
                 tokenType: 'Bearer'
-            },
-            organization: {
-                id: 'org123',
-                name: 'Test Org'
             }
         };
 
         test('should handle successful login with MFA validation', async () => {
-            const mockAuthService = require('../../src/services/auth').AuthService;
+            mockRateLimiter.checkLimit.mockResolvedValue(true);
             mockAuthService.authenticateUser.mockResolvedValue(mockSuccessResponse);
             mockAuthService.validateTokenIntegrity.mockReturnValue(true);
 
-            await store.dispatch(loginUser(mockCredentials));
+            const result = await store.dispatch(loginUser(mockCredentials));
+            expect(result.type).toBe(loginUser.fulfilled.type);
+            
             const state = store.getState().auth;
-
             expect(state.isAuthenticated).toBe(true);
             expect(state.user).toEqual(mockSuccessResponse.user);
             expect(state.tokens).toEqual(mockSuccessResponse.tokens);
-            expect(state.organization).toEqual(mockSuccessResponse.organization);
-            expect(mockAuthService.logAuthEvent).toHaveBeenCalledWith('login_success', expect.any(Object));
+            expect(state.organizationId).toBe(mockSuccessResponse.user.orgId);
+            expect(mockAuditLogger.logEvent).toHaveBeenCalledWith('login_success', expect.any(Object));
         });
 
-        test('should handle login failure with rate limiting', async () => {
-            const mockAuthService = require('../../src/services/auth').AuthService;
-            mockAuthService.authenticateUser.mockRejectedValue(new Error('Rate limit exceeded'));
+        test('should handle rate limiting during login', async () => {
+            mockRateLimiter.checkLimit.mockResolvedValue(false);
 
-            await store.dispatch(loginUser(mockCredentials));
-            const state = store.getState().auth;
-
-            expect(state.isAuthenticated).toBe(false);
-            expect(state.error).toBe('Rate limit exceeded');
-            expect(mockAuthService.logAuthEvent).toHaveBeenCalledWith('login_failure', expect.any(Object));
+            const result = await store.dispatch(loginUser(mockCredentials));
+            expect(result.type).toBe(loginUser.rejected.type);
+            expect(result.payload).toBe('Too many login attempts. Please try again later.');
+            expect(mockAuditLogger.logWarning).toHaveBeenCalledWith('rate_limit_exceeded', expect.any(Object));
         });
 
-        test('should validate token integrity during login', async () => {
-            const mockAuthService = require('../../src/services/auth').AuthService;
-            mockAuthService.authenticateUser.mockResolvedValue(mockSuccessResponse);
-            mockAuthService.validateTokenIntegrity.mockReturnValue(false);
+        test('should handle invalid credentials', async () => {
+            mockRateLimiter.checkLimit.mockResolvedValue(true);
+            mockAuthService.authenticateUser.mockRejectedValue(new Error('Invalid credentials'));
 
-            await store.dispatch(loginUser(mockCredentials));
-            const state = store.getState().auth;
-
-            expect(state.isAuthenticated).toBe(false);
-            expect(state.error).toBe('Token integrity validation failed');
+            const result = await store.dispatch(loginUser(mockCredentials));
+            expect(result.type).toBe(loginUser.rejected.type);
+            expect(result.payload).toBe('Invalid credentials');
+            expect(mockAuditLogger.logEvent).toHaveBeenCalledWith('login_failed', expect.any(Object));
         });
     });
 
@@ -140,93 +149,74 @@ describe('Auth Slice', () => {
             tokenType: 'Bearer'
         };
 
-        test('should handle successful token refresh with encryption', async () => {
-            const mockAuthService = require('../../src/services/auth').AuthService;
-            mockAuthService.refreshAuthToken.mockResolvedValue(mockNewTokens);
+        test('should handle successful token refresh', async () => {
+            mockAuthService.secureTokenRefresh.mockResolvedValue(mockNewTokens);
             mockAuthService.validateTokenIntegrity.mockReturnValue(true);
 
-            await store.dispatch(refreshToken());
-            const state = store.getState().auth;
-
-            expect(state.tokens).toEqual(mockNewTokens);
-            expect(state.error).toBeNull();
-            expect(mockAuthService.logAuthEvent).toHaveBeenCalledWith('token_refresh_success', expect.any(Object));
+            const result = await store.dispatch(refreshToken());
+            expect(result.type).toBe(refreshToken.fulfilled.type);
+            expect(result.payload).toEqual(mockNewTokens);
+            expect(mockAuditLogger.logEvent).toHaveBeenCalledWith('token_refresh_success', expect.any(Object));
         });
 
-        test('should handle token refresh failure with retry', async () => {
-            const mockAuthService = require('../../src/services/auth').AuthService;
-            mockAuthService.refreshAuthToken.mockRejectedValue(new Error('Refresh failed'));
+        test('should handle token refresh failure', async () => {
+            mockAuthService.secureTokenRefresh.mockRejectedValue(new Error('Refresh failed'));
 
-            await store.dispatch(refreshToken());
-            const state = store.getState().auth;
-
-            expect(state.isAuthenticated).toBe(false);
-            expect(state.tokens).toBeNull();
-            expect(state.error).toBe('Refresh failed');
-            expect(mockAuthService.logAuthEvent).toHaveBeenCalledWith('token_refresh_failure', expect.any(Object));
+            const result = await store.dispatch(refreshToken());
+            expect(result.type).toBe(refreshToken.rejected.type);
+            expect(result.payload).toBe('Refresh failed');
+            expect(mockAuditLogger.logError).toHaveBeenCalledWith('token_refresh_failed', expect.any(Object));
         });
     });
 
     describe('Logout Flow', () => {
-        test('should handle secure logout with session cleanup', async () => {
-            const mockAuthService = require('../../src/services/auth').AuthService;
-            mockAuthService.logout.mockResolvedValue(undefined);
-
-            await store.dispatch(logoutUser());
+        test('should handle successful logout with cleanup', async () => {
+            // Set initial authenticated state
+            store.dispatch(actions.logout());
+            
             const state = store.getState().auth;
-
-            expect(state.isAuthenticated).toBe(false);
-            expect(state.user).toBeNull();
-            expect(state.tokens).toBeNull();
-            expect(state.organization).toBeNull();
-            expect(mockAuthService.logAuthEvent).toHaveBeenCalledWith('logout_success', expect.any(Object));
+            expect(state).toEqual({
+                isAuthenticated: false,
+                isLoading: false,
+                user: null,
+                tokens: null,
+                error: null,
+                organizationId: null,
+                mfaRequired: false,
+                auditLog: []
+            });
+            expect(mockAuthService.logout).toHaveBeenCalled();
+            expect(mockAuditLogger.logEvent).toHaveBeenCalledWith('logout_success', expect.any(Object));
         });
     });
 
     describe('Organization Context', () => {
         test('should update organization context', () => {
-            const mockOrg = {
-                id: 'org123',
-                name: 'Test Org'
+            const orgContext = {
+                orgId: 'org-123',
+                name: 'Test Organization'
             };
 
-            store.dispatch(updateOrganizationContext(mockOrg));
+            store.dispatch(actions.setOrganizationContext(orgContext));
             const state = store.getState().auth;
+            expect(state.organizationId).toBe(orgContext.orgId);
+        });
+    });
 
-            expect(state.organization).toEqual(mockOrg);
+    describe('Error Handling', () => {
+        test('should clear error state', () => {
+            store.dispatch(actions.clearError());
+            const state = store.getState().auth;
+            expect(state.error).toBeNull();
         });
     });
 
     describe('Session Management', () => {
-        test('should handle session timeout updates', () => {
-            const timeout = 3600000; // 1 hour in milliseconds
-            store.dispatch(setSessionTimeout(timeout));
+        test('should handle session timeout update', () => {
+            const timeout = Date.now() + 30 * 60 * 1000; // 30 minutes
+            store.dispatch(actions.updateSessionTimeout(timeout));
             const state = store.getState().auth;
-
             expect(state.sessionTimeout).toBe(timeout);
-        });
-
-        test('should clear auth state on session expiry', () => {
-            store.dispatch(clearAuth());
-            const state = store.getState().auth;
-
-            expect(state.isAuthenticated).toBe(false);
-            expect(state.user).toBeNull();
-            expect(state.tokens).toBeNull();
-            expect(state.organization).toBeNull();
-            expect(state.sessionTimeout).toBeNull();
-        });
-    });
-
-    describe('Loading State', () => {
-        test('should handle loading state updates', () => {
-            store.dispatch(setLoading(true));
-            let state = store.getState().auth;
-            expect(state.isLoading).toBe(true);
-
-            store.dispatch(setLoading(false));
-            state = store.getState().auth;
-            expect(state.isLoading).toBe(false);
         });
     });
 });
