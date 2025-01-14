@@ -1,5 +1,4 @@
 # Terraform outputs file for Azure infrastructure deployment
-# Provider versions:
 # terraform ~> 1.0
 # azurerm ~> 3.0
 
