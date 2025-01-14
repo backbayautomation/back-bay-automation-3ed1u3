@@ -30,12 +30,12 @@ export type URL = string & { readonly __brand: unique symbol };
 /**
  * Interface for theme configuration
  */
-export interface ThemeConfig {
+interface ThemeConfig {
     mode: 'light' | 'dark';
     fontFamily: string;
     spacing: number;
     borderRadius: number;
-    shadows: Record<string, string>;
+    shadows: boolean;
 }
 
 /**
