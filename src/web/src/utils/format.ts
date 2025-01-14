@@ -4,12 +4,12 @@
  * @version 1.0.0
  */
 
-import numeral from 'numeral'; // version: 2.0.6
+import numeral from 'numeral'; // v2.0.6
 import { JsonValue } from '../types/common';
 import { VALIDATION_CONSTANTS } from '../config/constants';
 
 /**
- * Formats a number with specified decimal places and thousands separators
+ * Formats a number with specified decimal places and thousands separators.
  * @param value - Number or string to format
  * @param format - Numeral.js format string (e.g., '0,0.00')
  * @returns Formatted number string with proper locale support
@@ -25,12 +25,12 @@ export const formatNumber = (value: number | string, format: string = '0,0'): st
     return '0';
   }
 
-  const formatted = numeral(numValue).format(format);
-  return formatted === 'NaN' ? '0' : formatted;
+  return numeral(numValue).format(format);
 };
 
 /**
- * Formats a file size in bytes to human-readable format
+ * Formats a file size in bytes to human-readable format.
+ * Handles sizes up to the maximum allowed file size.
  * @param bytes - File size in bytes
  * @returns Human-readable file size with appropriate unit
  */
@@ -40,7 +40,7 @@ export const formatFileSize = (bytes: number): string => {
   }
 
   if (bytes > VALIDATION_CONSTANTS.MAX_FILE_SIZE) {
-    return `>${formatNumber(VALIDATION_CONSTANTS.MAX_FILE_SIZE / 1024 / 1024)} MB`;
+    return `>${formatNumber(VALIDATION_CONSTANTS.MAX_FILE_SIZE / 1048576, '0.0')} MB`;
   }
 
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -52,14 +52,15 @@ export const formatFileSize = (bytes: number): string => {
     unitIndex++;
   }
 
-  return `${formatNumber(value, '0,0.00')} ${units[unitIndex]}`;
+  return `${formatNumber(value, value >= 100 ? '0,0' : '0,0.0')} ${units[unitIndex]}`;
 };
 
 /**
- * Truncates text to specified length with proper UTF-8 character handling
+ * Truncates text to specified length with proper UTF-8 character handling.
+ * Preserves word boundaries when possible and adds ellipsis.
  * @param text - Text to truncate
  * @param maxLength - Maximum length of the truncated text
- * @returns Truncated text with ellipsis and preserved UTF-8 characters
+ * @returns Truncated text with ellipsis if needed
  */
 export const truncateText = (text: string, maxLength: number): string => {
   if (!text || maxLength <= 0) {
@@ -70,38 +71,39 @@ export const truncateText = (text: string, maxLength: number): string => {
     return text;
   }
 
-  // Preserve word boundaries when possible
-  const truncated = text.substring(0, maxLength - 1);
+  // Preserve word boundaries
+  const truncated = text.substring(0, maxLength);
   const lastSpace = truncated.lastIndexOf(' ');
-  
+
   if (lastSpace > maxLength * 0.8) {
-    return `${truncated.substring(0, lastSpace)}…`;
+    return `${truncated.substring(0, lastSpace)}...`;
   }
 
-  return `${truncated}…`;
+  return `${truncated}...`;
 };
 
 /**
- * Formats a decimal number as a percentage with locale support
+ * Formats a decimal number as a percentage with locale support.
  * @param value - Decimal value to format as percentage
- * @param decimalPlaces - Number of decimal places to display
+ * @param decimalPlaces - Number of decimal places (default: 1)
  * @returns Locale-aware formatted percentage string
  */
-export const formatPercentage = (value: number, decimalPlaces: number = 2): string => {
+export const formatPercentage = (value: number, decimalPlaces: number = 1): string => {
   if (value === null || value === undefined || isNaN(value)) {
     return '0%';
   }
 
   const percentage = value * 100;
-  const format = `0,0.${'0'.repeat(decimalPlaces)}`;
+  const format = `0,0.${Array(decimalPlaces).fill('0').join('')}`;
+  
   return `${formatNumber(percentage, format)}%`;
 };
 
 /**
- * Formats a number as currency with comprehensive locale support
+ * Formats a number as currency with comprehensive locale support.
  * @param value - Number to format as currency
- * @param currencyCode - ISO 4217 currency code
- * @param locale - BCP 47 language tag
+ * @param currencyCode - ISO 4217 currency code (default: 'USD')
+ * @param locale - BCP 47 language tag (default: 'en-US')
  * @returns Locale-specific formatted currency string
  */
 export const formatCurrency = (
@@ -124,13 +126,13 @@ export const formatCurrency = (
       maximumFractionDigits: 2
     }).format(value);
   } catch (error) {
-    console.error(`Currency formatting error: ${error}`);
+    // Fallback to basic formatting if locale/currency is invalid
     return `${currencyCode} ${formatNumber(value, '0,0.00')}`;
   }
 };
 
 /**
- * Formats a JSON value as a pretty-printed string with circular reference handling
+ * Formats a JSON value as a pretty-printed string with circular reference handling.
  * @param value - JSON value to format
  * @returns Pretty-printed JSON string with proper indentation
  */
@@ -156,7 +158,6 @@ export const formatJson = (value: JsonValue): string => {
     );
     return formatted;
   } catch (error) {
-    console.error(`JSON formatting error: ${error}`);
-    return String(value);
+    return '[Invalid JSON]';
   }
 };
