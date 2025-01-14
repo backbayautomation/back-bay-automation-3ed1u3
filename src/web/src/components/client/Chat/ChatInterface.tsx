@@ -1,16 +1,22 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { styled } from '@mui/material/styles';
-import { Paper, Box } from '@mui/material';
-import { ErrorBoundary } from 'react-error-boundary';
+/**
+ * ChatInterface component providing a production-ready chat interface with real-time messaging
+ * Features include rich content rendering, accessibility compliance, and error handling
+ * @version 1.0.0
+ */
+
+import React, { useCallback, useEffect, useState } from 'react'; // v18.2.0
+import { useDispatch, useSelector } from 'react-redux'; // v8.1.0
+import { Paper, Box } from '@mui/material'; // v5.14.0
+import { styled } from '@mui/material/styles'; // v5.14.0
+import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
 
 // Internal imports
 import MessageList from './MessageList';
 import ChatInput from './ChatInput';
 import useWebSocket from '../../../hooks/useWebSocket';
-import { ChatSession, Message, ErrorState } from '../../../types/chat';
-import { addMessage, selectCurrentSession } from '../../../redux/slices/chatSlice';
-import { VALIDATION_CONSTANTS } from '../../../config/constants';
+import { ChatSession, Message, ErrorState, WebSocketStatus } from '../../../types/chat';
+import { addMessage, selectCurrentSession, selectWebSocketStatus } from '../../../redux/slices/chatSlice';
+import { UI_CONSTANTS } from '../../../config/constants';
 
 // Styled components with accessibility and responsive design
 const ChatContainer = styled(Paper)(({ theme }) => ({
@@ -24,20 +30,27 @@ const ChatContainer = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.background.paper,
   position: 'relative',
   overflow: 'hidden',
-  '@media (max-width: 600px)': {
+
+  // Mobile responsiveness
+  [theme.breakpoints.down('sm')]: {
     minHeight: '100vh',
+    maxHeight: '100vh',
     borderRadius: 0,
   },
+
+  // Focus management
   '&:focus': {
     outline: `2px solid ${theme.palette.primary.main}`,
     outlineOffset: '2px',
   },
+
+  // Reduced motion support
   '@media (prefers-reduced-motion: reduce)': {
     transition: 'none',
   },
 }));
 
-const ErrorContainer = styled(Box)(({ theme }) => ({
+const ErrorFallback = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
   color: theme.palette.error.main,
   backgroundColor: theme.palette.error.light,
@@ -53,40 +66,25 @@ interface ChatInterfaceProps {
   'aria-label'?: string;
 }
 
-// Constants
-const ARIA_LABELS = {
-  chat_region: 'Chat message area',
-  message_input: 'Type your message',
-  loading: 'Loading messages',
-  error: 'Error in chat',
-};
-
-const ERROR_MESSAGES = {
-  connection: 'Connection lost. Retrying...',
-  message_failed: 'Failed to send message',
-  generic: 'An error occurred',
-};
-
-const RETRY_CONFIG = {
-  max_attempts: 3,
-  delay_ms: 1000,
-  backoff_factor: 1.5,
-};
-
-// Main component
+/**
+ * Main chat interface component with error handling and accessibility
+ */
 const ChatInterface = React.memo<ChatInterfaceProps>(({
   className,
   sessionId,
   onError,
-  'aria-label': ariaLabel = ARIA_LABELS.chat_region,
+  'aria-label': ariaLabel = 'Chat interface',
 }) => {
+  // Redux state management
   const dispatch = useDispatch();
   const currentSession = useSelector(selectCurrentSession);
+  const wsStatus = useSelector(selectWebSocketStatus);
+
+  // Local state management
   const [isLoading, setIsLoading] = useState(false);
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const retryCountRef = useRef(0);
 
-  // WebSocket setup with reconnection and error handling
+  // WebSocket connection management
   const {
     isConnected,
     connectionState,
@@ -97,13 +95,23 @@ const ChatInterface = React.memo<ChatInterfaceProps>(({
     baseUrl: process.env.REACT_APP_WS_URL || 'ws://localhost:8080',
     token: sessionId,
     autoConnect: true,
-    reconnectAttempts: RETRY_CONFIG.max_attempts,
+    reconnectAttempts: 5,
     monitoringEnabled: true,
   });
 
   // Message handling
+  const handleNewMessage = useCallback((message: Message) => {
+    dispatch(addMessage(message));
+  }, [dispatch]);
+
   const handleMessageSubmit = useCallback(async (content: string) => {
-    if (!content.trim() || !isConnected) {
+    if (!isConnected) {
+      onError?.({
+        type: 'connection',
+        message: 'Connection lost. Please try again.',
+        timestamp: new Date(),
+        retryCount: 0,
+      });
       return;
     }
 
@@ -112,87 +120,74 @@ const ChatInterface = React.memo<ChatInterfaceProps>(({
       await sendMessage('chat.message', {
         content,
         sessionId,
-        metadata: {
-          hasMarkdown: true,
-          hasCodeBlock: content.includes('```'),
-        },
-      });
-      retryCountRef.current = 0;
-    } catch (error) {
-      retryCountRef.current += 1;
-      const shouldRetry = retryCountRef.current < RETRY_CONFIG.max_attempts;
-
-      onError?.({
-        type: 'message_send',
-        message: ERROR_MESSAGES.message_failed,
         timestamp: new Date(),
-        retryCount: retryCountRef.current,
       });
-
-      if (shouldRetry) {
-        const delay = RETRY_CONFIG.delay_ms * Math.pow(RETRY_CONFIG.backoff_factor, retryCountRef.current);
-        setTimeout(() => handleMessageSubmit(content), delay);
-      }
+    } catch (error) {
+      onError?.({
+        type: 'message',
+        message: 'Failed to send message',
+        timestamp: new Date(),
+        retryCount: 0,
+      });
     } finally {
       setIsLoading(false);
     }
   }, [isConnected, sendMessage, sessionId, onError]);
 
-  // WebSocket message listener
-  useEffect(() => {
-    const handleIncomingMessage = (message: Message) => {
-      dispatch(addMessage(message));
-    };
-
-    addListener('chat.message', handleIncomingMessage);
-    return () => removeListener('chat.message', handleIncomingMessage);
-  }, [addListener, removeListener, dispatch]);
-
-  // Connection state monitoring
-  useEffect(() => {
-    if (!isConnected) {
-      onError?.({
-        type: 'connection',
-        message: ERROR_MESSAGES.connection,
-        timestamp: new Date(),
-        retryCount: retryCountRef.current,
-      });
-    }
-  }, [isConnected, onError]);
-
   // Load more messages handler
   const handleLoadMore = useCallback(() => {
-    if (currentSession?.messages.length && !isLoading) {
-      setIsLoading(true);
-      // Implementation for loading previous messages would go here
+    if (currentSession?.messages.length) {
+      // Implementation for loading previous messages
       setHasMoreMessages(false);
-      setIsLoading(false);
     }
-  }, [currentSession?.messages.length, isLoading]);
+  }, [currentSession]);
+
+  // WebSocket event listeners
+  useEffect(() => {
+    addListener('chat.message', handleNewMessage);
+    
+    return () => {
+      removeListener('chat.message', handleNewMessage);
+    };
+  }, [addListener, removeListener, handleNewMessage]);
+
+  // Connection status monitoring
+  useEffect(() => {
+    if (connectionState === WebSocketStatus.DISCONNECTED) {
+      onError?.({
+        type: 'connection',
+        message: 'Connection lost. Attempting to reconnect...',
+        timestamp: new Date(),
+        retryCount: 0,
+      });
+    }
+  }, [connectionState, onError]);
 
   // Error boundary fallback
   const handleError = useCallback((error: Error) => {
     onError?.({
       type: 'system',
-      message: ERROR_MESSAGES.generic,
+      message: error.message,
       timestamp: new Date(),
       retryCount: 0,
     });
-    return (
-      <ErrorContainer role="alert">
-        {ERROR_MESSAGES.generic}
-      </ErrorContainer>
-    );
   }, [onError]);
 
   return (
-    <ErrorBoundary FallbackComponent={({ error }) => handleError(error)}>
+    <ErrorBoundary
+      FallbackComponent={({ error }) => (
+        <ErrorFallback role="alert">
+          <h3>Something went wrong</h3>
+          <pre>{error.message}</pre>
+        </ErrorFallback>
+      )}
+      onError={handleError}
+    >
       <ChatContainer
         className={className}
         role="region"
         aria-label={ariaLabel}
-        aria-busy={isLoading}
-        data-testid="chat-interface"
+        tabIndex={0}
       >
         <MessageList
           isLoading={isLoading}
@@ -202,7 +197,7 @@ const ChatInterface = React.memo<ChatInterfaceProps>(({
         <ChatInput
           chatSessionId={sessionId}
           onMessageSent={handleMessageSubmit}
-          maxLength={VALIDATION_CONSTANTS.MAX_CHAT_MESSAGE_LENGTH}
+          maxLength={UI_CONSTANTS.MAX_CHAT_MESSAGE_LENGTH}
           enableMarkdown
           enableLatex
           offlineQueueEnabled
