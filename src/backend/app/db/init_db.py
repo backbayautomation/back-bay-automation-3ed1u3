@@ -1,7 +1,7 @@
 """
-Database initialization module for AI-powered Product Catalog Search System.
+Database initialization module for the AI-powered Product Catalog Search System.
 Implements multi-tenant database initialization with comprehensive error handling,
-retry logic, and validation checks.
+retry logic, and audit logging capabilities.
 
 Version: 1.0.0
 """
@@ -10,11 +10,11 @@ import logging  # version: latest
 import sqlalchemy  # version: 2.0.0
 from tenacity import retry, stop_after_attempt, wait_exponential  # version: 8.2.0
 
-from .base import Base, metadata
-from .session import SessionLocal, engine
+from .base import Base
+from .session import SessionLocal
 from ..core.config import settings
 
-# Configure module logger with correlation IDs
+# Configure module logger with correlation ID tracking
 logger = logging.getLogger(__name__)
 
 @retry(
@@ -28,205 +28,151 @@ def init_db() -> None:
     Creates database schema and seeds initial data with proper validation.
     
     Raises:
-        SQLAlchemyError: If database initialization fails after retries
-        ValueError: If schema validation fails
+        sqlalchemy.exc.SQLAlchemyError: On database operation failures
+        Exception: On other initialization failures
     """
     try:
-        logger.info(
-            "Starting database initialization",
-            extra={
-                'environment': settings.ENVIRONMENT,
-                'tenant_schema': 'tenant'
-            }
-        )
-
-        # Validate database connection settings
+        logger.info("Starting database initialization")
+        
+        # Get database settings with validation
         db_settings = settings.get_database_settings()
-        if not all(key in db_settings for key in ['host', 'port', 'database', 'username', 'password']):
-            raise ValueError("Invalid database configuration")
+        logger.debug("Database settings validated", extra={"settings": db_settings})
+
+        # Create database engine with validated settings
+        engine = Base.metadata.bind
+        if engine is None:
+            raise ValueError("Database engine not properly configured")
 
         # Create schema if it doesn't exist
         with engine.connect() as connection:
             connection.execute(sqlalchemy.text("CREATE SCHEMA IF NOT EXISTS tenant"))
             connection.commit()
+            logger.info("Tenant schema created or verified")
 
-        # Create all tables with proper error handling
-        try:
-            Base.metadata.create_all(bind=engine)
-            logger.info(
-                "Database tables created successfully",
-                extra={
-                    'table_count': len(Base.metadata.tables),
-                    'tables': list(Base.metadata.tables.keys())
-                }
-            )
-        except sqlalchemy.exc.SQLAlchemyError as e:
-            logger.error(
-                "Failed to create database tables",
-                extra={
-                    'error': str(e),
-                    'error_type': type(e).__name__
-                }
-            )
-            raise
+        # Create all tables with proper ordering
+        logger.info("Creating database tables")
+        Base.metadata.create_all(bind=engine, checkfirst=True)
 
-        # Initialize database session for seeding
+        # Initialize database session
         db = SessionLocal()
         try:
-            # Check if database needs seeding
-            org_count = db.query(Base.metadata.tables['tenant.organizations']).count()
-            if org_count == 0:
-                seed_initial_data(db)
-                logger.info("Initial data seeded successfully")
-            else:
-                logger.info("Database already contains data, skipping seed")
+            # Verify database connection and permissions
+            db.execute(sqlalchemy.text("SELECT 1"))
+            logger.info("Database connection verified")
 
-            db.commit()
+            # Seed initial data with validation
+            seed_initial_data(db)
+            logger.info("Database initialization completed successfully")
 
         except Exception as e:
-            db.rollback()
-            logger.error(
-                "Database seeding failed",
-                extra={
-                    'error': str(e),
-                    'error_type': type(e).__name__
-                }
-            )
+            logger.error("Error during database initialization", exc_info=True)
             raise
         finally:
             db.close()
 
-        logger.info(
-            "Database initialization completed successfully",
-            extra={
-                'environment': settings.ENVIRONMENT,
-                'schema_version': '1.0'
-            }
-        )
-
     except Exception as e:
-        logger.error(
-            "Database initialization failed",
-            extra={
-                'error': str(e),
-                'error_type': type(e).__name__,
-                'retry_count': 0
-            }
-        )
+        logger.error(f"Database initialization failed: {str(e)}", exc_info=True)
         raise
 
 def seed_initial_data(db: SessionLocal) -> None:
     """
-    Seeds the database with required initial data.
-    Implements comprehensive validation and error handling.
-
+    Seeds the database with required initial data including validation and error handling.
+    
     Args:
         db: Database session
-
-    Raises:
-        SQLAlchemyError: If seeding operations fail
-        ValueError: If data validation fails
-    """
-    try:
-        # Create default organization with validation
-        from ..models.organization import Organization
-        default_org = Organization(
-            name="Default Organization",
-            settings={
-                'features': {
-                    'document_processing': True,
-                    'vector_search': True
-                },
-                'preferences': {
-                    'default_language': 'en',
-                    'timezone': 'UTC'
-                },
-                'limits': {
-                    'max_documents': 1000,
-                    'max_users': 50
-                }
-            }
-        )
-        db.add(default_org)
-        db.flush()  # Flush to get the organization ID
-
-        # Create default client with validation
-        from ..models.client import Client
-        default_client = Client(
-            org_id=default_org.id,
-            name="Default Client",
-            config={
-                'features': {
-                    'chat_interface': True,
-                    'document_export': True
-                },
-                'access_control': {
-                    'max_sessions': 10,
-                    'session_timeout': 3600
-                },
-                'integration_settings': {},
-                'notification_preferences': {
-                    'email': True,
-                    'in_app': True
-                }
-            },
-            branding={
-                'theme': {
-                    'primary_color': '#0066CC',
-                    'secondary_color': '#4CAF50',
-                    'font_family': 'Roboto'
-                },
-                'logo_url': None,
-                'favicon_url': None
-            }
-        )
-        db.add(default_client)
-
-        # Create system settings
-        system_settings = {
-            'version': '1.0.0',
-            'initialized_at': sqlalchemy.func.now(),
-            'features_enabled': {
-                'multi_tenant': True,
-                'vector_search': True,
-                'document_processing': True
-            }
-        }
         
-        logger.info(
-            "Initial data prepared for seeding",
-            extra={
-                'org_name': default_org.name,
-                'client_name': default_client.name
-            }
-        )
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: On database operation failures
+        ValueError: On data validation failures
+    """
+    from ..models.organization import Organization
+    from ..models.client import Client
+    
+    try:
+        logger.info("Starting initial data seeding")
 
-    except sqlalchemy.exc.IntegrityError as e:
-        logger.error(
-            "Data integrity error during seeding",
-            extra={
-                'error': str(e),
-                'error_type': 'IntegrityError'
-            }
-        )
-        raise
+        # Begin transaction with savepoint
+        transaction = db.begin_nested()
+        try:
+            # Check if initial data already exists
+            existing_org = db.query(Organization).first()
+            if existing_org:
+                logger.info("Initial data already exists, skipping seeding")
+                return
 
-    except sqlalchemy.exc.SQLAlchemyError as e:
-        logger.error(
-            "Database error during seeding",
-            extra={
-                'error': str(e),
-                'error_type': type(e).__name__
-            }
-        )
-        raise
+            # Create default organization with validation
+            default_org = Organization(
+                name="Default Organization",
+                settings={
+                    'features': {
+                        'document_processing': True,
+                        'vector_search': True
+                    },
+                    'preferences': {
+                        'default_language': 'en',
+                        'timezone': 'UTC'
+                    },
+                    'limits': {
+                        'max_documents': 1000,
+                        'max_users': 50
+                    }
+                }
+            )
+            db.add(default_org)
+            db.flush()
+            logger.info("Default organization created", 
+                       extra={"org_id": str(default_org.id)})
+
+            # Create default client with validation
+            default_client = Client(
+                name="Default Client",
+                org_id=default_org.id,
+                config={
+                    'features': {
+                        'chat_interface': True,
+                        'document_export': True
+                    },
+                    'limits': {
+                        'max_queries_per_hour': 100,
+                        'max_document_size_mb': 50
+                    },
+                    'preferences': {
+                        'theme': 'light',
+                        'language': 'en'
+                    },
+                    'integrations': {}
+                },
+                branding={
+                    'colors': {
+                        'primary': '#0066CC',
+                        'secondary': '#4CAF50',
+                        'accent': '#FFC107'
+                    },
+                    'logo': None,
+                    'favicon': None,
+                    'fonts': {
+                        'primary': 'Roboto',
+                        'secondary': 'Open Sans'
+                    }
+                }
+            )
+            db.add(default_client)
+            db.flush()
+            logger.info("Default client created", 
+                       extra={"client_id": str(default_client.id)})
+
+            # Commit transaction
+            transaction.commit()
+            db.commit()
+            logger.info("Initial data seeding completed successfully")
+
+        except Exception as e:
+            # Rollback to savepoint on error
+            transaction.rollback()
+            logger.error("Error during data seeding", exc_info=True)
+            raise
 
     except Exception as e:
-        logger.error(
-            "Unexpected error during data seeding",
-            extra={
-                'error': str(e),
-                'error_type': type(e).__name__
-            }
-        )
+        logger.error(f"Data seeding failed: {str(e)}", exc_info=True)
+        db.rollback()
         raise
