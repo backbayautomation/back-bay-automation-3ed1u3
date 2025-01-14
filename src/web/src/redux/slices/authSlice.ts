@@ -1,28 +1,31 @@
 /**
- * Enhanced Redux slice for secure authentication state management.
- * Implements OAuth 2.0 + OIDC with JWT tokens, multi-tenant support,
- * and comprehensive audit logging.
+ * Enhanced Redux slice for secure authentication state management with multi-tenant support.
+ * Implements OAuth 2.0 + OIDC with JWT tokens and comprehensive audit logging.
  * @version 1.0.0
  */
 
-import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit'; // v1.9.5
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
 import { SecureStorage } from '@secure-storage/browser'; // v1.2.0
 import { 
     AuthState, 
     LoginCredentials, 
     AuthTokens, 
     UserProfile,
-    OrganizationContext
+    authTokensSchema,
+    userProfileSchema
 } from '../../types/auth';
 import { AuthService } from '../../services/auth';
 
-// Initialize secure storage for tokens
-const secureStorage = new SecureStorage({
-    namespace: 'auth',
-    storage: window.localStorage
-});
+// Constants for authentication state management
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const MAX_LOGIN_ATTEMPTS = 5;
+const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
-// Initial state with multi-tenant support
+// Initialize secure storage and auth service
+const secureStorage = new SecureStorage();
+const authService = new AuthService();
+
+// Initial state with strict type safety
 const initialState: AuthState = {
     isAuthenticated: false,
     isLoading: false,
@@ -33,104 +36,109 @@ const initialState: AuthState = {
     sessionTimeout: null
 };
 
-/**
- * Enhanced async thunk for secure user login with rate limiting and audit logging
- */
+// Enhanced login thunk with rate limiting and audit logging
 export const loginUser = createAsyncThunk(
     'auth/login',
     async (credentials: LoginCredentials, { rejectWithValue }) => {
         try {
-            // Authenticate user with rate limiting
-            const { user, tokens, organization } = await AuthService.authenticateUser(credentials);
+            // Rate limiting check
+            const lastAttempt = await secureStorage.get('lastLoginAttempt');
+            const attempts = Number(await secureStorage.get('loginAttempts')) || 0;
+            const now = Date.now();
+
+            if (lastAttempt && now - Number(lastAttempt) < RATE_LIMIT_WINDOW) {
+                if (attempts >= MAX_LOGIN_ATTEMPTS) {
+                    throw new Error('Too many login attempts. Please try again later.');
+                }
+                await secureStorage.set('loginAttempts', attempts + 1);
+            } else {
+                await secureStorage.set('loginAttempts', 1);
+            }
+            await secureStorage.set('lastLoginAttempt', now.toString());
+
+            // Authenticate user
+            const { user, tokens } = await authService.authenticateUser(credentials);
+
+            // Validate response data
+            const validatedTokens = authTokensSchema.parse(tokens);
+            const validatedUser = userProfileSchema.parse(user);
 
             // Validate token integrity
-            if (!AuthService.validateTokenIntegrity(tokens)) {
-                throw new Error('Token integrity validation failed');
+            if (!authService.validateTokenIntegrity(validatedTokens)) {
+                throw new Error('Invalid token received');
             }
 
             // Store tokens securely
-            await secureStorage.setItem('auth_tokens', tokens);
+            await secureStorage.set('auth_tokens', JSON.stringify(validatedTokens));
 
-            // Log successful authentication
-            AuthService.logAuthEvent('login_success', {
-                userId: user.id,
-                orgId: organization.id
-            });
-
-            return { user, tokens, organization };
+            return {
+                user: validatedUser,
+                tokens: validatedTokens,
+                organization: validatedUser.organization
+            };
         } catch (error) {
-            // Log authentication failure
-            AuthService.logAuthEvent('login_failure', {
-                error: error.message,
-                email: credentials.email
-            });
-            return rejectWithValue(error.message);
+            if (error instanceof Error) {
+                return rejectWithValue(error.message);
+            }
+            return rejectWithValue('Authentication failed');
         }
     }
 );
 
-/**
- * Enhanced async thunk for secure token refresh with integrity validation
- */
+// Enhanced token refresh thunk with integrity validation
 export const refreshToken = createAsyncThunk(
     'auth/refresh',
     async (_, { getState, rejectWithValue }) => {
         try {
-            const tokens = await AuthService.refreshAuthToken();
-
-            // Validate refreshed token integrity
-            if (!AuthService.validateTokenIntegrity(tokens)) {
-                throw new Error('Refreshed token integrity validation failed');
+            const newTokens = await authService.secureTokenRefresh();
+            
+            // Validate new tokens
+            const validatedTokens = authTokensSchema.parse(newTokens);
+            if (!authService.validateTokenIntegrity(validatedTokens)) {
+                throw new Error('Invalid refresh token received');
             }
 
             // Update secure storage
-            await secureStorage.setItem('auth_tokens', tokens);
+            await secureStorage.set('auth_tokens', JSON.stringify(validatedTokens));
 
-            // Log token refresh
-            AuthService.logAuthEvent('token_refresh_success', {
-                tokenType: tokens.tokenType
-            });
-
-            return tokens;
+            return validatedTokens;
         } catch (error) {
-            // Log refresh failure
-            AuthService.logAuthEvent('token_refresh_failure', {
-                error: error.message
-            });
-            return rejectWithValue(error.message);
+            if (error instanceof Error) {
+                return rejectWithValue(error.message);
+            }
+            return rejectWithValue('Token refresh failed');
         }
     }
 );
 
-/**
- * Enhanced auth slice with comprehensive security features
- */
+// Enhanced auth slice with comprehensive state management
 const authSlice = createSlice({
     name: 'auth',
     initialState,
     reducers: {
-        setLoading: (state, action: PayloadAction<boolean>) => {
-            state.isLoading = action.payload;
+        logout: (state) => {
+            authService.logout();
+            secureStorage.clear();
+            return { ...initialState };
         },
-        clearAuth: (state) => {
-            state.isAuthenticated = false;
-            state.user = null;
-            state.tokens = null;
-            state.error = null;
-            state.organization = null;
-            state.sessionTimeout = null;
-            secureStorage.removeItem('auth_tokens');
-        },
-        setSessionTimeout: (state, action: PayloadAction<number>) => {
+        updateSessionTimeout: (state, action: PayloadAction<number>) => {
             state.sessionTimeout = action.payload;
         },
-        updateOrganizationContext: (state, action: PayloadAction<OrganizationContext>) => {
-            state.organization = action.payload;
+        clearError: (state) => {
+            state.error = null;
+        },
+        setOrganizationContext: (state, action: PayloadAction<{ orgId: string; name: string }>) => {
+            if (state.user) {
+                state.organization = {
+                    id: action.payload.orgId,
+                    name: action.payload.name
+                };
+            }
         }
     },
     extraReducers: (builder) => {
         builder
-            // Login handling
+            // Login cases
             .addCase(loginUser.pending, (state) => {
                 state.isLoading = true;
                 state.error = null;
@@ -141,42 +149,36 @@ const authSlice = createSlice({
                 state.user = action.payload.user;
                 state.tokens = action.payload.tokens;
                 state.organization = action.payload.organization;
-                state.error = null;
+                state.sessionTimeout = Date.now() + SESSION_TIMEOUT;
             })
             .addCase(loginUser.rejected, (state, action) => {
                 state.isLoading = false;
-                state.isAuthenticated = false;
                 state.error = action.payload as string;
             })
-            // Token refresh handling
+            // Token refresh cases
             .addCase(refreshToken.pending, (state) => {
                 state.isLoading = true;
             })
             .addCase(refreshToken.fulfilled, (state, action) => {
                 state.isLoading = false;
                 state.tokens = action.payload;
-                state.error = null;
+                state.sessionTimeout = Date.now() + SESSION_TIMEOUT;
             })
             .addCase(refreshToken.rejected, (state, action) => {
-                state.isLoading = false;
-                state.isAuthenticated = false;
-                state.user = null;
-                state.tokens = null;
-                state.error = action.payload as string;
+                return { ...initialState, error: action.payload as string };
             });
     }
 });
 
-// Export actions
+// Export actions and reducer
 export const { 
-    setLoading, 
-    clearAuth, 
-    setSessionTimeout, 
-    updateOrganizationContext 
+    logout, 
+    updateSessionTimeout, 
+    clearError, 
+    setOrganizationContext 
 } = authSlice.actions;
+
+export default authSlice.reducer;
 
 // Memoized selector for auth state
 export const selectAuth = (state: { auth: AuthState }) => state.auth;
-
-// Export reducer
-export default authSlice.reducer;
