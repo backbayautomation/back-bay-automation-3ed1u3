@@ -8,8 +8,13 @@ import { z } from 'zod'; // v3.22.0
 import type { LoginCredentials } from '../types/auth';
 import { validateEmail, validatePassword } from '../utils/validation';
 
+// Regular expressions for enhanced security validation
+const EMAIL_REGEX = /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i;
+const ENHANCED_PASSWORD_PATTERN = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>])[A-Za-z\d!@#$%^&*(),.?":{}|<>]{8,}$/;
+const COMMON_PASSWORD_PATTERNS = [/^123/, /password/i, /qwerty/i, /admin/i, /letmein/i];
+
 /**
- * Comprehensive error messages for login validation failures with security considerations
+ * Comprehensive error messages for login validation failures
  */
 export const LOGIN_ERROR_MESSAGES = {
   INVALID_EMAIL: 'Please enter a valid email address',
@@ -33,15 +38,24 @@ export const PASSWORD_RESET_ERROR_MESSAGES = {
 } as const;
 
 /**
- * Enhanced password validation refinement function
+ * Validates password complexity with enhanced security rules
  */
 const validatePasswordComplexity = (password: string): boolean => {
-  const errors = validatePassword(password);
-  return errors.length === 0;
+  if (COMMON_PASSWORD_PATTERNS.some(pattern => pattern.test(password))) {
+    return false;
+  }
+
+  const hasUpperCase = /[A-Z]/.test(password);
+  const hasLowerCase = /[a-z]/.test(password);
+  const hasNumbers = /\d/.test(password);
+  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+  const hasMinLength = password.length >= 8;
+
+  return hasUpperCase && hasLowerCase && hasNumbers && hasSpecialChar && hasMinLength;
 };
 
 /**
- * Token expiration validation refinement function
+ * Validates token expiration and format
  */
 const validateTokenExpiration = (token: string): boolean => {
   try {
@@ -54,27 +68,20 @@ const validateTokenExpiration = (token: string): boolean => {
 };
 
 /**
- * Password matching refinement function
- */
-const matchesPassword = (confirmPassword: string, data: { password: string }): boolean => {
-  return confirmPassword === data.password;
-};
-
-/**
  * Enhanced Zod schema for login credentials with strict validation rules
  */
 export const loginSchema = z.object({
   email: z.string()
     .min(1, LOGIN_ERROR_MESSAGES.REQUIRED_EMAIL)
     .email(LOGIN_ERROR_MESSAGES.INVALID_EMAIL)
-    .transform(email => email.toLowerCase())
-    .refine(email => validateEmail(email).length === 0, {
-      message: LOGIN_ERROR_MESSAGES.INVALID_EMAIL
-    }),
+    .regex(EMAIL_REGEX)
+    .transform(email => email.toLowerCase()),
   password: z.string()
     .min(1, LOGIN_ERROR_MESSAGES.REQUIRED_PASSWORD)
+    .min(8, LOGIN_ERROR_MESSAGES.INVALID_PASSWORD)
+    .regex(ENHANCED_PASSWORD_PATTERN)
     .refine(validatePasswordComplexity, {
-      message: LOGIN_ERROR_MESSAGES.INVALID_PASSWORD
+      message: LOGIN_ERROR_MESSAGES.SECURITY_VALIDATION_FAILED
     })
 });
 
@@ -83,32 +90,49 @@ export const loginSchema = z.object({
  */
 export const passwordResetSchema = z.object({
   token: z.string()
-    .uuid(PASSWORD_RESET_ERROR_MESSAGES.INVALID_TOKEN)
+    .min(1, PASSWORD_RESET_ERROR_MESSAGES.INVALID_TOKEN)
     .refine(validateTokenExpiration, {
       message: PASSWORD_RESET_ERROR_MESSAGES.TOKEN_EXPIRED
     }),
   password: z.string()
     .min(8, PASSWORD_RESET_ERROR_MESSAGES.INVALID_PASSWORD_FORMAT)
+    .regex(ENHANCED_PASSWORD_PATTERN)
     .refine(validatePasswordComplexity, {
       message: PASSWORD_RESET_ERROR_MESSAGES.INSUFFICIENT_COMPLEXITY
     }),
   confirmPassword: z.string()
     .min(8)
-    .refine(matchesPassword, {
-      message: PASSWORD_RESET_ERROR_MESSAGES.PASSWORDS_DONT_MATCH
-    })
+}).refine((data) => data.password === data.confirmPassword, {
+  message: PASSWORD_RESET_ERROR_MESSAGES.PASSWORDS_DONT_MATCH,
+  path: ['confirmPassword']
 });
 
 /**
  * Validates login credentials with enhanced security checks and rate limiting
- * @param credentials - Login credentials to validate
- * @returns Promise resolving to boolean indicating validation success
- * @throws ZodError with detailed error context if validation fails
  */
-export const validateLoginCredentials = async (
-  credentials: LoginCredentials
-): Promise<boolean> => {
+export const validateLoginCredentials = async (credentials: LoginCredentials): Promise<boolean> => {
   try {
+    // Validate email format
+    const emailErrors = validateEmail(credentials.email);
+    if (emailErrors.length > 0) {
+      throw new z.ZodError([{
+        code: 'invalid_string',
+        message: emailErrors[0].message,
+        path: ['email']
+      }]);
+    }
+
+    // Validate password security
+    const passwordErrors = validatePassword(credentials.password);
+    if (passwordErrors.length > 0) {
+      throw new z.ZodError([{
+        code: 'invalid_string',
+        message: passwordErrors[0].message,
+        path: ['password']
+      }]);
+    }
+
+    // Parse through Zod schema for additional validation
     await loginSchema.parseAsync(credentials);
     return true;
   } catch (error) {
@@ -121,15 +145,31 @@ export const validateLoginCredentials = async (
 
 /**
  * Validates password reset request with enhanced security measures
- * @param resetData - Object containing token, password, and confirmPassword
- * @returns Promise resolving to boolean indicating validation success
- * @throws ZodError with security context if validation fails
  */
-export const validatePasswordReset = async (
-  resetData: z.infer<typeof passwordResetSchema>
-): Promise<boolean> => {
+export const validatePasswordReset = async (resetData: z.infer<typeof passwordResetSchema>): Promise<boolean> => {
   try {
+    // Validate through Zod schema
     await passwordResetSchema.parseAsync(resetData);
+
+    // Additional security checks for password
+    const passwordErrors = validatePassword(resetData.password);
+    if (passwordErrors.length > 0) {
+      throw new z.ZodError([{
+        code: 'invalid_string',
+        message: passwordErrors[0].message,
+        path: ['password']
+      }]);
+    }
+
+    // Check for common password patterns
+    if (COMMON_PASSWORD_PATTERNS.some(pattern => pattern.test(resetData.password))) {
+      throw new z.ZodError([{
+        code: 'invalid_string',
+        message: PASSWORD_RESET_ERROR_MESSAGES.COMMON_PASSWORD,
+        path: ['password']
+      }]);
+    }
+
     return true;
   } catch (error) {
     if (error instanceof z.ZodError) {
