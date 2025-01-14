@@ -1,4 +1,3 @@
-# Environment variable for deploying monitoring resources
 variable "environment" {
   type        = string
   description = "Environment name (dev, staging, prod) for deploying monitoring resources"
@@ -8,26 +7,22 @@ variable "environment" {
   }
 }
 
-# Azure region for resource deployment
 variable "location" {
   type        = string
   description = "Azure region where monitoring resources will be deployed, must align with compliance requirements"
 }
 
-# Resource group name
 variable "resource_group_name" {
   type        = string
   description = "Name of the resource group where monitoring resources will be deployed, following naming conventions"
 }
 
-# Resource tags
 variable "tags" {
   type        = map(string)
   description = "Tags to be applied to all monitoring resources for better resource management and cost allocation"
   default     = {}
 }
 
-# Log retention configuration
 variable "log_retention_days" {
   type        = number
   description = "Number of days to retain logs in Log Analytics workspace, must comply with regulatory requirements"
@@ -38,7 +33,6 @@ variable "log_retention_days" {
   }
 }
 
-# Application Insights sampling configuration
 variable "app_insights_sampling_percentage" {
   type        = number
   description = "Sampling percentage for Application Insights data collection to optimize cost and performance"
@@ -49,7 +43,6 @@ variable "app_insights_sampling_percentage" {
   }
 }
 
-# Alert notification configuration
 variable "alert_notification_email" {
   type        = string
   description = "Email address for receiving monitoring alerts, must be a valid corporate email"
@@ -59,19 +52,18 @@ variable "alert_notification_email" {
   }
 }
 
-# Alert thresholds configuration
 variable "alert_thresholds" {
   type = object({
     cpu_percentage       = number
-    memory_percentage    = number
-    response_time_ms     = number
+    memory_percentage   = number
+    response_time_ms    = number
     error_rate_percentage = number
   })
   description = "Threshold values for different monitoring alerts based on industry standards and application requirements"
   default = {
     cpu_percentage       = 80
-    memory_percentage    = 85
-    response_time_ms     = 1000
+    memory_percentage   = 85
+    response_time_ms    = 1000
     error_rate_percentage = 5
   }
   validation {
