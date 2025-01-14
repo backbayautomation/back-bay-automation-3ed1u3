@@ -13,18 +13,11 @@ terraform {
     resource_group_name  = "tfstate"
     storage_account_name = "tfstate"
     container_name      = "tfstate"
-    key                 = "terraform.tfstate"
+    key                = "terraform.tfstate"
     use_msi            = true
     subscription_id    = "${var.subscription_id}"
     tenant_id         = "${var.tenant_id}"
   }
-}
-
-# Random string for unique resource naming
-resource "random_string" "unique" {
-  length  = 8
-  special = false
-  upper   = false
 }
 
 # Main resource group
@@ -83,7 +76,7 @@ module "database" {
   depends_on = [module.networking]
 }
 
-# Storage module for blob storage configuration
+# Storage module for blob and file storage
 module "storage" {
   source = "./modules/storage"
 
@@ -106,8 +99,8 @@ module "monitoring" {
   environment         = var.environment
   monitoring_config   = var.monitoring_config
   aks_cluster_id      = module.aks.cluster_id
-  database_server_id  = module.database.sql_server_id
-  storage_account_id  = module.storage.storage_account_id
+  database_server_ids = module.database.server_ids
+  storage_account_ids = module.storage.account_ids
   tags                = var.tags
 
   depends_on = [
@@ -117,7 +110,7 @@ module "monitoring" {
   ]
 }
 
-# Outputs for dependent resources
+# Output the resource group details
 output "resource_group_name" {
   value = {
     name     = azurerm_resource_group.main.name
@@ -127,6 +120,7 @@ output "resource_group_name" {
   description = "Resource group details for dependent resources"
 }
 
+# Output AKS cluster details
 output "aks_cluster_details" {
   value = {
     id          = module.aks.cluster_id
@@ -137,6 +131,7 @@ output "aks_cluster_details" {
   sensitive   = true
 }
 
+# Output database connection details
 output "database_connection_details" {
   value = {
     sql_connection_string    = module.database.sql_connection_string
@@ -147,22 +142,24 @@ output "database_connection_details" {
   sensitive   = true
 }
 
+# Output storage account details
 output "storage_details" {
   value = {
-    storage_account_name = module.storage.storage_account_name
-    primary_access_key  = module.storage.primary_access_key
-    containers         = module.storage.containers
+    primary_account_id = module.storage.primary_account_id
+    containers        = module.storage.containers
+    endpoints         = module.storage.endpoints
   }
-  description = "Storage account details and access information"
+  description = "Storage account configuration and access details"
   sensitive   = true
 }
 
+# Output monitoring workspace details
 output "monitoring_details" {
   value = {
-    workspace_id        = module.monitoring.workspace_id
-    workspace_key       = module.monitoring.workspace_key
-    app_insights_key   = module.monitoring.app_insights_key
+    workspace_id = module.monitoring.workspace_id
+    workspace_key = module.monitoring.workspace_key
+    app_insights_key = module.monitoring.app_insights_key
   }
-  description = "Monitoring workspace and instrumentation details"
+  description = "Monitoring and observability configuration details"
   sensitive   = true
 }
