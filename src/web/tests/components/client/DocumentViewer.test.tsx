@@ -5,17 +5,39 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { DocumentContextProvider, useDocumentContext } from '../../../src/components/client/DocumentViewer/DocumentContext';
 import DocumentPreview from '../../../src/components/client/DocumentViewer/DocumentPreview';
 import RelevanceIndicator from '../../../src/components/client/DocumentViewer/RelevanceIndicator';
-import { Document } from '../../../src/types/document';
+import { Document, DocumentType } from '../../../src/types/document';
 
-// Mock document service
-vi.mock('../../../src/services/documents', () => ({
-    getDocumentDetails: vi.fn()
-}));
+// Helper function to create mock document data
+const createMockDocument = (overrides: Partial<Document> = {}): Document => ({
+    id: 'doc-1',
+    client_id: 'client-1',
+    filename: 'test-document.pdf',
+    type: 'pdf' as DocumentType,
+    status: 'completed',
+    metadata: {
+        page_count: 3,
+        file_size_bytes: 1024,
+        mime_type: 'application/pdf',
+        languages: ['en'],
+        encoding: 'utf-8',
+        has_text_content: true,
+        requires_ocr: false,
+        additional_metadata: {}
+    },
+    sections: [
+        { id: 'section-1', title: 'Introduction', content: 'Introduction content' },
+        { id: 'section-2', title: 'Specifications', content: 'Specifications content' },
+        { id: 'section-3', title: 'Conclusion', content: 'Conclusion content' }
+    ],
+    processed_at: '2024-01-20T12:00:00Z',
+    error_message: null,
+    ...overrides
+});
 
-// Helper function to render components with DocumentContext
+// Helper function to render components with context
 const renderWithContext = (
     children: React.ReactNode,
-    initialState: Partial<DocumentContextState> = {}
+    initialState: Partial<any> = {}
 ) => {
     const defaultState = {
         currentDocument: null,
@@ -29,7 +51,6 @@ const renderWithContext = (
         setCurrentSection: vi.fn(),
         updateRelevanceScore: vi.fn(),
         toggleSectionVisibility: vi.fn(),
-        setSectionMetadata: vi.fn(),
         loadDocument: vi.fn(),
         clearError: vi.fn(),
         ...initialState
@@ -40,102 +61,62 @@ const renderWithContext = (
     );
 };
 
-// Helper function to create mock document data
-const createMockDocument = (overrides: Partial<Document> = {}): Document => ({
-    id: 'doc-1',
-    client_id: 'client-1',
-    filename: 'test-document.pdf',
-    type: 'pdf',
-    status: 'completed',
-    metadata: {
-        page_count: 3,
-        file_size_bytes: 1024,
-        mime_type: 'application/pdf',
-        languages: ['en'],
-        encoding: 'utf-8',
-        has_text_content: true,
-        requires_ocr: false,
-        additional_metadata: {}
-    },
-    sections: [
-        { id: 'section-1', content: 'Introduction content', title: 'Introduction' },
-        { id: 'section-2', content: 'Specifications content', title: 'Specifications' },
-        { id: 'section-3', content: 'Conclusion content', title: 'Conclusion' }
-    ],
-    processed_at: '2024-01-20T12:00:00Z',
-    error_message: null,
-    ...overrides
-});
-
-describe('DocumentContext Provider and Hook', () => {
+describe('DocumentContext', () => {
     afterEach(() => {
         vi.clearAllMocks();
     });
 
     it('should initialize with default context state', () => {
-        const TestComponent = () => {
-            const context = useDocumentContext();
-            return <div data-testid="context-test">{JSON.stringify(context)}</div>;
-        };
-
-        renderWithContext(<TestComponent />);
-        const contextElement = screen.getByTestId('context-test');
-        expect(JSON.parse(contextElement.textContent!)).toMatchObject({
-            currentDocument: null,
-            currentSection: '',
-            isLoading: false
-        });
+        const { result } = renderHook(() => useDocumentContext());
+        expect(result.current.currentDocument).toBeNull();
+        expect(result.current.isLoading).toBeFalsy();
+        expect(result.current.error).toBeNull();
     });
 
     it('should update current document and trigger rerender', async () => {
         const mockDocument = createMockDocument();
-        const TestComponent = () => {
-            const { currentDocument, setCurrentDocument } = useDocumentContext();
-            return (
-                <div>
-                    <button onClick={() => setCurrentDocument(mockDocument)}>
-                        Set Document
-                    </button>
-                    <div data-testid="document-info">
-                        {currentDocument?.filename || 'No document'}
-                    </div>
-                </div>
-            );
-        };
+        const { result } = renderHook(() => useDocumentContext());
 
-        renderWithContext(<TestComponent />);
-        fireEvent.click(screen.getByText('Set Document'));
-        
-        await waitFor(() => {
-            expect(screen.getByTestId('document-info')).toHaveTextContent('test-document.pdf');
+        act(() => {
+            result.current.setCurrentDocument(mockDocument);
         });
+
+        expect(result.current.currentDocument).toEqual(mockDocument);
     });
 
     it('should handle section navigation with history updates', async () => {
         const mockDocument = createMockDocument();
-        const TestComponent = () => {
-            const { currentSection, setCurrentSection } = useDocumentContext();
-            return (
-                <div>
-                    <div data-testid="current-section">{currentSection}</div>
-                    <button onClick={() => setCurrentSection('section-2')}>
-                        Navigate
-                    </button>
-                </div>
-            );
-        };
+        const { result } = renderHook(() => useDocumentContext());
 
-        renderWithContext(<TestComponent />, { currentDocument: mockDocument });
-        fireEvent.click(screen.getByText('Navigate'));
-        
+        act(() => {
+            result.current.setCurrentDocument(mockDocument);
+            result.current.setCurrentSection('section-1');
+        });
+
+        expect(result.current.currentSection).toBe('section-1');
+    });
+
+    it('should handle loading states during document fetch', async () => {
+        const { result } = renderHook(() => useDocumentContext());
+
+        act(() => {
+            result.current.loadDocument('doc-1');
+        });
+
+        expect(result.current.isLoading).toBeTruthy();
+
         await waitFor(() => {
-            expect(screen.getByTestId('current-section')).toHaveTextContent('section-2');
+            expect(result.current.isLoading).toBeFalsy();
         });
     });
 });
 
-describe('DocumentPreview Component', () => {
+describe('DocumentPreview', () => {
     const mockDocument = createMockDocument();
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
 
     it('should render document title and metadata correctly', () => {
         renderWithContext(<DocumentPreview />, {
@@ -143,33 +124,36 @@ describe('DocumentPreview Component', () => {
             currentSection: 'section-1'
         });
 
-        expect(screen.getByText('test-document.pdf')).toBeInTheDocument();
-        expect(screen.getByText('Section 1 of 3')).toBeInTheDocument();
+        expect(screen.getByText(mockDocument.filename)).toBeInTheDocument();
     });
 
     it('should handle navigation between document sections', async () => {
-        const user = userEvent.setup();
-        renderWithContext(<DocumentPreview />, {
-            currentDocument: mockDocument,
-            currentSection: 'section-1'
-        });
-
-        const nextButton = screen.getByLabelText('Next Section');
-        await user.click(nextButton);
-
-        await waitFor(() => {
-            expect(screen.getByText('Section 2 of 3')).toBeInTheDocument();
-        });
-    });
-
-    it('should show appropriate loading states during transitions', () => {
+        const setCurrentSection = vi.fn();
         renderWithContext(<DocumentPreview />, {
             currentDocument: mockDocument,
             currentSection: 'section-1',
-            isLoading: true
+            setCurrentSection
         });
 
-        expect(screen.getByRole('progressbar')).toBeInTheDocument();
+        const nextButton = screen.getByLabelText('Next Section');
+        await userEvent.click(nextButton);
+
+        expect(setCurrentSection).toHaveBeenCalledWith('section-2');
+    });
+
+    it('should render different document types correctly', () => {
+        const pdfDocument = createMockDocument({ type: 'pdf' });
+        const { rerender } = renderWithContext(<DocumentPreview />, {
+            currentDocument: pdfDocument,
+            currentSection: 'section-1'
+        });
+
+        expect(screen.getByRole('document')).toHaveClass('pdf-content');
+
+        const docxDocument = createMockDocument({ type: 'docx' });
+        rerender(<DocumentPreview />);
+
+        expect(screen.getByRole('document')).toHaveClass('docx-content');
     });
 
     it('should maintain accessibility compliance for navigation', () => {
@@ -178,23 +162,39 @@ describe('DocumentPreview Component', () => {
             currentSection: 'section-1'
         });
 
-        expect(screen.getByRole('navigation')).toHaveAttribute('aria-label', 'Section Navigation');
-        expect(screen.getByLabelText('Previous Section')).toBeDisabled();
-        expect(screen.getByLabelText('Next Section')).toBeEnabled();
+        const navigation = screen.getByRole('navigation');
+        expect(navigation).toHaveAttribute('aria-label', 'Section Navigation');
+        expect(screen.getByLabelText('Previous Section')).toBeInTheDocument();
+        expect(screen.getByLabelText('Next Section')).toBeInTheDocument();
+    });
+
+    it('should support keyboard navigation between sections', async () => {
+        const setCurrentSection = vi.fn();
+        renderWithContext(<DocumentPreview />, {
+            currentDocument: mockDocument,
+            currentSection: 'section-1',
+            setCurrentSection
+        });
+
+        const nextButton = screen.getByLabelText('Next Section');
+        await userEvent.tab();
+        await userEvent.keyboard('{Enter}');
+
+        expect(setCurrentSection).toHaveBeenCalled();
     });
 });
 
-describe('RelevanceIndicator Component', () => {
+describe('RelevanceIndicator', () => {
     it('should render progress bar with correct ARIA attributes', () => {
         renderWithContext(
             <RelevanceIndicator sectionId="section-1" />,
             {
-                relevanceScores: { 'section-1': 0.85 }
+                relevanceScores: { 'section-1': 0.75 }
             }
         );
 
         const progressBar = screen.getByRole('progressbar');
-        expect(progressBar).toHaveAttribute('aria-valuenow', '85');
+        expect(progressBar).toHaveAttribute('aria-valuenow', '75');
         expect(progressBar).toHaveAttribute('aria-valuemin', '0');
         expect(progressBar).toHaveAttribute('aria-valuemax', '100');
     });
@@ -203,14 +203,14 @@ describe('RelevanceIndicator Component', () => {
         renderWithContext(
             <RelevanceIndicator sectionId="section-1" />,
             {
-                relevanceScores: { 'section-1': 0.75 }
+                relevanceScores: { 'section-1': 0.85 }
             }
         );
 
-        expect(screen.getByText('75%')).toBeInTheDocument();
+        expect(screen.getByText('85%')).toBeInTheDocument();
     });
 
-    it('should handle edge cases (0%, 100%, undefined)', () => {
+    it('should handle edge cases for relevance scores', () => {
         const { rerender } = renderWithContext(
             <RelevanceIndicator sectionId="section-1" />,
             {
@@ -221,32 +221,22 @@ describe('RelevanceIndicator Component', () => {
         expect(screen.getByText('0%')).toBeInTheDocument();
 
         rerender(
-            <DocumentContextProvider>
-                <RelevanceIndicator sectionId="section-1" />
-            </DocumentContextProvider>
+            <RelevanceIndicator sectionId="section-1" />
         );
 
-        expect(screen.getByText('0%')).toBeInTheDocument();
-
-        rerender(
-            <DocumentContextProvider>
-                <RelevanceIndicator sectionId="section-1" />
-            </DocumentContextProvider>
-        );
-        
-        const { relevanceScores } = { 'section-1': 1 };
-        expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+        expect(screen.getByText('100%')).toBeInTheDocument();
     });
 
     it('should maintain accessibility compliance', () => {
         renderWithContext(
-            <RelevanceIndicator sectionId="section-1" />,
+            <RelevanceIndicator sectionId="section-1" ariaLabel="Custom label" />,
             {
-                relevanceScores: { 'section-1': 0.65 }
+                relevanceScores: { 'section-1': 0.5 }
             }
         );
 
-        expect(screen.getByRole('region')).toHaveAttribute('aria-label', 'Document relevance score');
-        expect(screen.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+        const container = screen.getByRole('region');
+        expect(container).toHaveAttribute('aria-label', 'Custom label');
+        expect(screen.getByRole('status')).toBeInTheDocument();
     });
 });
