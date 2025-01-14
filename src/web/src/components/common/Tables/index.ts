@@ -1,6 +1,6 @@
 /**
- * Barrel file for reusable table components
- * Implements WCAG 2.1 AA compliance and design system specifications
+ * Barrel file exporting reusable table components with WCAG 2.1 AA compliance
+ * and design system specifications for consistent table implementations.
  * @version 1.0.0
  */
 
@@ -8,18 +8,18 @@
 import DataTable, { DataTableProps, Column } from './DataTable';
 import TablePagination, { TablePaginationProps } from './TablePagination';
 
-// Re-export components and types
+// Re-export components and types for external use
 export {
-  DataTable,
-  TablePagination,
-  // Type definitions
-  type DataTableProps,
-  type TablePaginationProps,
-  type Column,
+    DataTable,
+    TablePagination,
+    // Type exports
+    type DataTableProps,
+    type TablePaginationProps,
+    type Column,
 };
 
 // Default export for convenient imports
 export default {
-  DataTable,
-  TablePagination,
+    DataTable,
+    TablePagination,
 };
