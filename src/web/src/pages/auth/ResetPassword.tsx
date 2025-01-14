@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react'; // ^18.2.0
-import { useNavigate, useParams } from 'react-router-dom'; // ^6.14.0
-import { Box, Typography, Alert, CircularProgress } from '@mui/material'; // ^5.14.0
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Box, Typography, Alert, CircularProgress } from '@mui/material';
 
 import AuthLayout from '../../layouts/AuthLayout';
 import FormField from '../../components/common/Forms/FormField';
-import { passwordResetSchema } from '../../validators/auth';
-import AuthService from '../../services/auth';
+import { passwordResetSchema, PASSWORD_RESET_ERROR_MESSAGES } from '../../validators/auth';
+import { AuthService } from '../../services/auth';
 import { VALIDATION_CONSTANTS } from '../../config/constants';
 
 // Interface for password reset form data
@@ -27,13 +27,10 @@ interface PasswordValidationState {
   };
 }
 
-/**
- * Enhanced password reset component with comprehensive security features
- * and WCAG Level AA 2.1 compliance
- */
 const ResetPassword: React.FC = () => {
   const navigate = useNavigate();
   const { token } = useParams<{ token: string }>();
+  const authService = new AuthService();
 
   // Form state management
   const [formData, setFormData] = useState<ResetPasswordFormData>({
@@ -56,107 +53,116 @@ const ResetPassword: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isTokenValid, setIsTokenValid] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
 
-  /**
-   * Validates reset token on component mount
-   */
+  // Validate token on component mount
   useEffect(() => {
     const validateToken = async () => {
       try {
         if (!token) {
-          throw new Error('Reset token is missing');
+          setError(PASSWORD_RESET_ERROR_MESSAGES.INVALID_TOKEN);
+          return;
         }
 
-        const isValid = await AuthService.validateResetToken(token);
+        const isValid = await authService.validateResetToken(token);
         setIsTokenValid(isValid);
-      } catch (error) {
-        setError('Invalid or expired reset token. Please request a new one.');
-      } finally {
-        setIsLoading(false);
+        if (!isValid) {
+          setError(PASSWORD_RESET_ERROR_MESSAGES.TOKEN_EXPIRED);
+        }
+      } catch (err) {
+        setError(PASSWORD_RESET_ERROR_MESSAGES.INVALID_TOKEN);
       }
     };
 
     validateToken();
-  }, [token]);
+  }, [token, authService]);
 
-  /**
-   * Handles password field changes with real-time validation
-   */
-  const handlePasswordChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const { value } = event.target;
-    
-    // Update password requirements
-    const requirements = {
-      length: value.length >= VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH,
-      uppercase: /[A-Z]/.test(value),
-      lowercase: /[a-z]/.test(value),
-      number: /\d/.test(value),
-      special: /[!@#$%^&*(),.?":{}|<>]/.test(value),
+  // Password strength and requirements validation
+  const validatePasswordRequirements = useCallback((password: string) => {
+    const reqs = {
+      length: password.length >= VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH,
+      uppercase: /[A-Z]/.test(password),
+      lowercase: /[a-z]/.test(password),
+      number: /\d/.test(password),
+      special: /[!@#$%^&*(),.?":{}|<>]/.test(password),
     };
 
-    // Calculate password strength (0-100)
-    const strengthScore = Object.values(requirements).filter(Boolean).length * 20;
+    const strength = Object.values(reqs).filter(Boolean).length * 20;
 
     setValidation({
-      strength: strengthScore,
-      requirements,
+      strength,
+      requirements: reqs,
     });
 
-    setFormData(prev => ({
-      ...prev,
-      password: value,
-    }));
+    return Object.values(reqs).every(Boolean);
   }, []);
 
-  /**
-   * Handles form submission with enhanced security measures
-   */
+  // Handle password field changes
+  const handlePasswordChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = event.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+
+    if (name === 'password') {
+      validatePasswordRequirements(value);
+    }
+
+    if (name === 'confirmPassword') {
+      setError(
+        value !== formData.password
+          ? PASSWORD_RESET_ERROR_MESSAGES.PASSWORDS_DONT_MATCH
+          : null
+      );
+    }
+  }, [formData.password, validatePasswordRequirements]);
+
+  // Handle form submission
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
 
     try {
-      // Validate form data using Zod schema
+      // Validate form data using schema
       await passwordResetSchema.parseAsync(formData);
 
-      // Attempt password reset
-      await AuthService.resetPassword(formData.token, formData.password);
+      // Validate password requirements
+      if (!validatePasswordRequirements(formData.password)) {
+        throw new Error(PASSWORD_RESET_ERROR_MESSAGES.INSUFFICIENT_COMPLEXITY);
+      }
+
+      // Submit password reset request
+      await authService.resetPassword(formData.token, formData.password);
 
       // Navigate to login on success
       navigate('/auth/login', {
-        state: { message: 'Password reset successful. Please log in with your new password.' }
+        state: { message: 'Password reset successful. Please login with your new password.' }
       });
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Password reset failed. Please try again.');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : PASSWORD_RESET_ERROR_MESSAGES.SECURITY_VALIDATION_FAILED
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (isLoading) {
-    return (
-      <AuthLayout redirectTo="/dashboard">
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-          <CircularProgress />
-        </Box>
-      </AuthLayout>
-    );
-  }
-
-  if (!isTokenValid) {
-    return (
-      <AuthLayout redirectTo="/dashboard">
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error || 'Invalid reset token'}
-        </Alert>
-        <Typography align="center">
-          Please request a new password reset link.
-        </Typography>
-      </AuthLayout>
-    );
-  }
+  // Render password requirements list
+  const renderRequirements = () => (
+    <Box sx={{ mt: 2 }}>
+      <Typography variant="caption" color="textSecondary">
+        Password requirements:
+      </Typography>
+      <ul>
+        {Object.entries(validation.requirements).map(([key, met]) => (
+          <li key={key} style={{ color: met ? 'green' : 'inherit' }}>
+            {key === 'length' ? `Minimum ${VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH} characters` : 
+             key === 'uppercase' ? 'One uppercase letter' :
+             key === 'lowercase' ? 'One lowercase letter' :
+             key === 'number' ? 'One number' : 'One special character'}
+          </li>
+        ))}
+      </ul>
+    </Box>
+  );
 
   return (
     <AuthLayout redirectTo="/dashboard">
@@ -164,10 +170,12 @@ const ResetPassword: React.FC = () => {
         component="form"
         onSubmit={handleSubmit}
         noValidate
+        sx={{ mt: 1 }}
+        role="main"
         aria-label="Password reset form"
       >
-        <Typography variant="h5" align="center" gutterBottom>
-          Reset Your Password
+        <Typography component="h1" variant="h5" align="center" gutterBottom>
+          Reset Password
         </Typography>
 
         {error && (
@@ -176,81 +184,73 @@ const ResetPassword: React.FC = () => {
           </Alert>
         )}
 
-        <FormField
-          name="password"
-          label="New Password"
-          type="password"
-          value={formData.password}
-          onChange={handlePasswordChange}
-          error={validation.strength < 60 ? 'Password is not strong enough' : undefined}
-          helperText={`Password strength: ${validation.strength}%`}
-          required
-          fullWidth
-        />
+        {!isTokenValid ? (
+          <Alert severity="error">
+            {PASSWORD_RESET_ERROR_MESSAGES.INVALID_TOKEN}
+          </Alert>
+        ) : (
+          <>
+            <FormField
+              name="password"
+              label="New Password"
+              type="password"
+              value={formData.password}
+              onChange={handlePasswordChange}
+              error={error}
+              required
+              disabled={isSubmitting}
+              fullWidth
+              inputMode="text"
+              maxLength={VALIDATION_CONSTANTS.MAX_PASSWORD_LENGTH}
+            />
 
-        <FormField
-          name="confirmPassword"
-          label="Confirm Password"
-          type="password"
-          value={formData.confirmPassword}
-          onChange={(e) => setFormData(prev => ({
-            ...prev,
-            confirmPassword: e.target.value,
-          }))}
-          error={
-            formData.confirmPassword && formData.password !== formData.confirmPassword
-              ? 'Passwords do not match'
-              : undefined
-          }
-          required
-          fullWidth
-        />
+            <FormField
+              name="confirmPassword"
+              label="Confirm Password"
+              type="password"
+              value={formData.confirmPassword}
+              onChange={handlePasswordChange}
+              error={error}
+              required
+              disabled={isSubmitting}
+              fullWidth
+              inputMode="text"
+              maxLength={VALIDATION_CONSTANTS.MAX_PASSWORD_LENGTH}
+            />
 
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="caption" color="textSecondary">
-            Password must contain:
-          </Typography>
-          <ul>
-            {Object.entries(validation.requirements).map(([key, met]) => (
-              <Typography
-                key={key}
-                component="li"
-                variant="caption"
-                color={met ? 'success.main' : 'text.secondary'}
-                sx={{ ml: 2 }}
+            {renderRequirements()}
+
+            <Box sx={{ mt: 3, position: 'relative' }}>
+              <button
+                type="submit"
+                disabled={isSubmitting || !isTokenValid || validation.strength < 100}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  backgroundColor: validation.strength === 100 ? '#4CAF50' : '#ccc',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                }}
               >
-                {key === 'length' ? `At least ${VALIDATION_CONSTANTS.MIN_PASSWORD_LENGTH} characters` : 
-                 key === 'uppercase' ? 'One uppercase letter' :
-                 key === 'lowercase' ? 'One lowercase letter' :
-                 key === 'number' ? 'One number' :
-                 'One special character'}
-              </Typography>
-            ))}
-          </ul>
-        </Box>
-
-        <Box sx={{ mt: 3 }}>
-          <button
-            type="submit"
-            disabled={isSubmitting || validation.strength < 60 || formData.password !== formData.confirmPassword}
-            style={{
-              width: '100%',
-              padding: '12px',
-              backgroundColor: '#0066CC',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: isSubmitting ? 'not-allowed' : 'pointer',
-              opacity: isSubmitting ? 0.7 : 1,
-            }}
-          >
-            {isSubmitting ? (
-              <CircularProgress size={24} color="inherit" />
-            ) : (
-              'Reset Password'
-            )}
-          </button>
-        </Box>
+                Reset Password
+              </button>
+              {isSubmitting && (
+                <CircularProgress
+                  size={24}
+                  sx={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    marginTop: '-12px',
+                    marginLeft: '-12px',
+                  }}
+                />
+              )}
+            </Box>
+          </>
+        )}
       </Box>
     </AuthLayout>
   );
