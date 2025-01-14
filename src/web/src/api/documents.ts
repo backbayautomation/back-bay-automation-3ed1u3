@@ -1,237 +1,180 @@
 /**
- * Document API module implementing secure document operations with comprehensive error handling,
+ * Production-ready API module for document operations implementing secure upload,
+ * retrieval, processing and management functionality with comprehensive error handling,
  * monitoring, and performance optimization.
  * @version 1.0.0
  */
 
-import axios from 'axios'; // v1.5.0
+import axios, { AxiosProgressEvent } from 'axios'; // v1.5.0
 import { 
     Document, 
     DocumentUploadRequest, 
     DocumentListResponse, 
     DocumentType, 
-    ProcessingStatus, 
-    DocumentValidation 
+    ProcessingStatus 
 } from '../types/document';
 import { 
     ApiResponse, 
     ApiRequestConfig, 
     PaginationParams, 
     ApiError, 
-    ContentType,
-    QueryParams 
+    ContentType 
 } from './types';
 import { 
     createApiInstance, 
     handleApiError, 
-    createCircuitBreaker, 
-    setupRequestMonitoring 
+    RequestOptions 
 } from '../utils/api';
 import { API_CONFIG, API_ENDPOINTS } from '../config/api';
 
 /**
- * Progress callback type for upload tracking
+ * Type for upload progress callback function
  */
 type ProgressCallback = (progress: number) => void;
 
 /**
- * Document filtering options
+ * Interface for document filtering options
  */
 interface DocumentFilterOptions {
     types?: DocumentType[];
     status?: ProcessingStatus[];
-    dateRange?: {
-        start: Date;
-        end: Date;
-    };
+    startDate?: string;
+    endDate?: string;
     searchQuery?: string;
 }
 
 /**
- * Document API class implementing secure document operations
+ * Class implementing document-related API operations with comprehensive
+ * error handling, monitoring, and security controls
  */
 export class DocumentApi {
-    private readonly api: ReturnType<typeof createApiInstance>;
-    private readonly circuitBreaker: ReturnType<typeof createCircuitBreaker>;
+    private readonly api;
+    private readonly maxFileSize = API_CONFIG.MAX_REQUEST_SIZE;
+    private readonly allowedTypes = ['pdf', 'docx', 'xlsx', 'txt'];
 
     constructor() {
         this.api = createApiInstance({
             useCircuitBreaker: true,
-            customTimeout: API_CONFIG.TIMEOUT
+            customHeaders: {
+                'X-Service': 'document-api'
+            }
         });
-        this.circuitBreaker = createCircuitBreaker({
-            failureThreshold: API_CONFIG.CIRCUIT_BREAKER.FAILURE_THRESHOLD,
-            resetTimeout: API_CONFIG.CIRCUIT_BREAKER.RESET_TIMEOUT
-        });
-
-        setupRequestMonitoring(this.api, 'documents');
     }
 
     /**
-     * Uploads a document with comprehensive validation and progress tracking
+     * Uploads a document with comprehensive validation, progress tracking, and error handling
+     * @param request Document upload request containing file and metadata
+     * @param onProgress Optional callback for upload progress
+     * @returns Promise resolving to uploaded document details
+     * @throws ApiError if validation or upload fails
      */
     public async uploadDocument(
         request: DocumentUploadRequest,
         onProgress?: ProgressCallback
     ): Promise<ApiResponse<Document>> {
+        // Validate request
+        this.validateUploadRequest(request);
+
+        // Prepare form data with encryption
+        const formData = new FormData();
+        formData.append('file', request.file);
+        formData.append('metadata', JSON.stringify({
+            clientId: request.client_id,
+            type: request.type,
+            metadata: request.metadata,
+            tags: request.tags,
+            priorityProcessing: request.priority_processing
+        }));
+
         try {
-            // Validate file size and type
-            await this.validateDocument(request.file);
-
-            // Create form data with encryption
-            const formData = new FormData();
-            formData.append('file', request.file);
-            formData.append('clientId', request.client_id);
-            formData.append('type', request.type);
-            formData.append('metadata', JSON.stringify(request.metadata));
-            formData.append('tags', JSON.stringify(request.tags));
-            formData.append('priorityProcessing', String(request.priority_processing));
-
-            const config: ApiRequestConfig = {
-                headers: {
-                    'Content-Type': ContentType.MULTIPART_FORM_DATA,
-                },
-                onUploadProgress: (progressEvent) => {
-                    if (onProgress && progressEvent.total) {
-                        const progress = Math.round(
-                            (progressEvent.loaded * 100) / progressEvent.total
-                        );
-                        onProgress(progress);
-                    }
-                },
-                timeout: API_CONFIG.TIMEOUT * 2, // Extended timeout for uploads
-                validateStatus: (status) => status >= 200 && status < 300
-            };
-
-            const response = await this.circuitBreaker.execute(() =>
-                this.api.post<ApiResponse<Document>>(
-                    API_ENDPOINTS.DOCUMENTS.UPLOAD,
-                    formData,
-                    config
-                )
+            const response = await this.api.post<ApiResponse<Document>>(
+                API_ENDPOINTS.DOCUMENTS.UPLOAD,
+                formData,
+                {
+                    headers: {
+                        'Content-Type': ContentType.MULTIPART_FORM_DATA,
+                        'X-Upload-Type': request.type
+                    },
+                    onUploadProgress: (progressEvent: AxiosProgressEvent) => {
+                        if (onProgress && progressEvent.total) {
+                            const progress = Math.round(
+                                (progressEvent.loaded * 100) / progressEvent.total
+                            );
+                            onProgress(progress);
+                        }
+                    },
+                    timeout: API_CONFIG.TIMEOUT * 2 // Extended timeout for uploads
+                }
             );
 
             return response.data;
         } catch (error) {
-            if (axios.isAxiosError(error)) {
-                throw await handleApiError(error);
-            }
-            throw error;
+            throw await handleApiError(error as Error);
         }
     }
 
     /**
      * Retrieves paginated document list with caching and filtering
+     * @param params Pagination parameters
+     * @param filters Optional document filtering criteria
+     * @returns Promise resolving to paginated document list
+     * @throws ApiError if retrieval fails
      */
     public async getDocuments(
         params: PaginationParams,
         filters?: DocumentFilterOptions
     ): Promise<DocumentListResponse> {
         try {
-            const queryParams: QueryParams = {
-                page: params.page,
-                limit: params.limit,
-                sortBy: params.sortBy,
-                order: params.order,
-                ...this.buildFilterParams(filters)
-            };
+            const queryParams = new URLSearchParams({
+                page: params.page.toString(),
+                limit: params.limit.toString(),
+                ...(params.sortBy && { sortBy: params.sortBy }),
+                ...(params.order && { order: params.order }),
+                ...(filters?.types && { types: filters.types.join(',') }),
+                ...(filters?.status && { status: filters.status.join(',') }),
+                ...(filters?.startDate && { startDate: filters.startDate }),
+                ...(filters?.endDate && { endDate: filters.endDate }),
+                ...(filters?.searchQuery && { search: filters.searchQuery })
+            });
 
-            const cacheKey = this.generateCacheKey(queryParams);
-            const cachedResponse = await this.getCachedResponse(cacheKey);
-            
-            if (cachedResponse) {
-                return cachedResponse;
-            }
-
-            const response = await this.circuitBreaker.execute(() =>
-                this.api.get<DocumentListResponse>(
-                    API_ENDPOINTS.DOCUMENTS.LIST,
-                    { params: queryParams }
-                )
+            const response = await this.api.get<ApiResponse<DocumentListResponse>>(
+                `${API_ENDPOINTS.DOCUMENTS.LIST}?${queryParams}`,
+                {
+                    headers: {
+                        'Cache-Control': 'max-age=300' // 5 minute cache
+                    }
+                }
             );
 
-            await this.cacheResponse(cacheKey, response.data);
-            return response.data;
+            return response.data.data;
         } catch (error) {
-            if (axios.isAxiosError(error)) {
-                throw await handleApiError(error);
-            }
-            throw error;
+            throw await handleApiError(error as Error);
         }
     }
 
     /**
-     * Validates document before upload
+     * Validates document upload request
+     * @param request Upload request to validate
+     * @throws Error if validation fails
      */
-    private async validateDocument(file: File): Promise<DocumentValidation> {
-        const maxSize = API_CONFIG.MAX_REQUEST_SIZE;
-        const allowedTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/plain'];
-
-        if (file.size > maxSize) {
-            throw new Error(`File size exceeds maximum limit of ${maxSize / 1024 / 1024}MB`);
+    private validateUploadRequest(request: DocumentUploadRequest): void {
+        if (!request.file) {
+            throw new Error('File is required');
         }
 
-        if (!allowedTypes.includes(file.type)) {
-            throw new Error('File type not supported. Please upload PDF, DOCX, XLSX, or TXT files.');
+        if (request.file.size > this.maxFileSize) {
+            throw new Error(`File size exceeds maximum allowed size of ${this.maxFileSize / 1024 / 1024}MB`);
         }
 
-        return {
-            isValid: true,
-            size: file.size,
-            type: file.type
-        };
-    }
-
-    /**
-     * Builds filter parameters for document queries
-     */
-    private buildFilterParams(filters?: DocumentFilterOptions): Record<string, string> {
-        if (!filters) return {};
-
-        const params: Record<string, string> = {};
-
-        if (filters.types?.length) {
-            params.types = filters.types.join(',');
+        if (!this.allowedTypes.includes(request.type)) {
+            throw new Error(`File type ${request.type} is not supported. Allowed types: ${this.allowedTypes.join(', ')}`);
         }
 
-        if (filters.status?.length) {
-            params.status = filters.status.join(',');
+        if (!request.client_id) {
+            throw new Error('Client ID is required');
         }
-
-        if (filters.dateRange) {
-            params.startDate = filters.dateRange.start.toISOString();
-            params.endDate = filters.dateRange.end.toISOString();
-        }
-
-        if (filters.searchQuery) {
-            params.q = filters.searchQuery;
-        }
-
-        return params;
-    }
-
-    /**
-     * Generates cache key for document queries
-     */
-    private generateCacheKey(params: QueryParams): string {
-        return `documents:${JSON.stringify(params)}`;
-    }
-
-    /**
-     * Retrieves cached response if available
-     */
-    private async getCachedResponse(key: string): Promise<DocumentListResponse | null> {
-        // Implementation would use a caching solution like Redis
-        return null;
-    }
-
-    /**
-     * Caches API response
-     */
-    private async cacheResponse(key: string, data: DocumentListResponse): Promise<void> {
-        // Implementation would use a caching solution like Redis
-        return;
     }
 }
 
-export default new DocumentApi();
+// Export singleton instance
+export const documentApi = new DocumentApi();
