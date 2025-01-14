@@ -1,26 +1,21 @@
 import type { Config } from '@jest/types';
 
-/**
- * Comprehensive Jest configuration for React frontend application testing
- * Configured for high test coverage, efficient execution, and comprehensive testing capabilities
- * @version Jest 29.6.3
- */
 const config: Config.InitialOptions = {
-  // Use jsdom environment for DOM manipulation testing
+  // Specify jsdom test environment for DOM manipulation
   testEnvironment: 'jsdom',
 
-  // Configure test setup file containing global mocks and custom matchers
+  // Configure setup files that run before each test
   setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
 
-  // Test file patterns
+  // Configure test file patterns
   testMatch: [
     '<rootDir>/tests/**/*.test.{ts,tsx}',
     '<rootDir>/src/**/__tests__/**/*.{ts,tsx}'
   ],
 
-  // Module path mappings for clean imports
+  // Module name mapping for path aliases and file mocks
   moduleNameMapper: {
-    // Alias for src directory imports
+    // Path alias mapping for src directory
     '^@/(.*)$': '<rootDir>/src/$1',
     
     // Style file mocks
@@ -47,8 +42,6 @@ const config: Config.InitialOptions = {
   // Code coverage configuration
   collectCoverage: true,
   coverageDirectory: '<rootDir>/coverage',
-  
-  // Coverage thresholds enforcing >85% coverage requirement
   coverageThreshold: {
     global: {
       branches: 85,
@@ -57,8 +50,6 @@ const config: Config.InitialOptions = {
       statements: 85
     }
   },
-
-  // Paths to exclude from coverage reporting
   coveragePathIgnorePatterns: [
     '/node_modules/',
     '/tests/',
@@ -71,16 +62,8 @@ const config: Config.InitialOptions = {
   // Test execution configuration
   testTimeout: 10000,
   verbose: true,
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
   
-  // Supported file extensions
-  moduleFileExtensions: [
-    'ts',
-    'tsx',
-    'js',
-    'jsx',
-    'json'
-  ],
-
   // TypeScript configuration for ts-jest
   globals: {
     'ts-jest': {
