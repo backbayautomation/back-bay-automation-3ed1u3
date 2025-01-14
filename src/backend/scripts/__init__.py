@@ -6,22 +6,22 @@ and development environment setup with secure logging and audit capabilities.
 Version: 1.0.0
 """
 
-import logging  # version: latest
-from pathlib import Path  # version: latest
-import threading  # version: latest
+import logging
+from pathlib import Path
+import threading
 
-from ..app.core.config import settings, get_database_settings, get_environment
+from ..app.core.config import settings
 from ..app.logging_config import configure_logging, LogConfig
 
-# Initialize module-level logger with security context
+# Configure thread-safe logging
+_logging_lock = threading.Lock()
+
+# Initialize module-level logger
 logger = logging.getLogger('scripts')
 
-# Validate and resolve script paths
+# Resolve and validate script paths
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent.parent.resolve()
-
-# Thread-safe logging configuration lock
-_logging_lock = threading.Lock()
 
 def configure_script_logging(log_level: str = 'INFO') -> None:
     """
@@ -33,76 +33,56 @@ def configure_script_logging(log_level: str = 'INFO') -> None:
 
     Raises:
         ValueError: If invalid log level is provided
-        OSError: If unable to create log directory or files
+        OSError: If unable to create/access log files
     """
     with _logging_lock:
         try:
             # Validate log level
-            numeric_level = getattr(logging, log_level.upper())
+            numeric_level = getattr(logging, log_level.upper(), None)
             if not isinstance(numeric_level, int):
                 raise ValueError(f'Invalid log level: {log_level}')
 
             # Get environment settings
-            env = get_environment()
+            env = settings.get_environment()
             
             # Configure base logging
+            configure_logging()
+            
+            # Set script-specific logging format with security context
             log_config = LogConfig()
-            log_config.log_format = (
-                '%(asctime)s - %(name)s - %(levelname)s - '
-                '%(environment)s - %(correlation_id)s - %(message)s'
-            )
-            
-            # Set up logging directory
-            log_dir = PROJECT_ROOT / 'logs' / 'scripts'
-            log_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Configure handlers with security context
-            handlers = []
-            
-            # Console handler
+            log_config.add_security_context({
+                'component': 'scripts',
+                'environment': env
+            })
+
+            # Configure console handler with security filters
             console_handler = logging.StreamHandler()
-            console_handler.setFormatter(log_config.get_formatter())
-            console_handler.addFilter(log_config.security_filter)
-            handlers.append(console_handler)
-            
-            # File handler for audit logging
+            console_handler.setLevel(numeric_level)
+            console_handler.setFormatter(log_config.get_json_formatter())
+            logger.addHandler(console_handler)
+
+            # Configure file handler for audit logging in non-dev environments
             if env != 'development':
+                log_dir = SCRIPTS_DIR / 'logs'
+                log_dir.mkdir(exist_ok=True)
+                
                 file_handler = logging.handlers.RotatingFileHandler(
                     filename=log_dir / 'scripts.log',
                     maxBytes=10*1024*1024,  # 10MB
                     backupCount=5,
                     encoding='utf-8'
                 )
-                file_handler.setFormatter(log_config.get_formatter())
-                file_handler.addFilter(log_config.security_filter)
-                handlers.append(file_handler)
-            
-            # Configure root logger
-            root_logger = logging.getLogger()
-            root_logger.setLevel(numeric_level)
-            
-            # Remove existing handlers and add new ones
-            for handler in root_logger.handlers[:]:
-                root_logger.removeHandler(handler)
-            for handler in handlers:
-                root_logger.addHandler(handler)
-            
-            # Set script-specific logger level
+                file_handler.setLevel(numeric_level)
+                file_handler.setFormatter(log_config.get_json_formatter())
+                logger.addHandler(file_handler)
+
             logger.setLevel(numeric_level)
-            
-            logger.info(
-                "Script logging configured successfully",
-                extra={
-                    'environment': env,
-                    'log_level': log_level,
-                    'handlers': [h.__class__.__name__ for h in handlers]
-                }
-            )
-            
+            logger.info(f'Script logging configured with level {log_level}')
+
         except Exception as e:
             # Ensure basic logging is available even if configuration fails
-            logging.basicConfig(level=logging.INFO)
-            logger.error(f"Failed to configure script logging: {str(e)}")
+            logging.basicConfig(level='INFO')
+            logger.error(f'Failed to configure script logging: {str(e)}')
             raise
 
 def get_project_root() -> Path:
@@ -114,41 +94,32 @@ def get_project_root() -> Path:
         Path: Validated absolute path to project root directory
 
     Raises:
-        OSError: If project root directory is invalid or inaccessible
-        SecurityError: If path resolution reveals potential security risks
+        FileNotFoundError: If project root directory does not exist
+        PermissionError: If insufficient permissions to access directory
     """
     try:
         # Validate PROJECT_ROOT exists
         if not PROJECT_ROOT.exists():
-            raise OSError(f"Project root directory does not exist: {PROJECT_ROOT}")
-        
+            raise FileNotFoundError(f'Project root directory not found: {PROJECT_ROOT}')
+
         # Check directory permissions
         if not os.access(PROJECT_ROOT, os.R_OK):
-            raise OSError(f"Insufficient permissions for project root: {PROJECT_ROOT}")
-        
+            raise PermissionError(f'Insufficient permissions to access project root: {PROJECT_ROOT}')
+
         # Resolve any symbolic links
         real_path = PROJECT_ROOT.resolve(strict=True)
-        
+
         # Verify path is within expected bounds
-        if not str(real_path).startswith(str(PROJECT_ROOT.parent)):
-            raise SecurityError("Project root path resolution outside expected bounds")
-        
-        logger.debug(
-            "Project root path validated",
-            extra={
-                'path': str(real_path),
-                'is_absolute': real_path.is_absolute(),
-                'is_dir': real_path.is_dir()
-            }
-        )
-        
+        if not str(real_path).startswith(str(SCRIPTS_DIR.parent.parent)):
+            raise ValueError('Project root path is outside expected directory structure')
+
         return real_path
-        
+
     except Exception as e:
-        logger.error(f"Failed to validate project root path: {str(e)}")
+        logger.error(f'Error accessing project root directory: {str(e)}')
         raise
 
-# Configure default logging
+# Configure initial logging
 configure_script_logging()
 
 # Export public interface
