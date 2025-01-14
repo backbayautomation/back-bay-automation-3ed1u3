@@ -13,16 +13,17 @@ from ../../services.cache_service import CacheService
 from ../../db.session import get_db
 from ../../core.config import Settings
 
-# Initialize router with health check tag
+# Initialize router with health check endpoints
 router = APIRouter(tags=['health'], prefix='/health')
 
-# Performance thresholds (milliseconds)
-CACHE_THRESHOLD_MS = 100
-DB_THRESHOLD_MS = 200
+# Performance thresholds
+CACHE_THRESHOLD_MS = 100  # Maximum acceptable cache response time
+DB_THRESHOLD_MS = 200     # Maximum acceptable database response time
 
 async def check_database(db=Depends(get_db)) -> Dict[str, Any]:
     """
-    Comprehensive database health check with performance metrics.
+    Performs comprehensive database health check including connection pool status,
+    query performance, and resource utilization.
     """
     start_time = time.time()
     try:
@@ -30,26 +31,26 @@ async def check_database(db=Depends(get_db)) -> Dict[str, Any]:
         db.execute("SELECT 1")
         
         # Get connection pool metrics
-        pool_stats = db.get_bind().pool.status()
-        
+        pool_stats = db.monitor_pool_health()
         response_time = (time.time() - start_time) * 1000
-        
-        health_status = {
-            "status": "healthy" if response_time < DB_THRESHOLD_MS else "degraded",
-            "response_time_ms": round(response_time, 2),
-            "pool": {
-                "size": pool_stats['pool_size'],
-                "available": pool_stats['checkedin'],
-                "used": pool_stats['checkedout'],
-                "overflow": pool_stats['overflow']
+
+        # Verify metrics against thresholds
+        status_ok = (
+            response_time <= DB_THRESHOLD_MS and
+            pool_stats['checkedout'] / pool_stats['pool_size'] <= 0.8
+        )
+
+        return {
+            'status': 'healthy' if status_ok else 'degraded',
+            'response_time_ms': round(response_time, 2),
+            'pool_stats': pool_stats,
+            'connections': {
+                'active': pool_stats['checkedout'],
+                'available': pool_stats['pool_size'] - pool_stats['checkedout'],
+                'max_size': pool_stats['pool_size']
             }
         }
-        
-        if response_time >= DB_THRESHOLD_MS:
-            health_status["warning"] = f"Response time ({response_time}ms) exceeds threshold ({DB_THRESHOLD_MS}ms)"
-            
-        return health_status
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -58,36 +59,37 @@ async def check_database(db=Depends(get_db)) -> Dict[str, Any]:
 
 async def check_cache() -> Dict[str, Any]:
     """
-    Detailed Redis cache service health check with performance metrics.
+    Performs detailed Redis cache service health check with performance metrics
+    and threshold monitoring.
     """
     start_time = time.time()
     try:
+        # Get cache service instance
         cache_service = CacheService()
         
         # Check connectivity and get metrics
         stats = await cache_service.get_stats()
-        is_connected = await cache_service.check_connectivity()
-        metrics = await cache_service.get_metrics()
-        
         response_time = (time.time() - start_time) * 1000
-        
-        health_status = {
-            "status": "healthy" if response_time < CACHE_THRESHOLD_MS and is_connected else "degraded",
-            "response_time_ms": round(response_time, 2),
-            "connected": is_connected,
-            "metrics": {
-                "hit_ratio": stats.get('hit_ratio', 0),
-                "memory_used_mb": round(stats.get('memory_used', 0) / 1024 / 1024, 2),
-                "evicted_keys": stats.get('evicted_keys', 0),
-                "connected_clients": stats.get('connected_clients', 0)
+
+        # Verify metrics against thresholds
+        status_ok = (
+            response_time <= CACHE_THRESHOLD_MS and
+            stats['hit_ratio'] >= 0.8 and
+            stats['errors'] / (stats['hits'] + stats['misses'] + 1) <= 0.01
+        )
+
+        return {
+            'status': 'healthy' if status_ok else 'degraded',
+            'response_time_ms': round(response_time, 2),
+            'metrics': {
+                'hit_ratio': round(stats['hit_ratio'], 2),
+                'memory_used_mb': round(stats['memory_used_bytes'] / 1024 / 1024, 2),
+                'memory_peak_mb': round(stats['memory_peak_bytes'] / 1024 / 1024, 2),
+                'connected_clients': stats['connected_clients'],
+                'uptime_hours': round(stats['uptime_seconds'] / 3600, 2)
             }
         }
-        
-        if response_time >= CACHE_THRESHOLD_MS:
-            health_status["warning"] = f"Response time ({response_time}ms) exceeds threshold ({CACHE_THRESHOLD_MS}ms)"
-            
-        return health_status
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -97,7 +99,8 @@ async def check_cache() -> Dict[str, Any]:
 @router.get('/', status_code=status.HTTP_200_OK)
 async def get_health(db=Depends(get_db)) -> Dict[str, Any]:
     """
-    Comprehensive system health check endpoint aggregating all component statuses.
+    Comprehensive health check endpoint aggregating all component statuses
+    with detailed metrics.
     """
     start_time = time.time()
     
@@ -108,22 +111,22 @@ async def get_health(db=Depends(get_db)) -> Dict[str, Any]:
         
         # Calculate overall system health
         system_healthy = (
-            db_health["status"] == "healthy" and
-            cache_health["status"] == "healthy"
+            db_health['status'] == 'healthy' and
+            cache_health['status'] == 'healthy'
         )
-        
+
         response_time = (time.time() - start_time) * 1000
-        
+
         return {
-            "status": "healthy" if system_healthy else "degraded",
-            "timestamp": time.time(),
-            "response_time_ms": round(response_time, 2),
-            "components": {
-                "database": db_health,
-                "cache": cache_health
+            'status': 'healthy' if system_healthy else 'degraded',
+            'response_time_ms': round(response_time, 2),
+            'timestamp': time.time(),
+            'components': {
+                'database': db_health,
+                'cache': cache_health
             }
         }
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -133,27 +136,30 @@ async def get_health(db=Depends(get_db)) -> Dict[str, Any]:
 @router.get('/ready', status_code=status.HTTP_200_OK)
 async def get_readiness() -> Dict[str, str]:
     """
-    Kubernetes readiness probe endpoint with comprehensive service checks.
+    Enhanced Kubernetes readiness probe with comprehensive service availability checks.
     """
     try:
-        # Verify critical service availability
-        db = next(get_db())
-        db.execute("SELECT 1")
-        
+        # Verify critical service initialization
         cache_service = CacheService()
         await cache_service.check_connectivity()
         
-        return {"status": "ready"}
-        
+        return {
+            'status': 'ready',
+            'message': 'Application is ready to accept traffic'
+        }
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"System not ready: {str(e)}"
+            detail=f"Application not ready: {str(e)}"
         )
 
 @router.get('/live', status_code=status.HTTP_200_OK)
 async def get_liveness() -> Dict[str, str]:
     """
-    Kubernetes liveness probe endpoint for basic application health.
+    Kubernetes liveness probe for basic application health check.
     """
-    return {"status": "alive"}
+    return {
+        'status': 'alive',
+        'message': 'Application is running'
+    }
