@@ -6,18 +6,18 @@ import {
   Box, 
   Paper, 
   Typography, 
-  CircularProgress,
-  Alert
+  CircularProgress, 
+  Alert 
 } from '@mui/material';
 import { withErrorBoundary } from 'react-error-boundary';
 
-// Layout and Settings Components
+// Layout and settings components
 import MainLayout from '../../components/common/Layout/MainLayout';
 import ApiSettings from '../../components/admin/Settings/ApiSettings';
 import BrandingSettings from '../../components/admin/Settings/BrandingSettings';
 import SecuritySettings from '../../components/admin/Settings/SecuritySettings';
 
-// Interface for tab panel props with accessibility support
+// Interfaces for settings tab panel
 interface SettingsTabPanelProps {
   children: React.ReactNode;
   value: number;
@@ -36,7 +36,7 @@ interface SettingsState {
   lastSaved: Date | null;
 }
 
-// Enhanced tab panel component with accessibility
+// Tab panel component with accessibility support
 const TabPanel: React.FC<SettingsTabPanelProps> = ({
   children,
   value,
@@ -62,11 +62,11 @@ const TabPanel: React.FC<SettingsTabPanelProps> = ({
   );
 };
 
-// Main Settings component with error boundary
+// Main settings component with error boundary
 const Settings = withErrorBoundary(() => {
   const dispatch = useDispatch();
   const [activeTab, setActiveTab] = useState(0);
-  const [state, setState] = useState<SettingsState>({
+  const [settings, setSettings] = useState<SettingsState>({
     loading: true,
     error: null,
     data: {},
@@ -78,27 +78,22 @@ const Settings = withErrorBoundary(() => {
   useEffect(() => {
     const loadSettings = async () => {
       try {
-        setState(prev => ({ ...prev, loading: true, error: null }));
-        
-        // Fetch settings from API
+        setSettings(prev => ({ ...prev, loading: true, error: null }));
+        // API call to load settings would go here
         const response = await fetch('/api/v1/settings');
         const data = await response.json();
         
-        if (!response.ok) {
-          throw new Error(data.message || 'Failed to load settings');
-        }
-
-        setState(prev => ({
+        setSettings(prev => ({
           ...prev,
           loading: false,
           data,
           error: null
         }));
       } catch (error) {
-        setState(prev => ({
+        setSettings(prev => ({
           ...prev,
           loading: false,
-          error: error instanceof Error ? error.message : 'An error occurred'
+          error: error instanceof Error ? error.message : 'Failed to load settings'
         }));
       }
     };
@@ -108,21 +103,21 @@ const Settings = withErrorBoundary(() => {
 
   // Handle tab changes with unsaved changes warning
   const handleTabChange = useCallback((event: React.SyntheticEvent, newValue: number) => {
-    if (state.unsavedChanges) {
+    if (settings.unsavedChanges) {
       if (window.confirm('You have unsaved changes. Are you sure you want to switch tabs?')) {
         setActiveTab(newValue);
       }
     } else {
       setActiveTab(newValue);
     }
-  }, [state.unsavedChanges]);
+  }, [settings.unsavedChanges]);
 
-  // Generic save handler with error handling and audit logging
-  const handleSave = useCallback(async (section: string, data: any) => {
+  // Generic save handler for all settings types
+  const handleSaveSettings = useCallback(async (type: string, data: any) => {
     try {
-      setState(prev => ({ ...prev, loading: true, error: null }));
+      setSettings(prev => ({ ...prev, loading: true, error: null }));
 
-      const response = await fetch(`/api/v1/settings/${section}`, {
+      const response = await fetch(`/api/v1/settings/${type}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json'
@@ -134,30 +129,19 @@ const Settings = withErrorBoundary(() => {
         throw new Error('Failed to save settings');
       }
 
-      // Create audit log entry
-      await fetch('/api/v1/audit/log', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          action: `UPDATE_${section.toUpperCase()}_SETTINGS`,
-          details: data
-        })
-      });
-
-      setState(prev => ({
+      setSettings(prev => ({
         ...prev,
         loading: false,
         unsavedChanges: false,
         lastSaved: new Date(),
         error: null
       }));
+
     } catch (error) {
-      setState(prev => ({
+      setSettings(prev => ({
         ...prev,
         loading: false,
-        error: error instanceof Error ? error.message : 'An error occurred'
+        error: error instanceof Error ? error.message : 'Failed to save settings'
       }));
     }
   }, []);
@@ -179,13 +163,13 @@ const Settings = withErrorBoundary(() => {
           </Tabs>
         </Box>
 
-        {state.error && (
+        {settings.error && (
           <Alert severity="error" sx={{ m: 2 }}>
-            {state.error}
+            {settings.error}
           </Alert>
         )}
 
-        {state.loading ? (
+        {settings.loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
             <CircularProgress />
           </Box>
@@ -194,62 +178,77 @@ const Settings = withErrorBoundary(() => {
             <TabPanel
               value={activeTab}
               index={0}
-              ariaLabel="API settings"
-              hasUnsavedChanges={state.unsavedChanges}
-              onSave={(data) => handleSave('api', data)}
+              ariaLabel="API settings panel"
+              hasUnsavedChanges={settings.unsavedChanges}
+              onSave={(data) => handleSaveSettings('api', data)}
             >
               <ApiSettings
-                onSave={(data) => handleSave('api', data)}
-                isLoading={state.loading}
+                initialSettings={settings.data.api}
+                onSave={(data) => handleSaveSettings('api', data)}
+                isLoading={settings.loading}
+                onDirtyChange={(isDirty) => 
+                  setSettings(prev => ({ ...prev, unsavedChanges: isDirty }))
+                }
               />
             </TabPanel>
 
             <TabPanel
               value={activeTab}
               index={1}
-              ariaLabel="Branding settings"
-              hasUnsavedChanges={state.unsavedChanges}
-              onSave={(data) => handleSave('branding', data)}
+              ariaLabel="Branding settings panel"
+              hasUnsavedChanges={settings.unsavedChanges}
+              onSave={(data) => handleSaveSettings('branding', data)}
             >
               <BrandingSettings
-                initialBranding={state.data.branding}
-                onSave={(data) => handleSave('branding', data)}
-                isLoading={state.loading}
-                onDirtyChange={(isDirty) => setState(prev => ({ ...prev, unsavedChanges: isDirty }))}
+                initialBranding={settings.data.branding}
+                onSave={(data) => handleSaveSettings('branding', data)}
+                isLoading={settings.loading}
+                onDirtyChange={(isDirty) => 
+                  setSettings(prev => ({ ...prev, unsavedChanges: isDirty }))
+                }
               />
             </TabPanel>
 
             <TabPanel
               value={activeTab}
               index={2}
-              ariaLabel="Security settings"
-              hasUnsavedChanges={state.unsavedChanges}
-              onSave={(data) => handleSave('security', data)}
+              ariaLabel="Security settings panel"
+              hasUnsavedChanges={settings.unsavedChanges}
+              onSave={(data) => handleSaveSettings('security', data)}
             >
               <SecuritySettings
-                isLoading={state.loading}
+                isLoading={settings.loading}
                 isValidating={false}
-                onSave={() => handleSave('security', state.data.security)}
-                onCancel={() => setState(prev => ({ ...prev, unsavedChanges: false }))}
-                onError={(error) => setState(prev => ({ ...prev, error: error.message }))}
+                onSave={() => handleSaveSettings('security', settings.data.security)}
+                onCancel={() => setSettings(prev => ({ ...prev, unsavedChanges: false }))}
+                onError={(error) => setSettings(prev => ({ 
+                  ...prev, 
+                  error: error.message 
+                }))}
               />
             </TabPanel>
           </>
         )}
 
-        {state.lastSaved && (
-          <Typography variant="caption" sx={{ p: 2, display: 'block', color: 'text.secondary' }}>
-            Last saved: {state.lastSaved.toLocaleString()}
+        {settings.lastSaved && (
+          <Typography 
+            variant="caption" 
+            sx={{ p: 2, display: 'block', textAlign: 'right' }}
+          >
+            Last saved: {settings.lastSaved.toLocaleString()}
           </Typography>
         )}
       </Paper>
     </MainLayout>
   );
 }, {
-  fallback: <div>Error loading settings page. Please refresh.</div>,
-  onError: (error) => {
-    console.error('Settings Page Error:', error);
-  }
+  fallback: (
+    <MainLayout portalType="admin">
+      <Alert severity="error">
+        Failed to load settings. Please refresh the page.
+      </Alert>
+    </MainLayout>
+  )
 });
 
 Settings.displayName = 'Settings';
