@@ -1,7 +1,12 @@
+"""
+Organization schema models for multi-tenant data validation and serialization.
+Implements comprehensive validation rules and ORM integration for organization management.
+"""
+
 # pydantic v2.0.0
-from datetime import datetime
-from typing import List, Optional, Any
 from pydantic import BaseModel, UUID4, constr, Field, ConfigDict
+from datetime import datetime
+from typing import Optional, List, Any
 
 class OrganizationBase(BaseModel):
     """Base Pydantic model for organization data with common attributes and validation rules."""
@@ -12,12 +17,12 @@ class OrganizationBase(BaseModel):
     )
     settings: dict = Field(
         default_factory=dict,
-        description="Organization-specific settings and configurations",
+        description="Organization-specific configuration and settings",
         examples=[{
             "theme": "light",
             "language": "en",
             "features": ["chat", "export"],
-            "retention_period": 90
+            "retention_days": 30
         }]
     )
 
@@ -81,27 +86,22 @@ class OrganizationInDB(OrganizationBase):
         description="Timestamp of last organization update"
     )
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        strict=True
-    )
-
 class Organization(OrganizationInDB):
     """Complete Pydantic model for organization response data with relationships."""
-    clients: Optional[List['Client']] = Field(
+    clients: Optional[List["Client"]] = Field(
         None,
-        description="List of clients associated with the organization"
+        description="List of clients associated with this organization"
     )
 
     @classmethod
-    def from_orm(cls, orm_model: Any) -> 'Organization':
+    def from_orm(cls, orm_model: Any) -> "Organization":
         """Create Organization schema from ORM model with error handling.
         
         Args:
             orm_model: SQLAlchemy ORM model instance
             
         Returns:
-            Organization: Validated Organization schema instance
+            Organization: Validated organization schema instance
             
         Raises:
             ValueError: If ORM model is invalid or missing required fields
@@ -122,11 +122,13 @@ class Organization(OrganizationInDB):
             
             # Create and validate Organization instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Organization from ORM model: {str(e)}")
 
     model_config = ConfigDict(
         from_attributes=True,
+        populate_by_name=True,
         strict=True,
         json_schema_extra={
             "example": {
