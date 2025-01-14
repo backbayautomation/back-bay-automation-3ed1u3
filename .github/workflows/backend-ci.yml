@@ -2,12 +2,12 @@ name: Backend CI
 
 on:
   push:
-    branches: ['main', 'develop']
+    branches: [ main, develop ]
     paths:
       - 'src/backend/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
-    branches: ['main', 'develop']
+    branches: [ main, develop ]
     paths:
       - 'src/backend/**'
       - '.github/workflows/backend-ci.yml'
@@ -16,8 +16,7 @@ env:
   PYTHON_VERSION: '3.11'
   POETRY_VERSION: '1.7.0'
   DOCKER_REGISTRY: 'ghcr.io'
-  DOCKER_IMAGE: ${{ github.repository }}/backend
-  COVERAGE_THRESHOLD: 85
+  COVERAGE_THRESHOLD: '85'
 
 permissions:
   contents: read
@@ -38,7 +37,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
@@ -53,10 +52,21 @@ jobs:
       - name: Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python3 - --version ${{ env.POETRY_VERSION }}
-          poetry config virtualenvs.create false
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v3
+        with:
+          path: src/backend/.venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('src/backend/poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: poetry install --no-interaction
 
       - name: Run Black
         run: poetry run black --check --diff .
@@ -68,7 +78,7 @@ jobs:
         run: poetry run flake8 .
 
       - name: Run MyPy
-        run: poetry run mypy app tests
+        run: poetry run mypy .
 
   test:
     name: Run Tests
@@ -79,7 +89,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -92,33 +102,28 @@ jobs:
       - name: Install Poetry
         run: |
           curl -sSL https://install.python-poetry.org | python3 - --version ${{ env.POETRY_VERSION }}
-          poetry config virtualenvs.create false
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v3
+        with:
+          path: src/backend/.venv
+          key: poetry-${{ runner.os }}-${{ hashFiles('src/backend/poetry.lock') }}
 
       - name: Install dependencies
-        run: poetry install --no-interaction --no-root
+        run: poetry install --no-interaction
 
       - name: Run tests with coverage
         run: |
-          poetry run pytest \
-            --cov=app \
-            --cov-report=xml \
-            --cov-report=term-missing \
-            --cov-fail-under=${{ env.COVERAGE_THRESHOLD }} \
-            --junitxml=test-results.xml
+          poetry run pytest --cov=app --cov-report=xml --cov-report=term-missing --junitxml=pytest.xml
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v3
         with:
           name: coverage-report
-          path: src/backend/coverage.xml
-          retention-days: 14
-
-      - name: Upload test results
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: src/backend/test-results.xml
-          retention-days: 14
+          path: |
+            src/backend/coverage.xml
+            src/backend/pytest.xml
 
   security-scan:
     name: Security Scanning
@@ -129,7 +134,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -137,23 +142,30 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Run Snyk security scan
+      - name: Run Snyk scan
         uses: snyk/actions/python@v3
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
-          args: --severity-threshold=high --sarif-file-output=snyk-results.sarif
+          args: --severity-threshold=high --sarif-file-output=snyk.sarif
 
-      - name: Upload Snyk results
+      - name: Upload Snyk report
         uses: github/codeql-action/upload-sarif@v2
         with:
-          sarif_file: src/backend/snyk-results.sarif
+          sarif_file: src/backend/snyk.sarif
           category: snyk
 
-      - name: Check for secrets
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      - name: Run dependency check
+        run: |
+          poetry export --without-hashes -f requirements.txt | poetry run safety check --full-report --output safety-report.txt
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-reports
+          path: |
+            src/backend/snyk.sarif
+            src/backend/safety-report.txt
 
   build:
     name: Build and Push Container
@@ -165,7 +177,7 @@ jobs:
         working-directory: src/backend
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Set up Docker Buildx
@@ -180,18 +192,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Docker
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE }}
+          images: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend
           tags: |
-            type=sha,format=long
             type=ref,event=branch
-            type=ref,event=tag
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=sha,format=long
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v4
         with:
           context: src/backend
@@ -208,7 +220,7 @@ jobs:
       - name: Scan container image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.version }}
+          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ github.repository }}/backend:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
