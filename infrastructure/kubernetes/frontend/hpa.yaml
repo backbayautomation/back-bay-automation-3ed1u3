@@ -47,7 +47,7 @@ spec:
   behavior:
     # Scale up configuration
     scaleUp:
-      # Wait 60 seconds before considering another scale up
+      # Wait 60 seconds before scaling up again
       stabilizationWindowSeconds: 60
       policies:
         # Add up to 2 pods every 60 seconds
@@ -58,7 +58,7 @@ spec:
 
     # Scale down configuration
     scaleDown:
-      # Conservative 5-minute window before scaling down
+      # Wait 300 seconds before scaling down
       stabilizationWindowSeconds: 300
       policies:
         # Remove 1 pod every 120 seconds
