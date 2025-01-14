@@ -1,74 +1,47 @@
 // =============================================================================
 // Core Theme Stylesheet
-// Implements design system with WCAG 2.1 AA compliance, dark mode,
-// and responsive design patterns
+// Implements design system with WCAG 2.1 AA compliance and dark mode support
 // =============================================================================
 
-@import './variables';
+@use 'variables' as *;
 
-// Root Custom Properties
-// -----------------------------------------------------------------------------
+// Root CSS Variables
+// Define global CSS custom properties
 :root {
-  // Animation
-  --transition-speed: #{$animation-duration-base};
-  --transition-timing: #{$animation-timing-base};
+  // Color system
+  --primary: #{$primary};
+  --primary-light: #{$primary-light};
+  --primary-dark: #{$primary-dark};
+  --secondary: #{$secondary};
+  --error: #{$error};
+  --warning: #{$warning};
+  --info: #{$info};
+  --success: #{$success};
   
-  // Focus Management
-  --focus-ring-color: #{$focus-ring-color};
-  --focus-ring-width: 3px;
-  
-  // Colors - Light Theme Defaults
+  // Theme colors
   --background-color: #{$background-color};
   --background-secondary: #{$background-secondary};
   --text-primary: #{$text-primary};
   --text-secondary: #{$text-secondary};
-  --surface-color: #{$background-color};
-  --card-shadow: #{$shadow-md};
-}
-
-// Base Styles
-// -----------------------------------------------------------------------------
-html {
-  box-sizing: border-box;
-  height: 100%;
-  font-size: 100%;
-}
-
-*, *::before, *::after {
-  box-sizing: inherit;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  min-height: 100%;
-  font-family: $font-family-primary;
-  font-size: clamp(#{$font-size-base}, 1vw + 0.5rem, #{$font-size-lg});
-  line-height: $line-height-base;
-  color: var(--text-primary);
-  background-color: var(--background-color);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transition: 
-    background-color var(--transition-speed) var(--transition-timing),
-    color var(--transition-speed) var(--transition-timing);
+  
+  // Animation
+  --transition-speed: #{$animation-duration-base};
+  --transition-timing: #{$animation-timing-base};
+  
+  // Focus management
+  --focus-ring-color: #{$focus-ring-color};
+  --focus-ring-width: 3px;
 }
 
 // Fluid Typography Function
-// -----------------------------------------------------------------------------
-@function generateFluidType($minSize, $maxSize, $minWidth, $maxWidth) {
+@function generateFluidType($minSize, $maxSize, $minWidth: $breakpoint-mobile, $maxWidth: $breakpoint-desktop) {
   $slope: ($maxSize - $minSize) / ($maxWidth - $minWidth);
   $yAxisIntersection: -$minWidth * $slope + $minSize;
   
-  @return clamp(
-    #{$minSize}px,
-    #{$yAxisIntersection}px + #{$slope * 100}vw,
-    #{$maxSize}px
-  );
+  @return clamp(#{$minSize}px, #{$yAxisIntersection}px + #{$slope * 100}vw, #{$maxSize}px);
 }
 
 // Container Query Mixin
-// -----------------------------------------------------------------------------
 @mixin generateContainerQueries($containerName, $breakpoints) {
   container-type: inline-size;
   container-name: $containerName;
@@ -80,9 +53,22 @@ body {
   }
 }
 
+// Base Styles
+body {
+  font-family: $font-family-primary;
+  font-size: generateFluidType(16, 18);
+  line-height: $line-height-base;
+  color: var(--text-primary);
+  background-color: var(--background-color);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color var(--transition-speed),
+              color var(--transition-speed);
+}
+
 // Accessibility Utilities
-// -----------------------------------------------------------------------------
 .a11y {
+  // Screen reader only
   &-sr-only {
     position: absolute;
     width: 1px;
@@ -95,20 +81,21 @@ body {
     border: 0;
   }
 
+  // Focus visible
   &-focus-visible {
     outline: var(--focus-ring-width) solid var(--focus-ring-color);
     outline-offset: 2px;
+    border-radius: $border-radius-sm;
   }
 
+  // Skip link
   &-skip-link {
     position: fixed;
     top: -100px;
     left: 50%;
     transform: translateX(-50%);
     padding: $spacing-sm $spacing-md;
-    background: var(--background-color);
-    color: var(--text-primary);
-    text-decoration: none;
+    background-color: var(--background-color);
     z-index: $z-index-tooltip;
     
     &:focus {
@@ -118,17 +105,17 @@ body {
 }
 
 // Layout System
-// -----------------------------------------------------------------------------
 .layout {
   &-container {
-    @include generateContainerQueries(main-content, (
-      'mobile': $breakpoint-mobile,
-      'tablet': $breakpoint-tablet,
-      'desktop': $breakpoint-desktop
-    ));
-    max-width: $container-max-width;
-    margin: 0 auto;
-    padding: 0 $container-padding;
+    @include generateContainerQueries('main-content', $breakpoints) using ($name, $size) {
+      max-width: $container-max-width;
+      margin: 0 auto;
+      padding: 0 max(#{$container-padding}, 5%);
+      
+      @if $name == 'mobile' {
+        padding: 0 $spacing-md;
+      }
+    }
   }
 
   &-grid {
@@ -144,119 +131,91 @@ body {
 }
 
 // Enhanced Component Styles
-// -----------------------------------------------------------------------------
 .components {
   &-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     padding: $spacing-sm $spacing-md;
-    border: none;
-    border-radius: $border-radius-md;
-    background-color: $primary;
-    color: white;
-    font-family: $font-family-primary;
+    border-radius: $border-radius-sm;
     font-weight: $font-weight-medium;
-    text-decoration: none;
-    cursor: pointer;
     transition: all var(--transition-speed) var(--transition-timing);
-    
-    &:hover {
-      background-color: $primary-dark;
-    }
     
     &:focus-visible {
       @extend .a11y-focus-visible;
     }
     
     &:disabled {
-      background-color: $text-disabled;
+      color: $text-disabled;
       cursor: not-allowed;
     }
   }
 
   &-card {
-    background-color: var(--surface-color);
-    border-radius: $border-radius-lg;
+    background-color: var(--background-secondary);
+    border-radius: $border-radius-md;
     padding: $spacing-md;
-    box-shadow: var(--card-shadow);
-    transition: box-shadow var(--transition-speed) var(--transition-timing);
+    box-shadow: $shadow-sm;
+    transition: box-shadow var(--transition-speed);
     
     &:hover {
-      box-shadow: $shadow-lg;
+      box-shadow: $shadow-md;
     }
   }
 }
 
 // Dark Mode Support
-// -----------------------------------------------------------------------------
 @media (prefers-color-scheme: dark) {
   :root {
     --background-color: #{$dark-background-color};
     --background-secondary: #{$dark-background-secondary};
     --text-primary: #{$dark-text-primary};
     --text-secondary: #{$dark-text-secondary};
-    --surface-color: #{$dark-background-secondary};
-    --card-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
   }
-  
-  .components-button {
-    &:disabled {
-      background-color: $dark-text-secondary;
+
+  .components {
+    &-card {
+      box-shadow: none;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      
+      &:hover {
+        box-shadow: $shadow-sm;
+      }
     }
   }
 }
 
 // High Contrast Mode Support
-// -----------------------------------------------------------------------------
 @media (forced-colors: active) {
   :root {
     --focus-ring-color: CanvasText;
   }
-  
-  .components-button {
-    border: 1px solid ButtonText;
-  }
-  
-  .components-card {
-    border: 1px solid CanvasText;
-  }
-}
 
-// Responsive Breakpoints
-// -----------------------------------------------------------------------------
-@media screen and (max-width: $breakpoint-mobile) {
-  :root {
-    --container-padding: #{$spacing-sm};
-  }
-  
-  body {
-    font-size: $font-size-base;
-  }
-}
-
-@media screen and (min-width: $breakpoint-tablet) {
-  :root {
-    --container-padding: #{$spacing-md};
-  }
-}
-
-@media screen and (min-width: $breakpoint-desktop) {
-  :root {
-    --container-padding: #{$spacing-lg};
+  .components {
+    &-button {
+      border: 1px solid currentColor;
+    }
+    
+    &-card {
+      border: 1px solid currentColor;
+    }
   }
 }
 
 // Print Styles
-// -----------------------------------------------------------------------------
 @media print {
   body {
-    background: white;
+    background-color: white;
     color: black;
   }
-  
-  .components-card {
-    box-shadow: none;
-    border: 1px solid black;
+
+  .components {
+    &-card {
+      box-shadow: none;
+      border: 1px solid black;
+    }
   }
 }
+
+// Responsive Typography
+h1 { font-size: generateFluidType($font-size-xxl, $font-size-xxl * 1.5); }
+h2 { font-size: generateFluidType($font-size-xl, $font-size-xl * 1.5); }
+h3 { font-size: generateFluidType($font-size-lg, $font-size-lg * 1.5); }
+h4 { font-size: generateFluidType($font-size-md, $font-size-md * 1.5); }
