@@ -1,6 +1,6 @@
 import React from 'react'; // ^18.2.0
-import { Box, Container, Paper } from '@mui/material'; // ^5.14.0
-import { styled } from '@mui/material/styles'; // ^5.14.0
+import { Box, Container, Paper } from '@mui/material'; // 5.14.0
+import { styled } from '@mui/material/styles'; // 5.14.0
 import { Navigate } from 'react-router-dom'; // ^6.14.0
 import { ErrorBoundary } from 'react-error-boundary'; // ^4.0.0
 
@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import PageLoader from '../components/common/Loaders/PageLoader';
 
 /**
- * Props interface for AuthLayout component
+ * Props interface for AuthLayout component with proper typing
  */
 interface AuthLayoutProps {
   children: React.ReactNode;
@@ -30,14 +30,12 @@ const AuthContainer = styled(Container)(({ theme }) => ({
   [theme.breakpoints.down('sm')]: {
     padding: theme.spacing(2),
   },
+  [theme.breakpoints.up('lg')]: {
+    padding: theme.spacing(4),
+  },
   // Accessibility attributes
   role: 'main',
-  'aria-label': 'Authentication page',
-  // Prevent content shift during loading
-  position: 'relative',
-  // Improve text rendering
-  WebkitFontSmoothing: 'antialiased',
-  MozOsxFontSmoothing: 'grayscale',
+  'aria-label': 'Authentication page'
 }));
 
 /**
@@ -54,58 +52,31 @@ const AuthPaper = styled(Paper)(({ theme }) => ({
   // Responsive adjustments
   [theme.breakpoints.down('sm')]: {
     padding: theme.spacing(3),
-    maxWidth: '100%',
+    margin: theme.spacing(2),
   },
-  // Smooth transitions
-  transition: theme.transitions.create(['box-shadow', 'transform'], {
-    duration: theme.transitions.duration.short,
-  }),
-  '&:hover': {
-    boxShadow: theme.shadows[4],
-  },
-  // Improve focus visibility
-  '&:focus-within': {
-    outline: `2px solid ${theme.palette.primary.main}`,
-    outlineOffset: '2px',
-  },
+  // Animation for smooth mounting
+  animation: 'fadeIn 0.3s ease-in-out',
+  '@keyframes fadeIn': {
+    from: { opacity: 0, transform: 'translateY(-20px)' },
+    to: { opacity: 1, transform: 'translateY(0)' }
+  }
 }));
 
 /**
- * Default error fallback component
+ * Layout component for authentication pages with enhanced error handling and state management
  */
-const DefaultErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
-  <AuthContainer>
-    <AuthPaper>
-      <Box
-        sx={{
-          textAlign: 'center',
-          color: 'error.main',
-          p: 2,
-        }}
-      >
-        <h2>Authentication Error</h2>
-        <p>{error.message}</p>
-      </Box>
-    </AuthPaper>
-  </AuthContainer>
-);
-
-/**
- * Layout component for authentication pages with enhanced error handling
- * and state management
- */
-const AuthLayout = React.memo<AuthLayoutProps>(({
-  children,
-  redirectTo,
-  fallback = <DefaultErrorFallback />
+const AuthLayout: React.FC<AuthLayoutProps> = React.memo(({ 
+  children, 
+  redirectTo, 
+  fallback 
 }) => {
   const { state: { isAuthenticated, isLoading, error } } = useAuth();
 
-  // Show loader during authentication check
+  // Show loader while authentication state is being determined
   if (isLoading) {
     return (
-      <PageLoader
-        message="Verifying authentication..."
+      <PageLoader 
+        message="Verifying authentication status..."
         size="medium"
       />
     );
@@ -116,29 +87,28 @@ const AuthLayout = React.memo<AuthLayoutProps>(({
     return <Navigate to={redirectTo} replace />;
   }
 
+  // Wrap content in error boundary for graceful error handling
   return (
     <ErrorBoundary
-      FallbackComponent={({ error }) => (
-        React.isValidElement(fallback) 
-          ? fallback 
-          : <DefaultErrorFallback error={error} />
-      )}
+      fallback={fallback || <Box>Authentication Error. Please try again.</Box>}
+      onError={(error) => {
+        console.error('Auth layout error:', error);
+      }}
     >
-      <AuthContainer>
+      <AuthContainer maxWidth="sm">
         <AuthPaper
-          component="main"
           elevation={3}
+          component="main"
           role="region"
           aria-label="Authentication form"
         >
           {error ? (
             <Box
-              sx={{
-                color: 'error.main',
-                mb: 2,
-                textAlign: 'center',
-              }}
               role="alert"
+              aria-live="polite"
+              color="error"
+              textAlign="center"
+              mb={3}
             >
               {error}
             </Box>
@@ -150,7 +120,7 @@ const AuthLayout = React.memo<AuthLayoutProps>(({
   );
 });
 
-// Display name for debugging
+// Display name for debugging purposes
 AuthLayout.displayName = 'AuthLayout';
 
 export default AuthLayout;
