@@ -1,5 +1,5 @@
-# Azure Kubernetes Service (AKS) Module Configuration
-# Provider versions
+# Azure Resource Manager provider configuration
+# Provider version: ~> 3.0
 terraform {
   required_providers {
     azurerm = {
@@ -13,14 +13,14 @@ terraform {
   }
 }
 
-# Random suffix for DNS prefix
+# Random suffix for DNS prefix to ensure uniqueness
 resource "random_string" "dns_suffix" {
   length  = 8
   special = false
   upper   = false
 }
 
-# Primary AKS Cluster
+# Primary AKS cluster resource
 resource "azurerm_kubernetes_cluster" "main" {
   name                            = var.cluster_name
   location                        = var.location
@@ -36,17 +36,31 @@ resource "azurerm_kubernetes_cluster" "main" {
   default_node_pool {
     name                = var.system_node_pool_config.name
     vm_size             = var.system_node_pool_config.vm_size
-    node_count          = var.system_node_pool_config.node_count
-    min_count           = var.system_node_pool_config.min_count
-    max_count           = var.system_node_pool_config.max_count
-    availability_zones  = var.system_node_pool_config.availability_zones
-    os_disk_size_gb     = var.system_node_pool_config.os_disk_size_gb
-    os_disk_type        = "Managed"
     enable_auto_scaling = var.system_node_pool_config.enable_auto_scaling
-    max_pods            = var.system_node_pool_config.max_pods
-    node_labels         = var.system_node_pool_config.node_labels
-    node_taints         = var.system_node_pool_config.node_taints
-    vnet_subnet_id      = var.private_cluster_config.subnet_id
+    node_count          = var.system_node_pool_config.node_count
+    min_count          = var.system_node_pool_config.min_count
+    max_count          = var.system_node_pool_config.max_count
+    os_disk_size_gb    = var.system_node_pool_config.os_disk_size_gb
+    max_pods           = var.system_node_pool_config.max_pods
+    vnet_subnet_id     = var.private_cluster_config.subnet_id
+    
+    node_labels = {
+      "role"        = "system"
+      "environment" = "production"
+    }
+
+    node_taints = ["CriticalAddonsOnly=true:NoSchedule"]
+  }
+
+  # Network profile configuration
+  network_profile {
+    network_plugin     = var.network_profile.network_plugin
+    network_policy     = var.network_profile.network_policy
+    dns_service_ip     = var.network_profile.dns_service_ip
+    service_cidr       = var.network_profile.service_cidr
+    docker_bridge_cidr = var.network_profile.docker_bridge_cidr
+    load_balancer_sku  = var.network_profile.load_balancer_sku
+    outbound_type      = "userDefinedRouting"
   }
 
   # Identity configuration
@@ -54,15 +68,10 @@ resource "azurerm_kubernetes_cluster" "main" {
     type = "SystemAssigned"
   }
 
-  # Network profile
-  network_profile {
-    network_plugin     = var.network_profile.network_plugin
-    network_policy     = var.network_profile.network_policy
-    dns_service_ip     = var.network_profile.dns_service_ip
-    docker_bridge_cidr = var.network_profile.docker_bridge_cidr
-    service_cidr       = var.network_profile.service_cidr
-    load_balancer_sku  = var.network_profile.load_balancer_sku
-    outbound_type      = var.network_profile.outbound_type
+  # Azure Monitor integration
+  monitor_metrics {
+    annotations_allowed = ["*"]
+    labels_allowed     = ["*"]
   }
 
   # Auto-scaler profile
@@ -74,78 +83,69 @@ resource "azurerm_kubernetes_cluster" "main" {
     scale_down_unneeded        = "10m"
   }
 
-  # Azure Monitor integration
-  monitor_metrics {
-    annotations_allowed = ["*"]
-    labels_allowed     = ["*"]
-  }
-
-  azure_policy_enabled = true
-  http_application_routing_enabled = false
-
   tags = var.tags
 }
 
-# Application Node Pool
+# Application node pool
 resource "azurerm_kubernetes_cluster_node_pool" "app" {
   name                  = var.app_node_pool_config.name
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
   vm_size              = var.app_node_pool_config.vm_size
-  node_count           = var.app_node_pool_config.node_count
-  min_count            = var.app_node_pool_config.min_count
-  max_count            = var.app_node_pool_config.max_count
-  availability_zones   = var.app_node_pool_config.availability_zones
-  os_disk_size_gb      = var.app_node_pool_config.os_disk_size_gb
-  os_disk_type         = "Managed"
   enable_auto_scaling  = var.app_node_pool_config.enable_auto_scaling
-  max_pods             = var.app_node_pool_config.max_pods
-  node_labels          = var.app_node_pool_config.node_labels
-  node_taints          = var.app_node_pool_config.node_taints
-  vnet_subnet_id       = var.private_cluster_config.subnet_id
+  node_count           = var.app_node_pool_config.node_count
+  min_count           = var.app_node_pool_config.min_count
+  max_count           = var.app_node_pool_config.max_count
+  os_disk_size_gb     = var.app_node_pool_config.os_disk_size_gb
+  max_pods            = var.app_node_pool_config.max_pods
+  vnet_subnet_id      = var.private_cluster_config.subnet_id
+
+  node_labels = {
+    "role"        = "application"
+    "environment" = "production"
+  }
 
   tags = var.tags
 }
 
-# GPU Node Pool for OCR Processing
+# GPU node pool for OCR and AI workloads
 resource "azurerm_kubernetes_cluster_node_pool" "gpu" {
   name                  = var.gpu_node_pool_config.name
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
   vm_size              = var.gpu_node_pool_config.vm_size
-  node_count           = var.gpu_node_pool_config.node_count
-  min_count            = var.gpu_node_pool_config.min_count
-  max_count            = var.gpu_node_pool_config.max_count
-  availability_zones   = var.gpu_node_pool_config.availability_zones
-  os_disk_size_gb      = var.gpu_node_pool_config.os_disk_size_gb
-  os_disk_type         = "Managed"
   enable_auto_scaling  = var.gpu_node_pool_config.enable_auto_scaling
-  max_pods             = var.gpu_node_pool_config.max_pods
-  node_labels          = var.gpu_node_pool_config.node_labels
-  node_taints          = var.gpu_node_pool_config.node_taints
-  vnet_subnet_id       = var.private_cluster_config.subnet_id
+  node_count           = var.gpu_node_pool_config.node_count
+  min_count           = var.gpu_node_pool_config.min_count
+  max_count           = var.gpu_node_pool_config.max_count
+  os_disk_size_gb     = var.gpu_node_pool_config.os_disk_size_gb
+  max_pods            = var.gpu_node_pool_config.max_pods
+  vnet_subnet_id      = var.private_cluster_config.subnet_id
+
+  node_labels = {
+    "role"        = "gpu"
+    "environment" = "production"
+    "workload"    = "ocr"
+  }
+
+  node_taints = var.gpu_node_pool_config.node_taints
 
   tags = var.tags
 }
 
-# Outputs
+# Outputs for use in other modules
 output "cluster_id" {
-  value       = azurerm_kubernetes_cluster.main.id
+  value = azurerm_kubernetes_cluster.main.id
   description = "The ID of the AKS cluster"
 }
 
 output "kube_config" {
   value = {
-    raw_kube_config           = azurerm_kubernetes_cluster.main.kube_config_raw
-    raw_kube_admin_config     = azurerm_kubernetes_cluster.main.kube_admin_config_raw
-    host                      = azurerm_kubernetes_cluster.main.kube_config[0].host
-    client_certificate        = azurerm_kubernetes_cluster.main.kube_config[0].client_certificate
-    client_key               = azurerm_kubernetes_cluster.main.kube_config[0].client_key
-    cluster_ca_certificate   = azurerm_kubernetes_cluster.main.kube_config[0].cluster_ca_certificate
+    raw_config           = azurerm_kubernetes_cluster.main.kube_config_raw
+    admin_raw_config     = azurerm_kubernetes_cluster.main.kube_admin_config_raw
+    host                 = azurerm_kubernetes_cluster.main.kube_config[0].host
+    client_certificate   = azurerm_kubernetes_cluster.main.kube_config[0].client_certificate
+    client_key          = azurerm_kubernetes_cluster.main.kube_config[0].client_key
+    cluster_ca_certificate = azurerm_kubernetes_cluster.main.kube_config[0].cluster_ca_certificate
   }
-  sensitive   = true
+  sensitive = true
   description = "Kubernetes configuration for cluster access"
-}
-
-output "node_resource_group" {
-  value       = azurerm_kubernetes_cluster.main.node_resource_group
-  description = "The resource group containing AKS cluster nodes"
 }
