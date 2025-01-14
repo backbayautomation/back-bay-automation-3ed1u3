@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'; // v18.2.0
+import React, { useState, useCallback } from 'react';
 import { Box, Typography, Button, Alert, CircularProgress } from '@mui/material'; // v5.14.0
 import { useNavigate } from 'react-router-dom'; // v6.14.0
 import { useFormik } from 'formik'; // v2.4.2
@@ -20,16 +20,12 @@ interface ForgotPasswordState {
   success: boolean;
 }
 
-// Validation schema with strict email format checking
+// Validation schema for email input
 const validationSchema = Yup.object().shape({
   email: Yup.string()
     .email('Please enter a valid email address')
     .required('Email is required')
     .trim()
-    .matches(
-      /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/,
-      'Invalid email format'
-    )
 });
 
 // Initial form values
@@ -37,13 +33,12 @@ const initialValues: ForgotPasswordFormValues = {
   email: ''
 };
 
-// Rate limiting constants
-const RATE_LIMIT_DURATION = 60000; // 1 minute in milliseconds
-const RATE_LIMIT_KEY = 'forgot_password_last_attempt';
+// Rate limiting duration in milliseconds
+const RATE_LIMIT_DURATION = 60000; // 1 minute
 
 /**
- * ForgotPassword component implementing secure password reset flow
- * with rate limiting and WCAG Level AA 2.1 compliance
+ * ForgotPassword component that implements secure password reset flow
+ * with WCAG Level AA 2.1 compliance and comprehensive error handling
  */
 const ForgotPassword: React.FC = () => {
   const navigate = useNavigate();
@@ -53,59 +48,44 @@ const ForgotPassword: React.FC = () => {
     success: false
   });
 
-  // Rate limiting check
-  const checkRateLimit = useCallback((): boolean => {
-    const lastAttempt = localStorage.getItem(RATE_LIMIT_KEY);
-    const now = Date.now();
-    
-    if (lastAttempt && now - parseInt(lastAttempt) < RATE_LIMIT_DURATION) {
-      return false;
-    }
-    
-    localStorage.setItem(RATE_LIMIT_KEY, now.toString());
-    return true;
-  }, []);
+  // Track last submission time for rate limiting
+  const [lastSubmissionTime, setLastSubmissionTime] = useState<number>(0);
 
-  // Form handling with Formik
+  // Handle form submission with rate limiting and error handling
+  const handleSubmit = useCallback(async (values: ForgotPasswordFormValues) => {
+    const now = Date.now();
+    if (now - lastSubmissionTime < RATE_LIMIT_DURATION) {
+      setState(prev => ({
+        ...prev,
+        error: 'Please wait a moment before trying again'
+      }));
+      return;
+    }
+
+    setState(prev => ({ ...prev, loading: true, error: null }));
+    setLastSubmissionTime(now);
+
+    try {
+      await forgotPassword(values.email);
+      setState({
+        loading: false,
+        error: null,
+        success: true
+      });
+    } catch (error) {
+      setState({
+        loading: false,
+        error: error instanceof Error ? error.message : 'Failed to process request',
+        success: false
+      });
+    }
+  }, [lastSubmissionTime]);
+
+  // Initialize form handling with validation
   const formik = useFormik({
     initialValues,
     validationSchema,
-    validateOnBlur: true,
-    validateOnChange: true,
-    onSubmit: async (values) => {
-      try {
-        // Check rate limiting
-        if (!checkRateLimit()) {
-          setState(prev => ({
-            ...prev,
-            error: 'Please wait a moment before trying again'
-          }));
-          return;
-        }
-
-        setState(prev => ({ ...prev, loading: true, error: null }));
-
-        // Sanitize email input
-        const sanitizedEmail = values.email.toLowerCase().trim();
-
-        // Call password reset API
-        await forgotPassword(sanitizedEmail);
-
-        // Show success state
-        setState({
-          loading: false,
-          error: null,
-          success: true
-        });
-
-      } catch (error) {
-        setState({
-          loading: false,
-          error: error instanceof Error ? error.message : 'Password reset request failed',
-          success: false
-        });
-      }
-    }
+    onSubmit: handleSubmit
   });
 
   return (
@@ -121,7 +101,11 @@ const ForgotPassword: React.FC = () => {
           component="h1"
           align="center"
           gutterBottom
-          sx={{ mb: 3 }}
+          sx={{
+            mb: 3,
+            color: 'text.primary',
+            fontWeight: 500
+          }}
         >
           Reset Password
         </Typography>
@@ -132,7 +116,7 @@ const ForgotPassword: React.FC = () => {
             sx={{ mb: 3 }}
             role="alert"
           >
-            Password reset instructions have been sent to your email address.
+            If an account exists with this email, you will receive password reset instructions shortly.
           </Alert>
         ) : (
           <form
@@ -152,7 +136,6 @@ const ForgotPassword: React.FC = () => {
               fullWidth
               disabled={state.loading}
               inputMode="email"
-              placeholder="Enter your email address"
             />
 
             {state.error && (
@@ -169,20 +152,20 @@ const ForgotPassword: React.FC = () => {
               type="submit"
               variant="contained"
               color="primary"
-              fullWidth
               size="large"
-              disabled={state.loading || !formik.isValid}
+              fullWidth
+              disabled={state.loading || !formik.isValid || !formik.dirty}
               sx={{ mt: 2, mb: 2 }}
-              aria-label={state.loading ? 'Sending reset instructions' : 'Send reset instructions'}
+              aria-label={state.loading ? 'Submitting request' : 'Reset password'}
             >
               {state.loading ? (
                 <CircularProgress 
                   size={24} 
-                  color="inherit" 
-                  aria-hidden="true"
+                  color="inherit"
+                  aria-label="Processing"
                 />
               ) : (
-                'Send Reset Instructions'
+                'Reset Password'
               )}
             </Button>
 
@@ -192,7 +175,7 @@ const ForgotPassword: React.FC = () => {
               fullWidth
               onClick={() => navigate('/login')}
               sx={{ mt: 1 }}
-              aria-label="Back to login"
+              aria-label="Return to login page"
             >
               Back to Login
             </Button>
