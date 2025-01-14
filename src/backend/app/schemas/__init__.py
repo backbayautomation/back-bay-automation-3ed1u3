@@ -35,19 +35,10 @@ from .document import (
     Document
 )
 
-# Client schemas
-from .client import (
-    ClientBase,
-    ClientCreate,
-    ClientUpdate,
-    ClientInDB,
-    Client
-)
-
-# Schema version for API compatibility tracking
+# Define module version for API compatibility tracking
 __version__ = '1.0.0'
 
-# Define explicit public API
+# Define explicit public API for schema module
 __all__: List[str] = [
     # Organization schemas
     'OrganizationBase',
@@ -69,13 +60,6 @@ __all__: List[str] = [
     'DocumentUpdate',
     'DocumentInDB',
     'Document',
-    
-    # Client schemas
-    'ClientBase',
-    'ClientCreate',
-    'ClientUpdate',
-    'ClientInDB',
-    'Client',
     
     # Module metadata
     '__version__'
