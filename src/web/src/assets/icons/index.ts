@@ -1,7 +1,7 @@
 /**
  * Central icon system for the AI-powered Product Catalog Search System
  * Provides accessibility-compliant Material Design icons for both admin and client portals
- * @version 5.14.0 Material-UI Icons
+ * @version Material-UI Icons 5.14.0
  */
 
 import { SvgIcon } from '@mui/material'; // v5.14.0
@@ -26,7 +26,7 @@ export const DashboardIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Dashboard"
     role="img"
-    titleAccess="System Dashboard"
+    titleAccess="Navigate to dashboard"
   />
 );
 
@@ -35,7 +35,7 @@ export const ClientsIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Clients"
     role="img"
-    titleAccess="Client Management"
+    titleAccess="Manage clients and users"
   />
 );
 
@@ -44,7 +44,7 @@ export const DocumentsIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Documents"
     role="img"
-    titleAccess="Document Management"
+    titleAccess="Document management"
   />
 );
 
@@ -53,7 +53,7 @@ export const AnalyticsIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Analytics"
     role="img"
-    titleAccess="System Analytics"
+    titleAccess="View analytics and metrics"
   />
 );
 
@@ -63,7 +63,7 @@ export const SettingsIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Settings"
     role="img"
-    titleAccess="System Settings"
+    titleAccess="System settings"
   />
 );
 
@@ -72,7 +72,7 @@ export const HelpIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Help"
     role="img"
-    titleAccess="Get Help"
+    titleAccess="Get help and information"
   />
 );
 
@@ -81,7 +81,7 @@ export const CloseIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Close"
     role="img"
-    titleAccess="Close or Remove"
+    titleAccess="Close or remove item"
   />
 );
 
@@ -89,9 +89,9 @@ export const CloseIcon = (props: typeof SvgIcon.defaultProps) => (
 export const AddIcon = (props: typeof SvgIcon.defaultProps) => (
   <Add
     {...props}
-    aria-label="Add New"
+    aria-label="Add"
     role="img"
-    titleAccess="Add New Item"
+    titleAccess="Add new item"
   />
 );
 
@@ -100,7 +100,7 @@ export const SearchIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Search"
     role="img"
-    titleAccess="Search Content"
+    titleAccess="Search content"
   />
 );
 
@@ -109,7 +109,7 @@ export const ChatIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Chat"
     role="img"
-    titleAccess="Chat Interface"
+    titleAccess="Open chat interface"
   />
 );
 
@@ -118,7 +118,7 @@ export const UploadIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Upload"
     role="img"
-    titleAccess="Upload Document"
+    titleAccess="Upload documents"
   />
 );
 
@@ -128,6 +128,6 @@ export const WarningIcon = (props: typeof SvgIcon.defaultProps) => (
     {...props}
     aria-label="Warning"
     role="img"
-    titleAccess="Warning or Alert"
+    titleAccess="Warning or alert message"
   />
 );
