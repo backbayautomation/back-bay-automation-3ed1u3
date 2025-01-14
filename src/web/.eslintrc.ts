@@ -92,7 +92,7 @@ module.exports = {
     'import/default': 'error',
     'import/export': 'error',
 
-    // General code quality rules
+    // General JavaScript/security rules
     'no-console': ['warn', { 
       allow: ['warn', 'error'] 
     }],
