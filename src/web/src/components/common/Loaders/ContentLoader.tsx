@@ -1,8 +1,8 @@
-import React from 'react';
-import { Skeleton, Box } from '@mui/material';
-import { styled, useTheme } from '@mui/material/styles';
+import React from 'react'; // react@18.2.0
+import { Skeleton, Box } from '@mui/material'; // @mui/material@5.14.0
+import { styled, useTheme } from '@mui/material/styles'; // @mui/material/styles@5.14.0
 
-// Props interface with comprehensive customization options
+// Interface for component props with comprehensive customization options
 interface ContentLoaderProps {
   width?: string | number;
   height?: string | number;
@@ -13,7 +13,7 @@ interface ContentLoaderProps {
 }
 
 // Default props configuration
-const DEFAULT_PROPS: ContentLoaderProps = {
+const DEFAULT_PROPS: Required<Omit<ContentLoaderProps, 'className'>> = {
   width: '100%',
   height: '100px',
   variant: 'rectangular',
@@ -21,17 +21,20 @@ const DEFAULT_PROPS: ContentLoaderProps = {
   ariaLabel: 'Content is loading...'
 };
 
-// Styled Skeleton component with theme integration and reduced motion support
+// Styled Skeleton component with theme integration and animation controls
 const StyledSkeleton = styled(Skeleton)(({ theme }) => ({
   backgroundColor: theme.palette.mode === 'light' 
     ? theme.palette.grey[200] 
     : theme.palette.grey[800],
-  transition: theme.transitions.create(['background-color']),
+  transition: theme.transitions.create(['background-color'], {
+    duration: theme.transitions.duration.standard
+  }),
+  // Respect user's motion preferences
   '@media (prefers-reduced-motion: reduce)': {
     animation: 'none',
     transition: 'none'
   },
-  borderRadius: theme.shape.borderRadius,
+  // Ensure proper color contrast in both light and dark modes
   '&::after': {
     background: `linear-gradient(90deg, 
       transparent, 
@@ -45,7 +48,8 @@ const StyledSkeleton = styled(Skeleton)(({ theme }) => ({
 
 /**
  * ContentLoader component provides loading placeholder animations with accessibility support
- * and theme-aware styling. Respects user preferences for reduced motion.
+ * and theme-aware styling. It respects user preferences for reduced motion and ensures
+ * proper color contrast in both light and dark modes.
  */
 const ContentLoader = React.memo<ContentLoaderProps>(({
   width = DEFAULT_PROPS.width,
@@ -56,30 +60,28 @@ const ContentLoader = React.memo<ContentLoaderProps>(({
   ariaLabel = DEFAULT_PROPS.ariaLabel
 }) => {
   const theme = useTheme();
-  
+
   // Check for reduced motion preference
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const effectiveAnimation = prefersReducedMotion ? 'none' : animation;
 
   return (
     <Box
+      className={className}
       role="status"
       aria-busy="true"
       aria-live="polite"
-      aria-label={ariaLabel}
-      className={className}
-      data-testid="content-loader"
     >
       <StyledSkeleton
         variant={variant}
         width={width}
         height={height}
         animation={effectiveAnimation}
+        aria-label={ariaLabel}
         sx={{
-          // Ensure proper color contrast in both light and dark modes
-          backgroundColor: theme.palette.mode === 'light'
-            ? theme.palette.grey[200]
-            : theme.palette.grey[800]
+          borderRadius: variant === 'circular' 
+            ? '50%' 
+            : theme.shape.borderRadius
         }}
       />
     </Box>
