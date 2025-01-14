@@ -1,96 +1,75 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Provider } from 'react-redux'; // v8.1.1
-import { PersistGate } from 'redux-persist/integration/react'; // v6.0.0
-import { ThemeProvider, createTheme } from '@mui/material/styles'; // v5.14.0
-import { CssBaseline } from '@mui/material'; // v5.14.0
-import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
+import { Provider } from 'react-redux';
+import { PersistGate } from 'redux-persist/integration/react';
+import { ThemeProvider } from '@mui/material/styles';
+import { CssBaseline } from '@mui/material';
+import { ErrorBoundary } from 'react-error-boundary';
 
 import App from './App';
 import { store, persistor } from './redux/store';
+import { lightTheme } from './config/theme';
 
-// Create theme instance with enterprise design system
-const theme = createTheme({
-  // Theme configuration will be handled by ThemeContext
-  // This is just a base theme that will be overridden
-  components: {
-    MuiCssBaseline: {
-      styleOverrides: {
-        // Ensure proper touch targets for mobile
-        'button, [role="button"]': {
-          minHeight: '44px',
-          minWidth: '44px',
-        },
-        // Improve text rendering
-        body: {
-          WebkitFontSmoothing: 'antialiased',
-          MozOsxFontSmoothing: 'grayscale',
-          textRendering: 'optimizeLegibility',
-        },
-        // Prevent content shift during loading
-        '#root': {
-          minHeight: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-        },
-      },
-    },
-  },
-});
-
-// Error fallback component for global error boundary
+/**
+ * Error fallback component for global error handling
+ */
 const ErrorFallback = ({ error }: { error: Error }) => (
-  <div
-    role="alert"
-    style={{
-      padding: '20px',
-      margin: '20px',
-      border: '1px solid #ff0000',
-      borderRadius: '4px',
-      backgroundColor: '#fff5f5',
-    }}
-  >
+  <div role="alert" style={{
+    padding: '20px',
+    margin: '20px',
+    border: '1px solid #ff0000',
+    borderRadius: '4px',
+    backgroundColor: '#fff5f5'
+  }}>
     <h2>Application Error</h2>
-    <pre style={{ whiteSpace: 'pre-wrap' }}>{error.message}</pre>
-    <button
+    <pre style={{ color: '#ff0000' }}>{error.message}</pre>
+    <button 
       onClick={() => window.location.reload()}
       style={{
         padding: '8px 16px',
-        marginTop: '16px',
         backgroundColor: '#0066CC',
         color: 'white',
         border: 'none',
         borderRadius: '4px',
-        cursor: 'pointer',
+        cursor: 'pointer'
       }}
     >
-      Reload Application
+      Refresh Application
     </button>
   </div>
 );
 
-// Get root element with type safety
+/**
+ * Root element validation with type assertion
+ */
 const rootElement = document.getElementById('root');
 if (!rootElement) {
-  throw new Error('Failed to find root element');
+  throw new Error('Failed to find the root element. Please check your HTML file.');
 }
 
-// Create root using React 18 createRoot API
+/**
+ * Create root using React 18 createRoot API
+ */
 const root = createRoot(rootElement);
 
-// Render application with all required providers
+/**
+ * Render application with all required providers and strict mode
+ */
 root.render(
   <StrictMode>
-    <ErrorBoundary
+    <ErrorBoundary 
       FallbackComponent={ErrorFallback}
       onError={(error) => {
-        // Log error to monitoring service
-        console.error('Application Error:', error);
+        console.error('Global error:', error);
+        // Here you could add error reporting service integration
       }}
     >
       <Provider store={store}>
-        <PersistGate loading={null} persistor={persistor}>
-          <ThemeProvider theme={theme}>
+        <PersistGate 
+          loading={<div>Loading...</div>} 
+          persistor={persistor}
+        >
+          <ThemeProvider theme={lightTheme}>
             <CssBaseline />
             <App />
           </ThemeProvider>
@@ -100,16 +79,18 @@ root.render(
   </StrictMode>
 );
 
-// Enable hot module replacement in development
+/**
+ * Enable hot module replacement for development
+ */
 if (process.env.NODE_ENV === 'development' && module.hot) {
   module.hot.accept('./App', () => {
-    // Re-render app when App component updates
+    console.log('Hot reloading App component...');
     root.render(
       <StrictMode>
         <ErrorBoundary FallbackComponent={ErrorFallback}>
           <Provider store={store}>
-            <PersistGate loading={null} persistor={persistor}>
-              <ThemeProvider theme={theme}>
+            <PersistGate loading={<div>Loading...</div>} persistor={persistor}>
+              <ThemeProvider theme={lightTheme}>
                 <CssBaseline />
                 <App />
               </ThemeProvider>
@@ -119,4 +100,9 @@ if (process.env.NODE_ENV === 'development' && module.hot) {
       </StrictMode>
     );
   });
+}
+
+// Expose store for debugging in development
+if (process.env.NODE_ENV === 'development') {
+  (window as any).store = store;
 }

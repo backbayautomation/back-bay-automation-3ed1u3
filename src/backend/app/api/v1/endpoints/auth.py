@@ -1,39 +1,40 @@
 """
-Authentication endpoints implementing OAuth 2.0 and JWT-based authentication flows with enhanced security features,
-multi-tenant support, and comprehensive monitoring for the AI-powered Product Catalog Search System.
+Authentication endpoints implementing OAuth 2.0 and JWT-based authentication flows
+with enhanced security features, multi-tenant support, and comprehensive monitoring.
 
 Version: 1.0.0
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Request  # version: ^0.100.0
-from fastapi.security import OAuth2PasswordRequestForm  # version: ^0.100.0
-from sqlalchemy.ext.asyncio import AsyncSession  # version: ^1.4.0
-import logging  # version: latest
-from redis import Redis  # version: ^4.5.0
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import OAuth2PasswordRequestForm
+from sqlalchemy.ext.asyncio import AsyncSession
+from redis import Redis
 
 from ....core.auth import authenticate_user, get_current_active_user
 from ....core.security import create_access_token, RateLimiter
 from ....schemas.user import User
 from ....db.session import get_db
+from ....utils.logging import StructuredLogger
 
 # Initialize router with prefix and tags
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Initialize rate limiter for login attempts
+# Initialize structured logger for security events
+logger = StructuredLogger(__name__)
+
+# Initialize rate limiter with configured thresholds
 rate_limiter = RateLimiter(max_attempts=5, window_seconds=300)
 
-# Initialize Redis client for token blacklist
+# Initialize Redis for token blacklist
 redis_client = Redis(
-    host="localhost",
+    host="localhost",  # Configure from settings in production
     port=6379,
     db=0,
     decode_responses=True
 )
-
-# Configure logger
-logger = logging.getLogger(__name__)
 
 @router.post("/login")
 async def login(
@@ -42,31 +43,37 @@ async def login(
     request: Request = None
 ) -> Dict[str, Any]:
     """
-    Authenticate user and generate JWT token with enhanced security features.
-
+    Authenticate user and generate JWT token with enhanced security and tenant isolation.
+    
     Args:
-        form_data: OAuth2 password form data
-        db: Database session
-        request: FastAPI request object
-
+        form_data: OAuth2 password form containing credentials
+        db: Database session with tenant context
+        request: FastAPI request object for IP tracking
+        
     Returns:
-        dict: Access token and user information
-
+        dict: Access token, type and user context
+        
     Raises:
-        HTTPException: If authentication fails or rate limit exceeded
+        HTTPException: For authentication failures or rate limit exceeded
     """
     try:
-        # Get client IP and tenant context
-        client_ip = request.client.host
+        # Extract tenant context from headers
         tenant_id = request.headers.get("X-Tenant-ID")
+        if not tenant_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Tenant context required"
+            )
 
-        # Check rate limit
-        if not await rate_limiter.check_rate_limit(f"login:{client_ip}"):
-            logger.warning(
-                "Login rate limit exceeded",
-                extra={
-                    "ip_address": client_ip,
-                    "email": form_data.username
+        # Check rate limits
+        client_ip = request.client.host
+        if not rate_limiter.check_rate_limit(f"login:{client_ip}"):
+            logger.log_security_event(
+                "rate_limit_exceeded",
+                {
+                    "ip": client_ip,
+                    "email": form_data.username,
+                    "tenant_id": tenant_id
                 }
             )
             raise HTTPException(
@@ -84,31 +91,33 @@ async def login(
         )
 
         if not user:
-            await rate_limiter.increment_counter(f"login:{client_ip}")
+            rate_limiter.increment_counter(f"login:{client_ip}")
             raise HTTPException(
                 status_code=401,
                 detail="Invalid credentials"
             )
 
-        # Generate access token
-        access_token_expires = timedelta(minutes=30)
+        # Generate access token with tenant context
+        access_token_expires = timedelta(
+            minutes=30  # Configure from settings
+        )
         access_token = create_access_token(
             data={
                 "sub": str(user.id),
                 "email": user.email,
-                "tenant_id": str(user.tenant_id),
+                "tenant_id": tenant_id,
                 "roles": user.roles
             },
             expires_delta=access_token_expires
         )
 
-        # Log successful login
-        logger.info(
-            "User logged in successfully",
-            extra={
+        # Log successful authentication
+        logger.log_security_event(
+            "login_successful",
+            {
                 "user_id": str(user.id),
-                "tenant_id": str(user.tenant_id),
-                "ip_address": client_ip
+                "tenant_id": tenant_id,
+                "ip": client_ip
             }
         )
 
@@ -118,23 +127,25 @@ async def login(
             "user": {
                 "id": str(user.id),
                 "email": user.email,
-                "full_name": user.full_name,
-                "roles": user.roles
+                "roles": user.roles,
+                "tenant_id": tenant_id
             }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(
-            "Login error",
-            extra={
+        logger.log_security_event(
+            "login_error",
+            {
                 "error": str(e),
-                "ip_address": client_ip,
-                "email": form_data.username
+                "email": form_data.username,
+                "tenant_id": tenant_id
             }
         )
         raise HTTPException(
             status_code=500,
-            detail="Authentication error occurred"
+            detail="Authentication service error"
         )
 
 @router.post("/logout")
@@ -143,50 +154,54 @@ async def logout(
     request: Request = None
 ) -> Dict[str, str]:
     """
-    Logout user and invalidate current token.
-
+    Secure logout with token invalidation and session cleanup.
+    
     Args:
         current_user: Currently authenticated user
-        request: FastAPI request object
-
+        request: FastAPI request object for context
+        
     Returns:
         dict: Success message
-
+        
     Raises:
-        HTTPException: If logout fails
+        HTTPException: For logout failures
     """
     try:
-        # Get token from authorization header
+        # Extract token from authorization header
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
             
             # Add token to blacklist with expiry
-            redis_client.sadd("token_blacklist", token)
-            redis_client.expire(token, 3600)  # 1 hour expiry
+            redis_client.setex(
+                f"token_blacklist:{token}",
+                timedelta(hours=24),  # Match token expiry
+                "true"
+            )
 
         # Log logout event
-        logger.info(
-            "User logged out successfully",
-            extra={
+        logger.log_security_event(
+            "logout_successful",
+            {
                 "user_id": str(current_user.id),
-                "tenant_id": str(current_user.tenant_id)
+                "tenant_id": str(current_user.tenant_id),
+                "ip": request.client.host
             }
         )
 
         return {"message": "Successfully logged out"}
 
     except Exception as e:
-        logger.error(
-            "Logout error",
-            extra={
+        logger.log_security_event(
+            "logout_error",
+            {
                 "error": str(e),
                 "user_id": str(current_user.id)
             }
         )
         raise HTTPException(
             status_code=500,
-            detail="Logout error occurred"
+            detail="Logout failed"
         )
 
 @router.get("/me")
@@ -195,33 +210,26 @@ async def get_me(
     request: Request = None
 ) -> User:
     """
-    Get current user information with security validation.
-
+    Get current user details with security validation.
+    
     Args:
         current_user: Currently authenticated user
-        request: FastAPI request object
-
+        request: FastAPI request object for context
+        
     Returns:
-        User: Current user details
-
+        User: Masked user details
+        
     Raises:
-        HTTPException: If user validation fails
+        HTTPException: For unauthorized access
     """
     try:
-        # Validate tenant context
-        tenant_id = request.headers.get("X-Tenant-ID")
-        if tenant_id and str(current_user.tenant_id) != tenant_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Invalid tenant context"
-            )
-
         # Log access event
-        logger.info(
-            "User profile accessed",
-            extra={
+        logger.log_security_event(
+            "profile_access",
+            {
                 "user_id": str(current_user.id),
-                "tenant_id": str(current_user.tenant_id)
+                "tenant_id": str(current_user.tenant_id),
+                "ip": request.client.host
             }
         )
 
@@ -229,23 +237,23 @@ async def get_me(
         return User(
             id=current_user.id,
             email=current_user.email,
-            full_name=current_user.full_name,
-            roles=current_user.roles,
             tenant_id=current_user.tenant_id,
+            roles=current_user.roles,
             is_active=current_user.is_active,
             created_at=current_user.created_at,
-            updated_at=current_user.updated_at
+            updated_at=current_user.updated_at,
+            last_login=current_user.last_login
         )
 
     except Exception as e:
-        logger.error(
-            "Profile access error",
-            extra={
+        logger.log_security_event(
+            "profile_access_error",
+            {
                 "error": str(e),
                 "user_id": str(current_user.id)
             }
         )
         raise HTTPException(
             status_code=500,
-            detail="Error retrieving user profile"
+            detail="Failed to retrieve user profile"
         )

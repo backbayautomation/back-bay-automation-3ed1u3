@@ -1,10 +1,21 @@
-import React, { useCallback, useRef, useMemo } from 'react';
+import React, { useCallback, useRef, useEffect } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { Box, Typography, IconButton, useMediaQuery, useTheme } from '@mui/material';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ErrorBoundary } from 'react-error-boundary';
+import {
+  Box,
+  Typography,
+  IconButton,
+  List,
+  ListItem,
+  useTheme,
+  useMediaQuery,
+  Divider,
+  Tooltip
+} from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import ChatIcon from '@mui/icons-material/Chat';
 import { format } from 'date-fns';
 
 import { ChatSession } from '../../../types/chat';
@@ -12,7 +23,7 @@ import { selectSessions, selectCurrentSession } from '../../../redux/slices/chat
 import ContentLoader from '../../common/Loaders/ContentLoader';
 
 interface ChatHistoryProps {
-  onSessionSelect: (session: ChatSession) => void;
+  onSessionSelect: (sessionId: string) => void;
   className?: string;
   isMobile?: boolean;
   onClose?: () => void;
@@ -20,48 +31,46 @@ interface ChatHistoryProps {
 
 // Custom hook for keyboard navigation
 const useSessionNavigation = (sessions: ChatSession[]) => {
-  const ref = useRef<HTMLDivElement>(null);
+  const [focusedIndex, setFocusedIndex] = React.useState<number>(-1);
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!ref.current) return;
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (!sessions.length) return;
 
-    const focusedElement = document.activeElement as HTMLElement;
-    const sessionElements = ref.current.querySelectorAll('[role="listitem"]');
-    const currentIndex = Array.from(sessionElements).indexOf(focusedElement);
-
-    switch (e.key) {
+    switch (event.key) {
       case 'ArrowDown':
-        e.preventDefault();
-        if (currentIndex < sessionElements.length - 1) {
-          (sessionElements[currentIndex + 1] as HTMLElement).focus();
-        }
+        event.preventDefault();
+        setFocusedIndex(prev => Math.min(prev + 1, sessions.length - 1));
         break;
       case 'ArrowUp':
-        e.preventDefault();
-        if (currentIndex > 0) {
-          (sessionElements[currentIndex - 1] as HTMLElement).focus();
+        event.preventDefault();
+        setFocusedIndex(prev => Math.max(prev - 1, 0));
+        break;
+      case 'Enter':
+        if (focusedIndex >= 0) {
+          const session = sessions[focusedIndex];
+          document.getElementById(`session-${session.id}`)?.click();
         }
         break;
     }
-  }, []);
+  }, [sessions, focusedIndex]);
 
-  React.useEffect(() => {
-    const element = ref.current;
-    if (element) {
-      element.addEventListener('keydown', handleKeyDown);
-      return () => element.removeEventListener('keydown', handleKeyDown);
-    }
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  return ref;
+  return { focusedIndex, setFocusedIndex };
 };
 
 // Error Fallback component
-const ErrorFallback = ({ error }: { error: Error }) => (
+const ErrorFallback = ({ error, resetErrorBoundary }: any) => (
   <Box sx={styles.errorState}>
     <Typography variant="body1" color="error">
       Error loading chat history: {error.message}
     </Typography>
+    <IconButton onClick={resetErrorBoundary} aria-label="Retry loading chat history">
+      <ChatIcon />
+    </IconButton>
   </Box>
 );
 
@@ -75,12 +84,11 @@ const ChatHistory = React.memo<ChatHistoryProps>(({
   const dispatch = useDispatch();
   const sessions = useSelector(selectSessions);
   const currentSession = useSelector(selectCurrentSession);
+  const parentRef = useRef<HTMLDivElement>(null);
   const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const parentRef = useRef<HTMLDivElement>(null);
-  const navigationRef = useSessionNavigation(sessions);
+  const { focusedIndex, setFocusedIndex } = useSessionNavigation(sessions);
 
-  // Virtual list configuration
   const rowVirtualizer = useVirtualizer({
     count: sessions.length,
     getScrollElement: () => parentRef.current,
@@ -88,89 +96,105 @@ const ChatHistory = React.memo<ChatHistoryProps>(({
     overscan: 5
   });
 
-  // Memoized container styles
-  const containerStyles = useMemo(() => ({
+  const containerStyles = {
     ...styles.historyContainer,
     ...(isMobile && styles.mobileContainer)
-  }), [isMobile]);
+  };
 
-  // Session item renderer
-  const renderSession = useCallback((session: ChatSession, index: number) => {
-    const isSelected = currentSession?.id === session.id;
-    
-    return (
-      <motion.div
-        layout
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 20 }}
-        transition={{ duration: 0.2 }}
-        role="listitem"
-        tabIndex={0}
-        onClick={() => onSessionSelect(session)}
-        onKeyPress={(e) => e.key === 'Enter' && onSessionSelect(session)}
-        style={{
-          ...styles.sessionItem,
-          ...(isSelected && styles.selectedSession),
-          height: `${rowVirtualizer.getVirtualItems()[index].size}px`,
-          transform: `translateY(${rowVirtualizer.getVirtualItems()[index].start}px)`
-        }}
-        aria-selected={isSelected}
-        data-testid={`chat-session-${session.id}`}
-      >
-        <Typography sx={styles.sessionTitle} noWrap>
-          {session.title}
-        </Typography>
-        <Typography sx={styles.sessionDate} variant="caption">
-          {format(new Date(session.createdAt), 'MMM d, yyyy h:mm a')}
-        </Typography>
-      </motion.div>
-    );
-  }, [currentSession, onSessionSelect, rowVirtualizer]);
+  const handleSessionClick = useCallback((session: ChatSession) => {
+    onSessionSelect(session.id);
+    if (isMobile && onClose) {
+      onClose();
+    }
+  }, [onSessionSelect, isMobile, onClose]);
 
   if (!sessions) {
-    return <ContentLoader height="100%" />;
+    return (
+      <Box sx={containerStyles} className={className}>
+        <ContentLoader 
+          height="100px"
+          width="100%"
+          ariaLabel="Loading chat history"
+        />
+      </Box>
+    );
   }
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <Box
-        ref={navigationRef}
-        component="nav"
-        aria-label="Chat history"
+        ref={parentRef}
         sx={containerStyles}
         className={className}
+        role="complementary"
+        aria-label="Chat history"
       >
         {isMobile && (
-          <Box sx={{ p: 1, display: 'flex', justifyContent: 'flex-end' }}>
-            <IconButton
-              onClick={onClose}
-              aria-label="Close chat history"
-              size="large"
-            >
+          <Box sx={styles.mobileHeader}>
+            <Typography variant="h6">Chat History</Typography>
+            <IconButton onClick={onClose} aria-label="Close chat history">
               <CloseIcon />
             </IconButton>
           </Box>
         )}
 
-        <Box
-          ref={parentRef}
-          role="list"
-          style={{ height: '100%', overflow: 'auto' }}
-          aria-live="polite"
-        >
-          <AnimatePresence>
-            {sessions.length > 0 ? (
-              rowVirtualizer.getVirtualItems().map((virtualRow) => (
-                renderSession(sessions[virtualRow.index], virtualRow.index)
-              ))
-            ) : (
-              <Typography sx={styles.emptyState}>
-                No chat history available
-              </Typography>
-            )}
-          </AnimatePresence>
-        </Box>
+        {sessions.length === 0 ? (
+          <Box sx={styles.emptyState}>
+            <Typography variant="body1">No chat history yet</Typography>
+          </Box>
+        ) : (
+          <List sx={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+            <AnimatePresence>
+              {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                const session = sessions[virtualRow.index];
+                const isSelected = currentSession?.id === session.id;
+                const isFocused = focusedIndex === virtualRow.index;
+
+                return (
+                  <motion.div
+                    key={session.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    transition={{ duration: 0.2 }}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      transform: `translateY(${virtualRow.start}px)`
+                    }}
+                  >
+                    <ListItem
+                      id={`session-${session.id}`}
+                      button
+                      onClick={() => handleSessionClick(session)}
+                      sx={{
+                        ...styles.sessionItem,
+                        ...(isSelected && styles.selectedSession)
+                      }}
+                      tabIndex={isFocused ? 0 : -1}
+                      aria-selected={isSelected}
+                      onFocus={() => setFocusedIndex(virtualRow.index)}
+                    >
+                      <Box>
+                        <Tooltip title={session.title} placement="top">
+                          <Typography sx={styles.sessionTitle} noWrap>
+                            {session.title}
+                          </Typography>
+                        </Tooltip>
+                        <Typography sx={styles.sessionDate}>
+                          {format(new Date(session.createdAt), 'MMM d, yyyy h:mm a')}
+                        </Typography>
+                      </Box>
+                    </ListItem>
+                    <Divider />
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          </List>
+        )}
       </Box>
     </ErrorBoundary>
   );
@@ -186,7 +210,7 @@ const styles = {
     borderColor: 'divider',
     position: 'relative',
     transition: 'all 0.3s ease',
-    width: { xs: '100%', sm: '320px' }
+    bgcolor: 'background.paper'
   },
   mobileContainer: {
     position: 'fixed',
@@ -195,20 +219,21 @@ const styles = {
     width: '100%',
     height: '100%',
     zIndex: 1200,
-    backgroundColor: 'background.paper'
+    bgcolor: 'background.paper'
+  },
+  mobileHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    p: 2,
+    borderBottom: '1px solid',
+    borderColor: 'divider'
   },
   sessionItem: {
     borderBottom: '1px solid',
     borderColor: 'divider',
     minHeight: '72px',
     padding: '12px',
-    cursor: 'pointer',
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    '&:hover': {
-      backgroundColor: 'action.hover'
-    },
     '&:focus-visible': {
       outline: '2px solid',
       outlineColor: 'primary.main',
@@ -216,7 +241,7 @@ const styles = {
     }
   },
   selectedSession: {
-    backgroundColor: 'action.selected',
+    bgcolor: 'action.selected',
     borderLeft: '4px solid',
     borderLeftColor: 'primary.main'
   },
@@ -240,7 +265,11 @@ const styles = {
   errorState: {
     padding: '16px',
     textAlign: 'center',
-    color: 'error.main'
+    color: 'error.main',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 2
   }
 } as const;
 

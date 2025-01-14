@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'; // v18.2.0
-import { useDispatch, useSelector } from 'react-redux'; // v8.1.0
+import React, { useCallback, useEffect, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { 
   Card, 
   CardContent, 
@@ -9,7 +9,7 @@ import {
   Alert, 
   CircularProgress 
 } from '@mui/material'; // v5.14.0
-import { FormField, FormFieldProps } from '../../common/Forms/FormField';
+import FormField, { FormFieldProps } from '../../common/Forms/FormField';
 import { UserRole } from '../../../types/auth';
 
 // Enhanced interfaces for security configuration
@@ -43,7 +43,7 @@ interface SecurityConfig {
   complianceSettings: ComplianceConfig;
 }
 
-export interface SecuritySettingsProps {
+interface SecuritySettingsProps {
   isLoading: boolean;
   isValidating: boolean;
   onSave: () => Promise<void>;
@@ -51,7 +51,8 @@ export interface SecuritySettingsProps {
   onError: (error: Error) => void;
 }
 
-const defaultSecurityConfig: SecurityConfig = {
+// Initial security configuration state
+const initialSecurityConfig: SecurityConfig = {
   mfaEnabled: false,
   ssoEnabled: false,
   sessionTimeout: 3600,
@@ -60,8 +61,8 @@ const defaultSecurityConfig: SecurityConfig = {
   allowedAuthProviders: ['azure-ad', 'google-workspace'],
   rolePermissions: {
     [UserRole.SYSTEM_ADMIN]: ['*'],
-    [UserRole.CLIENT_ADMIN]: ['read:*', 'write:client_data'],
-    [UserRole.REGULAR_USER]: ['read:documents']
+    [UserRole.CLIENT_ADMIN]: ['read:*', 'write:own', 'manage:users'],
+    [UserRole.REGULAR_USER]: ['read:own']
   },
   securityPolicies: {
     passwordMinLength: 12,
@@ -73,11 +74,11 @@ const defaultSecurityConfig: SecurityConfig = {
     ipWhitelist: []
   },
   complianceSettings: {
-    gdprEnabled: false,
-    soc2Enabled: false,
+    gdprEnabled: true,
+    soc2Enabled: true,
     hipaaEnabled: false,
     auditRetentionDays: 365,
-    dataResidency: ['us-east']
+    dataResidency: ['us-east', 'eu-west']
   }
 };
 
@@ -89,70 +90,71 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
   onError
 }) => {
   const dispatch = useDispatch();
-  const [config, setConfig] = useState<SecurityConfig>(defaultSecurityConfig);
-  const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [config, setConfig] = useState<SecurityConfig>(initialSecurityConfig);
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [hasChanges, setHasChanges] = useState(false);
 
-  // Validation function for security configuration
-  const validateConfig = useCallback((newConfig: SecurityConfig): string[] => {
-    const errors: string[] = [];
+  // Validation function for security settings
+  const validateConfig = useCallback((newConfig: SecurityConfig): Record<string, string> => {
+    const errors: Record<string, string> = {};
 
     if (newConfig.sessionTimeout < 300 || newConfig.sessionTimeout > 86400) {
-      errors.push('Session timeout must be between 5 minutes and 24 hours');
+      errors.sessionTimeout = 'Session timeout must be between 5 minutes and 24 hours';
     }
 
     if (newConfig.passwordExpiryDays < 30 || newConfig.passwordExpiryDays > 365) {
-      errors.push('Password expiry must be between 30 and 365 days');
+      errors.passwordExpiryDays = 'Password expiry must be between 30 and 365 days';
     }
 
     if (newConfig.securityPolicies.passwordMinLength < 8) {
-      errors.push('Minimum password length must be at least 8 characters');
+      errors['securityPolicies.passwordMinLength'] = 'Minimum password length must be at least 8 characters';
     }
 
     return errors;
   }, []);
 
-  // Enhanced change handler with audit logging
-  const handleConfigChange = useCallback(async (
-    field: keyof SecurityConfig | string,
-    value: any
-  ) => {
+  // Audit log function for security changes
+  const logSecurityChange = useCallback(async (field: string, oldValue: any, newValue: any) => {
     try {
-      const newConfig = {
-        ...config,
-        [field]: value
-      };
+      // Implement audit logging logic here
+      console.log(`Security setting changed: ${field}`, { oldValue, newValue });
+    } catch (error) {
+      console.error('Failed to log security change:', error);
+    }
+  }, []);
 
-      // Validate changes
+  // Enhanced change handler with validation and audit logging
+  const handleConfigChange = useCallback(async (field: string, value: any) => {
+    try {
+      const oldValue = config[field as keyof SecurityConfig];
+      const newConfig = { ...config, [field]: value };
+      
+      // Validate the new configuration
       const errors = validateConfig(newConfig);
       setValidationErrors(errors);
 
-      // Update state
-      setConfig(newConfig);
-      setHasUnsavedChanges(true);
-
-      // Log configuration change attempt
-      console.log(`Security configuration change attempted: ${field}`, {
-        previousValue: config[field as keyof SecurityConfig],
-        newValue: value,
-        timestamp: new Date().toISOString(),
-        errors: errors.length > 0 ? errors : undefined
-      });
-
+      // Update state if validation passes
+      if (Object.keys(errors).length === 0) {
+        setConfig(newConfig);
+        setHasChanges(true);
+        await logSecurityChange(field, oldValue, value);
+      }
     } catch (error) {
       onError(error as Error);
     }
-  }, [config, validateConfig, onError]);
+  }, [config, validateConfig, logSecurityChange, onError]);
 
   // Save handler with validation
   const handleSave = async () => {
     try {
-      if (validationErrors.length > 0) {
-        throw new Error('Please fix validation errors before saving');
+      const errors = validateConfig(config);
+      if (Object.keys(errors).length > 0) {
+        setValidationErrors(errors);
+        return;
       }
 
       await onSave();
-      setHasUnsavedChanges(false);
+      setHasChanges(false);
     } catch (error) {
       onError(error as Error);
     }
@@ -177,56 +179,55 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
                   <FormField
-                    name="mfa"
+                    name="mfaEnabled"
                     label="Multi-Factor Authentication"
+                    value={config.mfaEnabled.toString()}
                     type="text"
-                    value={config.mfaEnabled ? 'Enabled' : 'Disabled'}
-                    disabled={true}
-                    onChange={() => {}}
-                  />
-                  <Switch
-                    checked={config.mfaEnabled}
-                    onChange={(e) => handleConfigChange('mfaEnabled', e.target.checked)}
                     disabled={isValidating}
+                    onChange={(e) => handleConfigChange('mfaEnabled', e.target.value === 'true')}
+                    error={validationErrors.mfaEnabled}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <FormField
                     name="sessionTimeout"
                     label="Session Timeout (seconds)"
-                    type="number"
                     value={config.sessionTimeout.toString()}
-                    onChange={(e) => handleConfigChange('sessionTimeout', parseInt(e.target.value))}
+                    type="number"
                     disabled={isValidating}
+                    onChange={(e) => handleConfigChange('sessionTimeout', parseInt(e.target.value))}
+                    error={validationErrors.sessionTimeout}
                   />
                 </Grid>
               </Grid>
             </Grid>
 
-            {/* Password Policies */}
+            {/* Password Policy Settings */}
             <Grid item xs={12}>
               <Typography variant="h6" gutterBottom>
-                Password Policies
+                Password Policy
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
                   <FormField
                     name="passwordMinLength"
                     label="Minimum Password Length"
-                    type="number"
                     value={config.securityPolicies.passwordMinLength.toString()}
-                    onChange={(e) => handleConfigChange('securityPolicies.passwordMinLength', parseInt(e.target.value))}
+                    type="number"
                     disabled={isValidating}
+                    onChange={(e) => handleConfigChange('securityPolicies.passwordMinLength', parseInt(e.target.value))}
+                    error={validationErrors['securityPolicies.passwordMinLength']}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <FormField
                     name="passwordExpiryDays"
                     label="Password Expiry (days)"
-                    type="number"
                     value={config.passwordExpiryDays.toString()}
-                    onChange={(e) => handleConfigChange('passwordExpiryDays', parseInt(e.target.value))}
+                    type="number"
                     disabled={isValidating}
+                    onChange={(e) => handleConfigChange('passwordExpiryDays', parseInt(e.target.value))}
+                    error={validationErrors.passwordExpiryDays}
                   />
                 </Grid>
               </Grid>
@@ -244,7 +245,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
                     onChange={(e) => handleConfigChange('complianceSettings.gdprEnabled', e.target.checked)}
                     disabled={isValidating}
                   />
-                  <Typography>GDPR Compliance</Typography>
+                  <Typography component="span">GDPR Compliance</Typography>
                 </Grid>
                 <Grid item xs={12} sm={4}>
                   <Switch
@@ -252,41 +253,31 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
                     onChange={(e) => handleConfigChange('complianceSettings.soc2Enabled', e.target.checked)}
                     disabled={isValidating}
                   />
-                  <Typography>SOC 2 Compliance</Typography>
+                  <Typography component="span">SOC 2 Compliance</Typography>
                 </Grid>
                 <Grid item xs={12} sm={4}>
-                  <FormField
-                    name="auditRetentionDays"
-                    label="Audit Log Retention (days)"
-                    type="number"
-                    value={config.complianceSettings.auditRetentionDays.toString()}
-                    onChange={(e) => handleConfigChange('complianceSettings.auditRetentionDays', parseInt(e.target.value))}
+                  <Switch
+                    checked={config.complianceSettings.hipaaEnabled}
+                    onChange={(e) => handleConfigChange('complianceSettings.hipaaEnabled', e.target.checked)}
                     disabled={isValidating}
                   />
+                  <Typography component="span">HIPAA Compliance</Typography>
                 </Grid>
               </Grid>
             </Grid>
 
-            {/* Validation Errors */}
-            {validationErrors.length > 0 && (
-              <Grid item xs={12}>
-                <Alert severity="error">
-                  <ul>
-                    {validationErrors.map((error, index) => (
-                      <li key={index}>{error}</li>
-                    ))}
-                  </ul>
-                </Alert>
-              </Grid>
-            )}
-
             {/* Action Buttons */}
             <Grid item xs={12}>
+              {hasChanges && (
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                  You have unsaved changes. Please save or cancel your changes.
+                </Alert>
+              )}
               <Grid container spacing={2} justifyContent="flex-end">
                 <Grid item>
                   <button
                     onClick={onCancel}
-                    disabled={isValidating || !hasUnsavedChanges}
+                    disabled={isValidating || !hasChanges}
                   >
                     Cancel
                   </button>
@@ -294,7 +285,7 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
                 <Grid item>
                   <button
                     onClick={handleSave}
-                    disabled={isValidating || validationErrors.length > 0 || !hasUnsavedChanges}
+                    disabled={isValidating || !hasChanges || Object.keys(validationErrors).length > 0}
                   >
                     Save Changes
                   </button>
@@ -308,4 +299,5 @@ export const SecuritySettings: React.FC<SecuritySettingsProps> = ({
   );
 };
 
+export type { SecuritySettingsProps };
 export default SecuritySettings;

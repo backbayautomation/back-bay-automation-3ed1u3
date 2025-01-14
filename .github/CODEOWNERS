@@ -31,19 +31,18 @@ src/backend/tests/* @backend-team-leads
 src/web/tests/* @frontend-team-leads
 
 # Configuration files requiring security review
-*.config.* @security-team
-*.env.* @security-team
+*.config.js @security-team @frontend-team-leads
+*.config.py @security-team @backend-team-leads
 
-# Database migrations requiring both backend and security review
-src/backend/migrations/* @backend-team-leads @security-team
+# Database migrations requiring careful review
+src/backend/app/migrations/* @backend-team-leads @security-team
 
 # API specifications requiring multiple team reviews
 api/* @backend-team-leads @frontend-team-leads @security-team
 
-# Security-related configuration files
+# Security-sensitive configuration files
 **/security.config.* @security-team
 **/auth.config.* @security-team
 
-# Dependency files requiring security review
-package.json @frontend-team-leads @security-team
-requirements.txt @backend-team-leads @security-team
+# Environment configuration files
+.env.* @devops-team @security-team

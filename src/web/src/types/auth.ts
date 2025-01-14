@@ -98,10 +98,19 @@ export const loginCredentialsSchema = z.object({
 });
 
 /**
+ * Type guard for validating user roles
+ * @param role - Value to check if it's a valid UserRole
+ * @returns Boolean indicating if the value is a valid UserRole
+ */
+export function isUserRole(role: unknown): role is UserRole {
+    return typeof role === 'string' && Object.values(UserRole).includes(role as UserRole);
+}
+
+/**
  * Zod schema for runtime validation of UserProfile
  */
 export const userProfileSchema = z.object({
-    id: z.string().uuid(),
+    id: z.string(),
     email: z.string().email(),
     fullName: z.string().min(1),
     role: z.nativeEnum(UserRole),
@@ -115,42 +124,12 @@ export const userProfileSchema = z.object({
 });
 
 /**
- * Type guard for validating user roles
+ * Zod schema for runtime validation of AuthState
  */
-export function isUserRole(role: unknown): role is UserRole {
-    return typeof role === 'string' && Object.values(UserRole).includes(role as UserRole);
-}
-
-/**
- * Type guard for validating auth tokens
- */
-export function isAuthTokens(tokens: unknown): tokens is AuthTokens {
-    return authTokensSchema.safeParse(tokens).success;
-}
-
-/**
- * Type guard for validating user profile
- */
-export function isUserProfile(profile: unknown): profile is UserProfile {
-    return userProfileSchema.safeParse(profile).success;
-}
-
-/**
- * Helper function to create a branded UserId
- */
-export function createUserId(id: string): UserId {
-    if (!z.string().uuid().safeParse(id).success) {
-        throw new Error('Invalid UserId format');
-    }
-    return id as UserId;
-}
-
-/**
- * Helper function to create a branded EmailAddress
- */
-export function createEmailAddress(email: string): EmailAddress {
-    if (!z.string().email().safeParse(email).success) {
-        throw new Error('Invalid email address format');
-    }
-    return email as EmailAddress;
-}
+export const authStateSchema = z.object({
+    isAuthenticated: z.boolean(),
+    isLoading: z.boolean(),
+    user: userProfileSchema.nullable(),
+    tokens: authTokensSchema.nullable(),
+    error: z.string().nullable()
+});

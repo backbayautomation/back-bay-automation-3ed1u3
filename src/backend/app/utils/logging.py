@@ -9,11 +9,9 @@ Version: 1.0.0
 import logging  # Python 3.11+
 from pythonjsonlogger import jsonlogger  # version: 2.0.7
 from azure.monitor.opentelemetry import configure_azure_monitor  # version: 1.0.0
-from uuid import uuid4  # Python 3.11+
+import uuid  # Python 3.11+
 from contextvars import ContextVar  # Python 3.11+
 from typing import Dict, Any, Optional  # Python 3.11+
-import copy
-import time
 
 from ..config import settings
 
@@ -40,37 +38,34 @@ def setup_structured_logging() -> None:
     """
     # Configure root logger with environment-specific level
     root_logger = logging.getLogger()
-    log_level = getattr(logging, LOG_LEVELS.get(settings.ENVIRONMENT, "INFO"))
-    root_logger.setLevel(log_level)
+    root_logger.setLevel(LOG_LEVELS.get(settings.ENVIRONMENT, "INFO"))
 
     # Create JSON formatter with enhanced format
-    formatter = jsonlogger.JsonFormatter(
-        JSON_LOG_FORMAT,
-        timestamp=True,
-        json_ensure_ascii=False
+    json_formatter = jsonlogger.JsonFormatter(
+        fmt=JSON_LOG_FORMAT,
+        timestamp=True
     )
 
     # Configure console handler with sanitization
     console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(json_formatter)
     root_logger.addHandler(console_handler)
 
     # Initialize Azure Monitor in production
     if settings.ENVIRONMENT == "production":
         configure_azure_monitor(
             connection_string=settings.AZURE_MONITOR_CONNECTION_STRING,
-            service_name="catalog-search",
-            service_version="1.0.0"
+            service_name="catalog-search-system"
         )
 
-    # Configure file handler for non-development environments
+    # Configure file handler with rotation for non-development environments
     if settings.ENVIRONMENT != "development":
         file_handler = logging.handlers.RotatingFileHandler(
             filename="logs/application.log",
             maxBytes=10*1024*1024,  # 10MB
             backupCount=5
         )
-        file_handler.setFormatter(formatter)
+        file_handler.setFormatter(json_formatter)
         root_logger.addHandler(file_handler)
 
 def get_correlation_id() -> str:
@@ -81,7 +76,7 @@ def get_correlation_id() -> str:
     """
     correlation_id = CORRELATION_ID_CONTEXT.get()
     if not correlation_id:
-        correlation_id = str(uuid4())
+        correlation_id = str(uuid.uuid4())
         CORRELATION_ID_CONTEXT.set(correlation_id)
     return correlation_id
 
@@ -93,14 +88,14 @@ def sanitize_log_data(log_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Sanitized log data
     """
-    sanitized_data = copy.deepcopy(log_data)
+    sanitized_data = log_data.copy()
     
     def _sanitize_dict(data: Dict[str, Any]) -> None:
         for key, value in data.items():
             if isinstance(value, dict):
                 _sanitize_dict(value)
             elif any(sensitive in key.lower() for sensitive in SENSITIVE_FIELDS):
-                data[key] = "[REDACTED]"
+                data[key] = "********"
     
     _sanitize_dict(sanitized_data)
     return sanitized_data
@@ -115,49 +110,45 @@ class StructuredLogger:
         """
         Initialize enhanced structured logger.
         Args:
-            name: Logger name
+            name: Logger name for module identification
         """
         self._logger = logging.getLogger(name)
         self.name = name
         self._metrics = {}
 
-        # Configure JSON formatting
-        formatter = jsonlogger.JsonFormatter(
-            JSON_LOG_FORMAT,
-            timestamp=True,
-            json_ensure_ascii=False
+        # Configure Azure Monitor integration for production
+        if settings.ENVIRONMENT == "production":
+            self._setup_azure_monitor()
+
+    def _setup_azure_monitor(self) -> None:
+        """Configure Azure Monitor integration for metrics and traces."""
+        configure_azure_monitor(
+            connection_string=settings.AZURE_MONITOR_CONNECTION_STRING,
+            service_name=self.name
         )
-        
-        for handler in self._logger.handlers:
-            handler.setFormatter(formatter)
 
     def log_security_event(self, event_type: str, event_data: Dict[str, Any]) -> None:
         """
         Log security-related events with enhanced tracking.
         Args:
             event_type: Type of security event
-            event_data: Event details
+            event_data: Event details and context
         """
         sanitized_data = sanitize_log_data(event_data)
+        correlation_id = get_correlation_id()
+        
         log_entry = {
             "event_type": event_type,
-            "correlation_id": get_correlation_id(),
-            "timestamp": time.time(),
-            "data": sanitized_data
+            "correlation_id": correlation_id,
+            "data": sanitized_data,
+            "timestamp": logging.Formatter().formatTime(logging.LogRecord("", 0, "", 0, None, None, None))
         }
 
-        if event_type.startswith("error"):
+        # Log with appropriate severity based on event type
+        if "error" in event_type.lower() or "failure" in event_type.lower():
             self._logger.error(f"Security event: {event_type}", extra=log_entry)
         else:
             self._logger.info(f"Security event: {event_type}", extra=log_entry)
-
-        # Track security metrics if in production
-        if settings.ENVIRONMENT == "production":
-            self.log_metric(
-                f"security_event_{event_type}",
-                1.0,
-                {"event_type": event_type}
-            )
 
     def log_metric(self, metric_name: str, value: float, dimensions: Optional[Dict[str, str]] = None) -> None:
         """
@@ -165,28 +156,34 @@ class StructuredLogger:
         Args:
             metric_name: Name of the metric
             value: Metric value
-            dimensions: Additional metric dimensions
+            dimensions: Optional metric dimensions/tags
         """
-        if not metric_name:
-            raise ValueError("Metric name cannot be empty")
-
+        correlation_id = get_correlation_id()
+        
         metric_data = {
-            "name": metric_name,
+            "metric_name": metric_name,
             "value": value,
-            "dimensions": dimensions or {},
-            "correlation_id": get_correlation_id(),
-            "timestamp": time.time()
+            "correlation_id": correlation_id,
+            "dimensions": dimensions or {}
         }
 
         # Store metric locally
         self._metrics[metric_name] = metric_data
 
+        # Log metric
+        self._logger.info(
+            f"Metric recorded: {metric_name}",
+            extra={"metric": metric_data}
+        )
+
         # Send to Azure Monitor in production
         if settings.ENVIRONMENT == "production":
             try:
                 from azure.monitor.opentelemetry import metrics
-                meter = metrics.get_meter("catalog-search")
-                metric_counter = meter.create_counter(metric_name)
-                metric_counter.add(value, dimensions)
+                metrics.record_metric(
+                    name=metric_name,
+                    value=value,
+                    dimensions=dimensions
+                )
             except Exception as e:
                 self._logger.error(f"Failed to send metric to Azure Monitor: {str(e)}")

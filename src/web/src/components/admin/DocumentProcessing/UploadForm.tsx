@@ -1,280 +1,254 @@
-import React, { useState, useCallback, useRef } from 'react';
-import { useForm, Controller } from 'react-hook-form'; // v7.45.0
+import React from 'react';
+import { useForm } from 'react-hook-form'; // v7.45.0
 import { 
-    Box, 
-    Card, 
-    CardContent, 
-    Typography, 
-    Alert, 
-    CircularProgress 
+  Box, 
+  Card, 
+  CardContent, 
+  Typography, 
+  Alert, 
+  CircularProgress 
 } from '@mui/material'; // v5.14.0
-import { styled } from '@mui/material/styles';
-
 import { 
-    Document, 
-    DocumentUploadRequest, 
-    DocumentType, 
-    DocumentValidation 
+  Document, 
+  DocumentUploadRequest, 
+  DocumentType, 
+  DocumentValidation 
 } from '../../../types/document';
 import FormField from '../../common/Forms/FormField';
 import LoadingButton from '../../common/Buttons/LoadingButton';
 import { uploadDocument } from '../../../api/documents';
 
-// Styled components for enhanced visual presentation
-const UploadContainer = styled(Card)(({ theme }) => ({
-    maxWidth: '600px',
-    margin: theme.spacing(2),
-    '& .MuiCardContent-root': {
-        padding: theme.spacing(3),
-    },
-}));
-
-const DropZone = styled(Box, {
-    shouldForwardProp: prop => prop !== 'isDragging' && prop !== 'error'
-})<{ isDragging?: boolean; error?: boolean }>(({ theme, isDragging, error }) => ({
-    border: `2px dashed ${error ? theme.palette.error.main : 
-        isDragging ? theme.palette.primary.main : theme.palette.grey[300]}`,
-    borderRadius: theme.shape.borderRadius,
-    padding: theme.spacing(3),
-    textAlign: 'center',
-    cursor: 'pointer',
-    transition: theme.transitions.create(['border-color', 'background-color']),
-    backgroundColor: isDragging ? theme.palette.action.hover : 'transparent',
-    '&:hover': {
-        backgroundColor: theme.palette.action.hover,
-    },
-}));
-
-// Props interface with comprehensive type safety
+// Props interface with comprehensive validation options
 interface UploadFormProps {
-    clientId: UUID;
-    onUploadSuccess: (document: Document) => void;
-    onUploadError: (error: Error) => void;
-    allowMultiple?: boolean;
-    maxFileSize?: number;
-    allowedTypes?: DocumentType[];
+  clientId: string;
+  onUploadSuccess: (document: Document) => void;
+  onUploadError: (error: Error) => void;
+  allowMultiple?: boolean;
+  maxFileSize?: number;
+  allowedTypes?: DocumentType[];
 }
 
-// Form data interface with validation
+// Form data interface with strict typing
 interface FormData {
-    file: File | null;
-    documentType: DocumentType;
-    metadata: Record<string, any>;
-    description: string;
+  file: File | null;
+  documentType: DocumentType;
+  metadata: Record<string, any>;
+  description: string;
 }
 
 // Default allowed document types
 const DEFAULT_ALLOWED_TYPES: DocumentType[] = ['pdf', 'docx', 'xlsx', 'txt'];
 
-// Component implementation with comprehensive features
+// Maximum file size (10MB by default)
+const DEFAULT_MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+/**
+ * UploadForm component for handling document uploads with comprehensive validation,
+ * accessibility features, and progress tracking.
+ */
 const UploadForm: React.FC<UploadFormProps> = React.memo(({
-    clientId,
-    onUploadSuccess,
-    onUploadError,
-    allowMultiple = false,
-    maxFileSize = 10 * 1024 * 1024, // 10MB default
-    allowedTypes = DEFAULT_ALLOWED_TYPES
+  clientId,
+  onUploadSuccess,
+  onUploadError,
+  allowMultiple = false,
+  maxFileSize = DEFAULT_MAX_FILE_SIZE,
+  allowedTypes = DEFAULT_ALLOWED_TYPES
 }) => {
-    // Form state management
-    const { control, handleSubmit, reset, setError, formState: { errors } } = useForm<FormData>();
-    const [isDragging, setIsDragging] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState<number>(0);
-    const [isUploading, setIsUploading] = useState(false);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+  // Form state management with validation
+  const { register, handleSubmit, formState: { errors }, reset, setValue } = useForm<FormData>();
+  
+  // Upload progress state
+  const [uploadProgress, setUploadProgress] = React.useState<number>(0);
+  const [isUploading, setIsUploading] = React.useState<boolean>(false);
+  const [error, setError] = React.useState<string | null>(null);
 
-    // Drag and drop handlers with accessibility support
-    const handleDragEnter = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(true);
-    }, []);
+  // File input ref for programmatic access
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-    const handleDragLeave = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
-    }, []);
+  // Validate file type and size
+  const validateFile = (file: File): string | null => {
+    if (!file) return 'File is required';
+    if (file.size > maxFileSize) {
+      return `File size must be less than ${maxFileSize / 1024 / 1024}MB`;
+    }
+    const fileType = file.name.split('.').pop()?.toLowerCase() as DocumentType;
+    if (!allowedTypes.includes(fileType)) {
+      return `File type must be one of: ${allowedTypes.join(', ')}`;
+    }
+    return null;
+  };
 
-    const handleDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragging(false);
+  // Handle file selection with validation
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const validationError = validateFile(file);
+      if (validationError) {
+        setError(validationError);
+        return;
+      }
+      setValue('file', file);
+      setValue('documentType', file.name.split('.').pop()?.toLowerCase() as DocumentType);
+      setError(null);
+    }
+  };
 
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length > 0) {
-            handleFileSelection(files[0]);
-        }
-    }, []);
+  // Handle form submission with progress tracking
+  const onSubmit = async (data: FormData) => {
+    try {
+      setIsUploading(true);
+      setError(null);
 
-    // File validation with detailed error messages
-    const validateFile = (file: File): DocumentValidation => {
-        if (file.size > maxFileSize) {
-            throw new Error(`File size exceeds maximum limit of ${maxFileSize / 1024 / 1024}MB`);
-        }
+      const uploadRequest: DocumentUploadRequest = {
+        file: data.file!,
+        client_id: clientId,
+        type: data.documentType,
+        metadata: {
+          description: data.description,
+          ...data.metadata
+        },
+        tags: [],
+        priority_processing: false
+      };
 
-        const fileExtension = file.name.split('.').pop()?.toLowerCase();
-        if (!fileExtension || !allowedTypes.includes(fileExtension as DocumentType)) {
-            throw new Error(`File type not supported. Allowed types: ${allowedTypes.join(', ')}`);
-        }
+      const response = await uploadDocument(uploadRequest, (progress: number) => {
+        setUploadProgress(progress);
+      });
 
-        return {
-            isValid: true,
-            size: file.size,
-            type: fileExtension as DocumentType
-        };
-    };
+      onUploadSuccess(response.data);
+      reset();
+      setUploadProgress(0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+      onUploadError(err instanceof Error ? err : new Error('Upload failed'));
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
-    // File selection handler with validation
-    const handleFileSelection = useCallback((file: File) => {
-        try {
-            const validation = validateFile(file);
-            if (validation.isValid) {
-                // Set form values
-                reset({
-                    file,
-                    documentType: validation.type,
-                    metadata: {},
-                    description: ''
-                });
-            }
-        } catch (error) {
-            setError('file', {
-                type: 'validation',
-                message: error instanceof Error ? error.message : 'Invalid file'
-            });
-        }
-    }, [maxFileSize, allowedTypes, reset, setError]);
+  return (
+    <Card>
+      <CardContent>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Upload Document
+        </Typography>
 
-    // Form submission handler with progress tracking
-    const onSubmit = async (data: FormData) => {
-        if (!data.file) return;
+        <Box
+          component="form"
+          onSubmit={handleSubmit(onSubmit)}
+          noValidate
+          aria-label="Document upload form"
+        >
+          {/* File input with drag-and-drop support */}
+          <Box
+            sx={{
+              border: '2px dashed',
+              borderColor: 'grey.300',
+              borderRadius: 1,
+              p: 3,
+              mb: 2,
+              textAlign: 'center'
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files[0];
+              if (file) {
+                const validationError = validateFile(file);
+                if (validationError) {
+                  setError(validationError);
+                  return;
+                }
+                setValue('file', file);
+                setValue('documentType', file.name.split('.').pop()?.toLowerCase() as DocumentType);
+                setError(null);
+              }
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            role="button"
+            tabIndex={0}
+            aria-label="Drag and drop upload area"
+          >
+            <input
+              type="file"
+              {...register('file', { required: 'File is required' })}
+              onChange={handleFileChange}
+              accept={allowedTypes.map(type => `.${type}`).join(',')}
+              multiple={allowMultiple}
+              style={{ display: 'none' }}
+              ref={fileInputRef}
+              aria-invalid={!!errors.file}
+              aria-describedby="file-error"
+            />
+            
+            <Typography>
+              Drag and drop a file here or{' '}
+              <Box
+                component="span"
+                sx={{ color: 'primary.main', cursor: 'pointer' }}
+                onClick={() => fileInputRef.current?.click()}
+                onKeyPress={(e) => e.key === 'Enter' && fileInputRef.current?.click()}
+                tabIndex={0}
+                role="button"
+              >
+                browse
+              </Box>
+            </Typography>
+            
+            <Typography variant="caption" color="textSecondary">
+              Supported formats: {allowedTypes.join(', ')}
+            </Typography>
+          </Box>
 
-        setIsUploading(true);
-        setUploadProgress(0);
+          {/* Description field */}
+          <FormField
+            name="description"
+            label="Description"
+            value={register('description').value || ''}
+            onChange={(e) => setValue('description', e.target.value)}
+            error={errors.description?.message}
+            helperText="Add a description for this document"
+            fullWidth
+          />
 
-        try {
-            const uploadRequest: DocumentUploadRequest = {
-                file: data.file,
-                client_id: clientId,
-                type: data.documentType,
-                metadata: {
-                    description: data.description,
-                    ...data.metadata
-                },
-                tags: [],
-                priority_processing: false
-            };
+          {/* Error display */}
+          {error && (
+            <Alert 
+              severity="error" 
+              sx={{ mt: 2 }}
+              role="alert"
+            >
+              {error}
+            </Alert>
+          )}
 
-            const response = await uploadDocument(uploadRequest, (progress) => {
-                setUploadProgress(progress);
-            });
+          {/* Upload progress */}
+          {isUploading && (
+            <Box sx={{ mt: 2, textAlign: 'center' }}>
+              <CircularProgress 
+                variant="determinate" 
+                value={uploadProgress} 
+                aria-label="Upload progress"
+              />
+              <Typography variant="caption" display="block">
+                {uploadProgress}% uploaded
+              </Typography>
+            </Box>
+          )}
 
-            onUploadSuccess(response.data);
-            reset();
-        } catch (error) {
-            onUploadError(error instanceof Error ? error : new Error('Upload failed'));
-        } finally {
-            setIsUploading(false);
-            setUploadProgress(0);
-        }
-    };
-
-    return (
-        <UploadContainer>
-            <CardContent>
-                <Typography variant="h6" gutterBottom>
-                    Upload Document
-                </Typography>
-
-                <form onSubmit={handleSubmit(onSubmit)} noValidate>
-                    <Controller
-                        name="file"
-                        control={control}
-                        rules={{ required: 'Please select a file' }}
-                        render={({ field: { onChange, value } }) => (
-                            <DropZone
-                                isDragging={isDragging}
-                                error={!!errors.file}
-                                onDragEnter={handleDragEnter}
-                                onDragOver={handleDragEnter}
-                                onDragLeave={handleDragLeave}
-                                onDrop={handleDrop}
-                                onClick={() => fileInputRef.current?.click()}
-                                role="button"
-                                tabIndex={0}
-                                aria-label="Drop zone for file upload"
-                            >
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept={allowedTypes.map(type => `.${type}`).join(',')}
-                                    onChange={(e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) handleFileSelection(file);
-                                    }}
-                                    style={{ display: 'none' }}
-                                    aria-hidden="true"
-                                />
-                                
-                                {value ? (
-                                    <Typography>
-                                        Selected: {value.name} ({(value.size / 1024 / 1024).toFixed(2)}MB)
-                                    </Typography>
-                                ) : (
-                                    <Typography>
-                                        Drag and drop a file here or click to select
-                                    </Typography>
-                                )}
-                            </DropZone>
-                        )}
-                    />
-
-                    {errors.file && (
-                        <Alert severity="error" sx={{ mt: 2 }}>
-                            {errors.file.message}
-                        </Alert>
-                    )}
-
-                    <Controller
-                        name="description"
-                        control={control}
-                        rules={{ maxLength: 500 }}
-                        render={({ field }) => (
-                            <FormField
-                                {...field}
-                                label="Description"
-                                placeholder="Enter document description"
-                                error={errors.description?.message}
-                                fullWidth
-                                maxLength={500}
-                            />
-                        )}
-                    />
-
-                    <Box sx={{ mt: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        {isUploading && (
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                                <CircularProgress size={24} />
-                                <Typography variant="body2">
-                                    Uploading... {uploadProgress}%
-                                </Typography>
-                            </Box>
-                        )}
-
-                        <LoadingButton
-                            type="submit"
-                            isLoading={isUploading}
-                            loadingText="Uploading..."
-                            disabled={isUploading}
-                            size="large"
-                        >
-                            Upload Document
-                        </LoadingButton>
-                    </Box>
-                </form>
-            </CardContent>
-        </UploadContainer>
-    );
+          {/* Submit button */}
+          <LoadingButton
+            type="submit"
+            isLoading={isUploading}
+            disabled={isUploading}
+            fullWidth
+            sx={{ mt: 2 }}
+          >
+            Upload Document
+          </LoadingButton>
+        </Box>
+      </CardContent>
+    </Card>
+  );
 });
 
 UploadForm.displayName = 'UploadForm';

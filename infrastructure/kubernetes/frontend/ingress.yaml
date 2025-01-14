@@ -1,9 +1,8 @@
 # Kubernetes Ingress manifest for frontend application
-# Version: networking.k8s.io/v1 (Kubernetes v1.25+)
-# Purpose: External traffic routing and load balancing for React-based dual portal system
-
+# External dependency: networking.k8s.io/v1 (v1.25+)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
+
 metadata:
   name: frontend-ingress
   namespace: catalog-search
@@ -31,7 +30,7 @@ metadata:
     nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
     nginx.ingress.kubernetes.io/cors-allow-origin: "https://*.catalog-search.com"
     
-    # Security headers and HTTPS enforcement
+    # Security headers and HSTS configuration
     nginx.ingress.kubernetes.io/configuration-snippet: |
       more_set_headers "X-Frame-Options: DENY";
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
@@ -39,7 +38,7 @@ metadata:
     nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
     nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
     
-    # Monitoring configuration
+    # Prometheus metrics scraping
     prometheus.io/scrape: "true"
     prometheus.io/port: "10254"
 

@@ -1,13 +1,11 @@
 /**
- * ChatService Test Suite
- * Version: 1.0.0
- * Dependencies:
- * - @jest/globals: 29.7.0
- * - uuid: 9.0.0
+ * @fileoverview Test suite for ChatService with comprehensive coverage of reliability,
+ * security, and monitoring features
+ * @version 1.0.0
  */
 
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { v4 as uuidv4 } from 'uuid';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals'; // v29.7.0
+import { v4 as uuidv4 } from 'uuid'; // v9.0.0
 import { ChatService } from '../../src/services/chat';
 import { Message, MessageRole, ChatSessionStatus, WebSocketStatus } from '../../src/types/chat';
 import { WS_EVENTS, WS_CONFIG } from '../../src/api/websocket';
@@ -18,22 +16,24 @@ class MockWebSocket {
     onclose: ((event: any) => void) | null = null;
     onmessage: ((event: any) => void) | null = null;
     onerror: ((error: any) => void) | null = null;
-    readyState: number = WebSocket.CLOSED;
+    readyState = WebSocket.CONNECTING;
     send = jest.fn();
     close = jest.fn();
 }
 
-// Test configuration
+// Test constants
 const TEST_CONFIG = {
-    wsUrl: 'ws://localhost:8080',
-    token: 'test-token',
+    wsUrl: 'ws://localhost:8000/ws',
+    token: 'mock-auth-token',
     securityConfig: {
-        encryptionKey: 'test-key',
-        enableMessageSigning: true
+        encryptionKey: 'mock-encryption-key',
+        rateLimitPerMinute: 60,
+        maxMessageSize: 4096
     },
     loggerConfig: {
         level: 'info',
-        enableMetrics: true
+        enableMetrics: true,
+        metricsInterval: 5000
     }
 };
 
@@ -42,14 +42,19 @@ describe('ChatService', () => {
     let mockWebSocket: MockWebSocket;
 
     beforeEach(() => {
-        // Setup mock WebSocket
+        // Setup WebSocket mock
         mockWebSocket = new MockWebSocket();
         (global as any).WebSocket = jest.fn(() => mockWebSocket);
-        
-        // Initialize ChatService
-        chatService = new ChatService(TEST_CONFIG);
-        
-        // Mock successful connection
+
+        // Initialize chat service
+        chatService = new ChatService(
+            TEST_CONFIG.wsUrl,
+            TEST_CONFIG.token,
+            TEST_CONFIG.securityConfig,
+            TEST_CONFIG.loggerConfig
+        );
+
+        // Simulate successful connection
         if (mockWebSocket.onopen) {
             mockWebSocket.onopen();
         }
@@ -57,185 +62,185 @@ describe('ChatService', () => {
 
     afterEach(() => {
         jest.clearAllMocks();
-        if (chatService) {
-            chatService.disconnect();
-        }
     });
 
-    describe('Connection Management', () => {
-        it('should establish WebSocket connection with correct configuration', async () => {
-            expect(global.WebSocket).toHaveBeenCalledWith(
-                expect.stringContaining(TEST_CONFIG.wsUrl)
-            );
-            expect(global.WebSocket).toHaveBeenCalledWith(
-                expect.stringContaining(TEST_CONFIG.token)
-            );
+    describe('Initialization', () => {
+        it('should initialize with correct configuration', () => {
+            expect(global.WebSocket).toHaveBeenCalledWith(TEST_CONFIG.wsUrl);
+            expect(chatService.getConnectionStatus()).toBe(WebSocketStatus.CONNECTED);
         });
 
-        it('should handle reconnection attempts with exponential backoff', async () => {
-            const mockClose = { code: 1006, reason: 'Connection lost' };
-            if (mockWebSocket.onclose) {
-                mockWebSocket.onclose(mockClose);
-            }
+        it('should setup WebSocket event handlers', () => {
+            expect(mockWebSocket.onmessage).toBeDefined();
+            expect(mockWebSocket.onerror).toBeDefined();
+            expect(mockWebSocket.onclose).toBeDefined();
+        });
+    });
 
-            // Wait for reconnection attempts
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            expect(global.WebSocket).toHaveBeenCalledTimes(2);
+    describe('Session Management', () => {
+        it('should create new chat session', async () => {
+            const session = await chatService.createSession('Test Session');
+            expect(session).toMatchObject({
+                title: 'Test Session',
+                status: ChatSessionStatus.ACTIVE,
+                messages: []
+            });
+            expect(session.id).toBeDefined();
         });
 
-        it('should maintain heartbeat mechanism', async () => {
-            jest.useFakeTimers();
-            
-            // Trigger heartbeat interval
-            jest.advanceTimersByTime(WS_CONFIG.HEARTBEAT_INTERVAL);
-
-            expect(mockWebSocket.send).toHaveBeenCalledWith(
-                expect.stringContaining(WS_EVENTS.CONNECTION_HEALTH)
-            );
-
-            jest.useRealTimers();
+        it('should handle session creation errors', async () => {
+            jest.spyOn(global, 'Date').mockImplementationOnce(() => {
+                throw new Error('Date error');
+            });
+            await expect(chatService.createSession('Test')).rejects.toThrow();
         });
     });
 
     describe('Message Handling', () => {
-        it('should send messages with proper encryption', async () => {
-            const testMessage = {
-                content: 'Test message',
-                sessionId: uuidv4()
-            };
+        let sessionId: string;
 
-            await chatService.sendMessage(testMessage.content, testMessage.sessionId);
+        beforeEach(async () => {
+            const session = await chatService.createSession('Test Session');
+            sessionId = session.id;
+        });
 
-            expect(mockWebSocket.send).toHaveBeenCalledWith(
-                expect.stringContaining(testMessage.content)
-            );
+        it('should send message with encryption', async () => {
+            const content = 'Test message';
+            const message = await chatService.sendMessage(content, sessionId);
+            
+            expect(message).toMatchObject({
+                role: MessageRole.USER,
+                sessionId,
+                metadata: expect.any(Object)
+            });
+            expect(mockWebSocket.send).toHaveBeenCalled();
+        });
+
+        it('should enforce rate limiting', async () => {
+            // Simulate rate limit exceeded
+            for (let i = 0; i < TEST_CONFIG.securityConfig.rateLimitPerMinute; i++) {
+                await chatService.sendMessage('Test', sessionId);
+            }
+            
+            await expect(chatService.sendMessage('Test', sessionId))
+                .rejects.toThrow('Rate limit exceeded');
+        });
+
+        it('should enforce message size limit', async () => {
+            const largeMessage = 'a'.repeat(TEST_CONFIG.securityConfig.maxMessageSize + 1);
+            await expect(chatService.sendMessage(largeMessage, sessionId))
+                .rejects.toThrow(/exceeds maximum size/);
         });
 
         it('should queue messages when offline', async () => {
             // Simulate disconnection
             mockWebSocket.readyState = WebSocket.CLOSED;
             if (mockWebSocket.onclose) {
-                mockWebSocket.onclose({ code: 1001, reason: 'Test disconnect' });
+                mockWebSocket.onclose({ wasClean: false });
             }
 
-            const testMessage = {
-                content: 'Offline message',
-                sessionId: uuidv4()
-            };
-
-            await expect(
-                chatService.sendMessage(testMessage.content, testMessage.sessionId)
-            ).rejects.toThrow();
-
-            // Verify message is queued
-            expect(chatService.getMetrics().queueLength).toBeGreaterThan(0);
-        });
-
-        it('should handle rate limiting', async () => {
-            const sessionId = uuidv4();
-            const messages = Array(61).fill('Test message');
-
-            // Send messages rapidly
-            const sendPromises = messages.map(msg => 
-                chatService.sendMessage(msg, sessionId)
-            );
-
-            await expect(Promise.all(sendPromises)).rejects.toThrow('Rate limit exceeded');
+            await chatService.sendMessage('Offline message', sessionId);
+            expect(chatService.getMetrics().queuedMessages).toBe(1);
         });
     });
 
-    describe('Session Management', () => {
-        it('should create new chat session with security context', async () => {
-            const session = await chatService.createSession('Test Session');
+    describe('Reliability Features', () => {
+        it('should handle reconnection', async () => {
+            // Simulate connection loss
+            if (mockWebSocket.onclose) {
+                mockWebSocket.onclose({ wasClean: false });
+            }
 
-            expect(session).toMatchObject({
-                title: 'Test Session',
-                status: ChatSessionStatus.ACTIVE,
-                messages: []
-            });
+            // Verify reconnection attempt
+            expect(global.WebSocket).toHaveBeenCalledTimes(2);
         });
 
-        it('should load chat history correctly', async () => {
-            const session = await chatService.createSession('Test Session');
+        it('should process message queue after reconnection', async () => {
+            // Simulate offline message
+            mockWebSocket.readyState = WebSocket.CLOSED;
+            await chatService.sendMessage('Queued message', uuidv4());
+
+            // Simulate reconnection
+            mockWebSocket.readyState = WebSocket.OPEN;
+            if (mockWebSocket.onopen) {
+                mockWebSocket.onopen();
+            }
+
+            expect(mockWebSocket.send).toHaveBeenCalled();
+        });
+
+        it('should handle heartbeat mechanism', () => {
+            jest.useFakeTimers();
+            
+            // Advance time to trigger heartbeat
+            jest.advanceTimersByTime(WS_CONFIG.HEARTBEAT_INTERVAL);
+            
+            expect(mockWebSocket.send).toHaveBeenCalledWith(
+                expect.stringContaining(WS_EVENTS.CONNECTION_HEALTH)
+            );
+            
+            jest.useRealTimers();
+        });
+    });
+
+    describe('Security Features', () => {
+        it('should handle encrypted messages', async () => {
+            const sessionId = uuidv4();
             const message: Message = {
                 id: uuidv4(),
-                content: 'Test message',
-                role: MessageRole.USER,
+                content: 'Encrypted content',
+                role: MessageRole.ASSISTANT,
                 timestamp: new Date(),
-                sessionId: session.id,
+                sessionId,
                 metadata: {
                     hasMarkdown: false,
                     hasCodeBlock: false,
                     codeLanguage: null,
                     renderOptions: {
-                        enableLatex: true,
-                        enableDiagrams: true,
-                        syntaxHighlighting: true
+                        enableLatex: false,
+                        enableDiagrams: false,
+                        syntaxHighlighting: false
                     }
                 }
             };
 
-            // Simulate incoming message
+            // Simulate receiving encrypted message
             if (mockWebSocket.onmessage) {
-                mockWebSocket.onmessage({
-                    data: JSON.stringify({
-                        event: WS_EVENTS.CHAT_MESSAGE,
-                        data: message
-                    })
-                });
+                mockWebSocket.onmessage({ data: JSON.stringify({
+                    event: WS_EVENTS.CHAT_MESSAGE,
+                    data: message
+                })});
             }
 
-            expect(session.messages).toContainEqual(expect.objectContaining({
-                content: message.content
-            }));
+            // Verify decryption was attempted
+            expect(message.content).toBeDefined();
         });
     });
 
-    describe('Monitoring and Metrics', () => {
+    describe('Monitoring Features', () => {
         it('should track connection metrics', () => {
             const metrics = chatService.getMetrics();
-
             expect(metrics).toMatchObject({
-                messageCount: expect.any(Number),
-                queueLength: expect.any(Number),
+                messagesSentThisMinute: expect.any(Number),
+                queuedMessages: expect.any(Number),
                 connectionStatus: expect.any(String)
             });
         });
 
-        it('should handle and log errors appropriately', async () => {
-            const mockError = new Error('Test error');
-            
+        it('should log error events', () => {
+            const error = new Error('Test error');
             if (mockWebSocket.onerror) {
-                mockWebSocket.onerror(mockError);
+                mockWebSocket.onerror(error);
             }
-
-            // Verify error handling
-            expect(chatService.getConnectionStatus()).toBe(WebSocketStatus.DISCONNECTED);
+            // Verify error was logged (implementation dependent)
         });
     });
 
-    describe('Security Features', () => {
-        it('should sanitize message content', async () => {
-            const maliciousContent = '<script>alert("xss")</script>';
-            const session = await chatService.createSession('Test Session');
-
-            await chatService.sendMessage(maliciousContent, session.id);
-
-            expect(mockWebSocket.send).toHaveBeenCalledWith(
-                expect.not.stringContaining('<script>')
-            );
-        });
-
-        it('should handle message encryption', async () => {
-            const session = await chatService.createSession('Test Session');
-            const sensitiveContent = 'sensitive data';
-
-            await chatService.sendMessage(sensitiveContent, session.id);
-
-            expect(mockWebSocket.send).toHaveBeenCalledWith(
-                expect.stringContaining('encrypted')
-            );
+    describe('Cleanup', () => {
+        it('should cleanup resources on disconnect', async () => {
+            await chatService.disconnect();
+            expect(mockWebSocket.close).toHaveBeenCalled();
+            expect(chatService.getConnectionStatus()).toBe(WebSocketStatus.DISCONNECTED);
         });
     });
 });

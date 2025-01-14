@@ -1,25 +1,26 @@
-import React, { useCallback, useEffect } from 'react'; // v18.2.0
+import React, { useCallback, useEffect } from 'react';
 import { useForm } from 'react-hook-form'; // v7.45.0
 import { zodResolver } from '@hookform/resolvers/zod'; // v3.3.0
 import { z } from 'zod'; // v3.22.0
 import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
 import throttle from 'lodash/throttle'; // v4.1.1
-import { FormField } from '../../common/Forms/FormField';
+import { FormField, FormFieldProps } from '../../common/Forms/FormField';
 import { useAuth } from '../../../hooks/useAuth';
-import { UserRole } from '../../../types/auth';
-import { audit } from '@company/audit-log'; // v1.0.0
+import { auditLog } from '@company/audit-log'; // v1.0.0
 import { validateCsrfToken } from '@company/security'; // v1.0.0
+import type { Organization, UUID } from '../../../types/common';
 
 // Client form validation schema with strict typing
 const clientFormSchema = z.object({
   name: z.string()
     .min(2, 'Name must be at least 2 characters')
-    .max(100, 'Name cannot exceed 100 characters'),
+    .max(100, 'Name cannot exceed 100 characters')
+    .regex(/^[a-zA-Z0-9\s\-_]+$/, 'Name can only contain letters, numbers, spaces, hyphens and underscores'),
   industry: z.string()
     .min(1, 'Industry is required'),
   maxUsers: z.number()
     .int()
-    .min(1, 'Must allow at least 1 user')
+    .min(1, 'Must have at least 1 user')
     .max(1000, 'Cannot exceed 1000 users'),
   settings: z.object({
     theme: z.enum(['light', 'dark', 'system']),
@@ -33,17 +34,95 @@ const clientFormSchema = z.object({
 
 type ClientFormData = z.infer<typeof clientFormSchema>;
 
-// Props interface with enhanced security types
+// Props interface with security-related properties
 interface ClientFormProps {
-  initialData?: ClientFormData;
+  initialData?: Partial<ClientFormData>;
   onSuccess: () => void;
   onCancel: () => void;
   isSubmitting: boolean;
   csrfToken: string;
 }
 
-// Error fallback component with accessibility
-const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> = ({
+// Form field configuration with accessibility attributes
+const formFields: Array<FormFieldProps & { name: keyof ClientFormData }> = [
+  {
+    name: 'name',
+    label: 'Client Name',
+    type: 'text',
+    required: true,
+    maxLength: 100,
+    placeholder: 'Enter client name'
+  },
+  {
+    name: 'industry',
+    label: 'Industry',
+    type: 'text',
+    required: true,
+    placeholder: 'Select industry'
+  },
+  {
+    name: 'maxUsers',
+    label: 'Maximum Users',
+    type: 'number',
+    required: true,
+    inputMode: 'numeric'
+  }
+];
+
+// Custom hook for form validation and sanitization
+const useClientFormValidation = (data: ClientFormData) => {
+  return clientFormSchema.safeParse(data);
+};
+
+// Custom hook for secure form submission with throttling
+const useClientFormSubmission = (csrfToken: string) => {
+  const { user } = useAuth();
+
+  const submitForm = useCallback(
+    throttle(async (data: ClientFormData) => {
+      try {
+        // Validate CSRF token
+        await validateCsrfToken(csrfToken);
+
+        // Submit data with proper authorization
+        const response = await fetch('/api/clients', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken
+          },
+          body: JSON.stringify({
+            ...data,
+            orgId: user?.orgId
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to create client');
+        }
+
+        // Log audit trail
+        await auditLog({
+          action: 'client_created',
+          actor: user?.id as UUID,
+          target: await response.json().then(data => data.id),
+          metadata: { clientName: data.name }
+        });
+
+        return response.json();
+      } catch (error) {
+        console.error('Form submission error:', error);
+        throw error;
+      }
+    }, 1000),
+    [csrfToken, user]
+  );
+
+  return submitForm;
+};
+
+// Error fallback component
+const FormErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> = ({
   error,
   resetErrorBoundary
 }) => (
@@ -54,6 +133,7 @@ const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> 
   </div>
 );
 
+// Main client form component
 export const ClientForm: React.FC<ClientFormProps> = ({
   initialData,
   onSuccess,
@@ -62,29 +142,17 @@ export const ClientForm: React.FC<ClientFormProps> = ({
   csrfToken
 }) => {
   const { user } = useAuth();
-  
-  // Form initialization with validation
+  const submitForm = useClientFormSubmission(csrfToken);
+
+  // Initialize form with react-hook-form and zod validation
   const {
     register,
     handleSubmit,
-    formState: { errors, isDirty },
-    reset,
-    setError
+    formState: { errors },
+    reset
   } = useForm<ClientFormData>({
     resolver: zodResolver(clientFormSchema),
-    defaultValues: initialData || {
-      name: '',
-      industry: '',
-      maxUsers: 10,
-      settings: {
-        theme: 'system',
-        language: 'en',
-        features: {
-          chat: true,
-          export: false
-        }
-      }
-    }
+    defaultValues: initialData
   });
 
   // Reset form when initial data changes
@@ -94,158 +162,54 @@ export const ClientForm: React.FC<ClientFormProps> = ({
     }
   }, [initialData, reset]);
 
-  // Throttled form submission with security checks
-  const onSubmit = useCallback(
-    throttle(async (data: ClientFormData) => {
-      try {
-        // Validate CSRF token
-        if (!validateCsrfToken(csrfToken)) {
-          throw new Error('Invalid security token');
-        }
-
-        // Check user permissions
-        if (!user || user.role !== UserRole.SYSTEM_ADMIN) {
-          throw new Error('Insufficient permissions');
-        }
-
-        // Sanitize input data
-        const sanitizedData = {
-          ...data,
-          name: data.name.trim(),
-          industry: data.industry.trim()
-        };
-
-        // Submit data to API
-        const response = await fetch('/api/clients', {
-          method: initialData ? 'PUT' : 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken
-          },
-          body: JSON.stringify(sanitizedData)
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to save client');
-        }
-
-        // Log audit trail
-        await audit.log({
-          action: initialData ? 'UPDATE_CLIENT' : 'CREATE_CLIENT',
-          actor: user.id,
-          target: 'client',
-          details: sanitizedData
-        });
-
-        onSuccess();
-      } catch (error) {
-        setError('root', {
-          type: 'submit',
-          message: error instanceof Error ? error.message : 'An error occurred'
-        });
+  // Handle form submission with validation and security checks
+  const onSubmit = async (data: ClientFormData) => {
+    try {
+      const validationResult = useClientFormValidation(data);
+      
+      if (!validationResult.success) {
+        throw new Error('Invalid form data');
       }
-    }, 1000),
-    [csrfToken, initialData, onSuccess, setError, user]
-  );
+
+      await submitForm(validationResult.data);
+      onSuccess();
+    } catch (error) {
+      console.error('Form submission error:', error);
+      throw error;
+    }
+  };
 
   return (
-    <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <form
+    <ErrorBoundary FallbackComponent={FormErrorFallback}>
+      <form 
         onSubmit={handleSubmit(onSubmit)}
         className="client-form"
-        noValidate
-        aria-label="Client management form"
+        aria-label="Client Management Form"
       >
-        <FormField
-          {...register('name')}
-          label="Client Name"
-          error={errors.name?.message}
-          required
-          maxLength={100}
-          disabled={isSubmitting}
-        />
-
-        <FormField
-          {...register('industry')}
-          label="Industry"
-          error={errors.industry?.message}
-          required
-          disabled={isSubmitting}
-        />
-
-        <FormField
-          {...register('maxUsers', { valueAsNumber: true })}
-          label="Maximum Users"
-          type="number"
-          error={errors.maxUsers?.message}
-          required
-          disabled={isSubmitting}
-        />
-
-        <fieldset>
-          <legend>Portal Settings</legend>
-          
+        {formFields.map((field) => (
           <FormField
-            {...register('settings.theme')}
-            label="Theme"
-            type="select"
-            options={[
-              { value: 'light', label: 'Light' },
-              { value: 'dark', label: 'Dark' },
-              { value: 'system', label: 'System Default' }
-            ]}
-            error={errors.settings?.theme?.message}
+            key={field.name}
+            {...field}
+            {...register(field.name)}
+            error={errors[field.name]?.message}
             disabled={isSubmitting}
           />
+        ))}
 
-          <FormField
-            {...register('settings.language')}
-            label="Language"
-            type="select"
-            options={[
-              { value: 'en', label: 'English' },
-              { value: 'es', label: 'Español' },
-              { value: 'fr', label: 'Français' }
-            ]}
-            error={errors.settings?.language?.message}
+        <div className="form-controls">
+          <button
+            type="submit"
             disabled={isSubmitting}
-          />
-
-          <div className="feature-toggles">
-            <FormField
-              {...register('settings.features.chat')}
-              label="Enable Chat"
-              type="checkbox"
-              error={errors.settings?.features?.chat?.message}
-              disabled={isSubmitting}
-            />
-
-            <FormField
-              {...register('settings.features.export')}
-              label="Enable Export"
-              type="checkbox"
-              error={errors.settings?.features?.export?.message}
-              disabled={isSubmitting}
-            />
-          </div>
-        </fieldset>
-
-        <div className="form-actions">
+            aria-busy={isSubmitting}
+          >
+            {isSubmitting ? 'Saving...' : 'Save Client'}
+          </button>
           <button
             type="button"
             onClick={onCancel}
             disabled={isSubmitting}
-            className="btn-secondary"
           >
             Cancel
-          </button>
-          
-          <button
-            type="submit"
-            disabled={isSubmitting || !isDirty}
-            className="btn-primary"
-          >
-            {isSubmitting ? 'Saving...' : initialData ? 'Update Client' : 'Create Client'}
           </button>
         </div>
       </form>
@@ -253,5 +217,8 @@ export const ClientForm: React.FC<ClientFormProps> = ({
   );
 };
 
+// Named export for the props interface
 export type { ClientFormProps };
+
+// Default export
 export default ClientForm;

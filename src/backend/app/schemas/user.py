@@ -2,7 +2,7 @@
 Pydantic schema models for user data validation and serialization with enhanced security,
 role-based access control, and multi-tenant support.
 
-Version: 1.0.0
+Version: 2.0.0
 """
 
 from datetime import datetime
@@ -31,7 +31,7 @@ class UserBase(BaseModel):
         examples=[UserRole.REGULAR_USER]
     )
     is_active: bool = Field(
-        default=True,
+        True,
         description="User account status"
     )
 
@@ -52,11 +52,11 @@ class UserCreate(UserBase):
     """Pydantic model for secure user creation with strict validation."""
     org_id: UUID4 = Field(
         ...,
-        description="Organization ID for tenant isolation"
+        description="Organization ID for multi-tenant isolation"
     )
     client_id: Optional[UUID4] = Field(
         None,
-        description="Optional client ID for multi-tenant access"
+        description="Optional client ID for client-specific users"
     )
     password: constr(
         min_length=12,
@@ -82,7 +82,16 @@ class UserUpdate(BaseModel):
 
     model_config = ConfigDict(
         populate_by_name=True,
-        strict=True
+        strict=True,
+        json_schema_extra={
+            "example": {
+                "email": "updated@example.com",
+                "full_name": "John Updated Smith",
+                "role": UserRole.CLIENT_ADMIN,
+                "is_active": True,
+                "password": "NewSecureP@ssw0rd123"
+            }
+        }
     )
 
 class UserInDB(UserBase):
@@ -93,11 +102,11 @@ class UserInDB(UserBase):
     )
     org_id: UUID4 = Field(
         ...,
-        description="Organization ID for tenant isolation"
+        description="Organization ID for multi-tenant isolation"
     )
     client_id: Optional[UUID4] = Field(
         None,
-        description="Optional client ID for multi-tenant access"
+        description="Optional client ID for client-specific users"
     )
     hashed_password: str = Field(
         ...,
@@ -117,12 +126,7 @@ class UserInDB(UserBase):
     )
     last_ip: Optional[str] = Field(
         None,
-        description="Last IP address used for login"
-    )
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        strict=True
+        description="IP address of last login attempt"
     )
 
 class User(UserBase):
@@ -133,11 +137,11 @@ class User(UserBase):
     )
     org_id: UUID4 = Field(
         ...,
-        description="Organization ID for tenant isolation"
+        description="Organization ID for multi-tenant isolation"
     )
     client_id: Optional[UUID4] = Field(
         None,
-        description="Optional client ID for multi-tenant access"
+        description="Optional client ID for client-specific users"
     )
     created_at: datetime = Field(
         ...,
@@ -153,22 +157,23 @@ class User(UserBase):
     )
     organization: Optional[Organization] = Field(
         None,
-        description="Associated organization"
+        description="Associated organization details"
     )
     client: Optional[Client] = Field(
         None,
-        description="Associated client for multi-tenant users"
+        description="Associated client details"
     )
 
     @classmethod
-    def from_orm(cls, orm_model: Any) -> 'User':
-        """Create User schema from ORM model with data masking.
+    def from_orm(cls, orm_model: Any) -> "User":
+        """
+        Create User schema from ORM model with data masking.
         
         Args:
             orm_model: SQLAlchemy ORM model instance
             
         Returns:
-            User: Validated User schema instance with masked sensitive data
+            User: Validated and masked user schema instance
             
         Raises:
             ValueError: If ORM model is invalid or missing required fields
@@ -195,17 +200,19 @@ class User(UserBase):
             
             # Create and validate User instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create User from ORM model: {str(e)}")
 
     model_config = ConfigDict(
         from_attributes=True,
+        populate_by_name=True,
         strict=True,
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
-                "org_id": "987fcdeb-51a2-43f7-9876-543210987654",
-                "client_id": "456e789a-b12c-34d5-e678-901234567890",
+                "org_id": "987fcdeb-51a2-43f7-9012-345678901234",
+                "client_id": "456abcde-f123-45f6-789a-bcdef0123456",
                 "email": "user@example.com",
                 "full_name": "John Smith",
                 "role": UserRole.REGULAR_USER,

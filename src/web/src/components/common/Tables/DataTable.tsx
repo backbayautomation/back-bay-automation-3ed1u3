@@ -13,9 +13,11 @@ import {
 } from '@mui/material'; // v5.14.0
 import { ArrowUpward } from '@mui/icons-material'; // v5.14.0
 import { useVirtual } from 'react-virtual'; // v2.10.4
+
 import TablePagination from './TablePagination';
 import { PaginationParams } from '../../../types/common';
 
+// Enhanced column interface with accessibility support
 export interface Column<T> {
   id: string;
   label: string;
@@ -27,6 +29,7 @@ export interface Column<T> {
   customSort?: (a: T, b: T) => number;
 }
 
+// Enhanced props interface with accessibility and virtualization options
 export interface DataTableProps<T> {
   data: T[];
   columns: Column<T>[];
@@ -44,6 +47,7 @@ export interface DataTableProps<T> {
   getRowAriaLabel?: (item: T) => string;
 }
 
+// Memoized hook for sort direction
 const useSortDirection = (
   columnId: string,
   currentSortBy: string,
@@ -62,7 +66,7 @@ const DataTable = <T extends Record<string, any>>({
   columns,
   page = 1,
   pageSize = 10,
-  total,
+  total = 0,
   onPageChange,
   className = '',
   loading = false,
@@ -71,239 +75,160 @@ const DataTable = <T extends Record<string, any>>({
   virtualRowHeight = 52,
   ariaLabel = 'Data table',
   ariaLabelledBy,
-  getRowAriaLabel = (item: T) => `Row ${item.id || ''}`,
+  getRowAriaLabel = () => '',
 }: DataTableProps<T>): JSX.Element => {
+  // Sorting state
   const [sortBy, setSortBy] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  const [focusedRowIndex, setFocusedRowIndex] = useState<number>(-1);
 
   // Virtualization setup
   const parentRef = React.useRef<HTMLDivElement>(null);
-  const rowVirtualizer = enableVirtualization
-    ? useVirtual({
-        size: data.length,
-        parentRef,
-        estimateSize: React.useCallback(() => virtualRowHeight, [virtualRowHeight]),
-        overscan: 5,
-      })
-    : null;
+  const rowVirtualizer = useVirtual({
+    size: data.length,
+    parentRef: enableVirtualization ? parentRef : null,
+    estimateSize: React.useCallback(() => virtualRowHeight, [virtualRowHeight]),
+    overscan: 5,
+  });
 
-  const handleSort = useCallback(
-    (columnId: string) => {
-      const newSortOrder =
-        columnId === sortBy && sortOrder === 'asc' ? 'desc' : 'asc';
-      setSortBy(columnId);
-      setSortOrder(newSortOrder);
-      onPageChange({
-        page,
-        pageSize,
-        sortBy: columnId,
-        sortOrder: newSortOrder,
-        filters: {},
-      });
-    },
-    [sortBy, sortOrder, page, pageSize, onPageChange]
-  );
-
-  const handleKeyboardSort = useCallback(
-    (event: React.KeyboardEvent<HTMLSpanElement>, columnId: string) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        handleSort(columnId);
+  // Handle sort column click
+  const handleSort = useCallback((columnId: string) => {
+    setSortBy(prevSortBy => {
+      if (prevSortBy === columnId) {
+        setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+      } else {
+        setSortOrder('asc');
       }
-    },
-    [handleSort]
-  );
+      return columnId;
+    });
 
-  const handleRowFocus = useCallback((index: number) => {
-    setFocusedRowIndex(index);
-  }, []);
+    onPageChange({
+      page,
+      pageSize,
+      sortBy: columnId,
+      sortOrder: sortBy === columnId && sortOrder === 'asc' ? 'desc' : 'asc',
+      filters: {},
+    });
+  }, [page, pageSize, sortBy, sortOrder, onPageChange]);
 
-  const handleRowKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLTableRowElement>, index: number) => {
-      switch (event.key) {
-        case 'ArrowDown':
-          event.preventDefault();
-          if (index < data.length - 1) {
-            setFocusedRowIndex(index + 1);
+  // Render table header
+  const renderHeader = useCallback(() => (
+    <TableHead>
+      <TableRow>
+        {columns.map(column => {
+          const sortDirection = useSortDirection(column.id, sortBy, sortOrder);
+          return (
+            <TableCell
+              key={column.id}
+              className={column.headerClassName}
+              sx={styles['table-header-cell']}
+              sortDirection={sortDirection}
+              aria-sort={
+                sortDirection
+                  ? sortDirection === 'asc'
+                    ? 'ascending'
+                    : 'descending'
+                  : undefined
+              }
+            >
+              {column.sortable ? (
+                <TableSortLabel
+                  active={sortBy === column.id}
+                  direction={sortDirection || 'asc'}
+                  onClick={() => handleSort(column.id)}
+                  IconComponent={ArrowUpward}
+                  sx={styles['sort-label']}
+                  aria-label={`Sort by ${column.ariaLabel || column.label}`}
+                >
+                  {column.label}
+                </TableSortLabel>
+              ) : (
+                column.label
+              )}
+            </TableCell>
+          );
+        })}
+      </TableRow>
+    </TableHead>
+  ), [columns, sortBy, sortOrder, handleSort]);
+
+  // Render table body
+  const renderBody = useCallback(() => {
+    if (loading) {
+      return (
+        <TableRow>
+          <TableCell colSpan={columns.length} align="center">
+            <Box sx={styles['loading-overlay']}>
+              <CircularProgress aria-label="Loading data" />
+            </Box>
+          </TableCell>
+        </TableRow>
+      );
+    }
+
+    if (!data.length) {
+      return (
+        <TableRow>
+          <TableCell colSpan={columns.length} sx={styles['empty-message']}>
+            <span role="status">{emptyMessage}</span>
+          </TableCell>
+        </TableRow>
+      );
+    }
+
+    const renderRows = enableVirtualization
+      ? rowVirtualizer.virtualItems
+      : data.map((_, index) => ({ index }));
+
+    return renderRows.map(virtualRow => {
+      const item = data[virtualRow.index];
+      return (
+        <TableRow
+          key={virtualRow.index}
+          sx={styles['table-row-hover']}
+          aria-label={getRowAriaLabel(item)}
+          style={
+            enableVirtualization
+              ? {
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }
+              : undefined
           }
-          break;
-        case 'ArrowUp':
-          event.preventDefault();
-          if (index > 0) {
-            setFocusedRowIndex(index - 1);
-          }
-          break;
-      }
-    },
-    [data.length]
-  );
+        >
+          {columns.map(column => (
+            <TableCell
+              key={column.id}
+              className={column.cellClassName}
+              sx={styles['table-cell']}
+            >
+              {column.render(item)}
+            </TableCell>
+          ))}
+        </TableRow>
+      );
+    });
+  }, [
+    data,
+    columns,
+    loading,
+    emptyMessage,
+    enableVirtualization,
+    rowVirtualizer,
+    getRowAriaLabel,
+  ]);
 
   return (
-    <div className={className}>
+    <Paper elevation={0} className={className}>
       <TableContainer
-        component={Paper}
-        sx={{
-          width: '100%',
-          overflow: 'auto',
-          position: 'relative',
-          '& .MuiTableCell-root': {
-            padding: '16px',
-          },
-        }}
+        sx={styles['table-container']}
+        ref={parentRef}
+        aria-busy={loading}
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledBy}
       >
-        <Table
-          aria-label={ariaLabel}
-          aria-labelledby={ariaLabelledBy}
-          aria-busy={loading}
-        >
-          <TableHead>
-            <TableRow>
-              {columns.map((column) => {
-                const sortDirection = useSortDirection(
-                  column.id,
-                  sortBy,
-                  sortOrder
-                );
-                return (
-                  <TableCell
-                    key={column.id}
-                    className={column.headerClassName}
-                    sx={{
-                      fontWeight: 600,
-                      backgroundColor: '#f5f5f5',
-                      '&:hover': {
-                        backgroundColor: column.sortable ? '#e0e0e0' : undefined,
-                      },
-                    }}
-                  >
-                    {column.sortable ? (
-                      <TableSortLabel
-                        active={sortDirection !== false}
-                        direction={sortDirection || 'asc'}
-                        onClick={() => handleSort(column.id)}
-                        onKeyDown={(e) => handleKeyboardSort(e, column.id)}
-                        IconComponent={ArrowUpward}
-                        aria-label={`Sort by ${column.ariaLabel || column.label}`}
-                        sx={{
-                          '&.MuiTableSortLabel-root': {
-                            '&:focus': {
-                              outline: '2px solid #0066CC',
-                              outlineOffset: '2px',
-                            },
-                          },
-                        }}
-                      >
-                        {column.label}
-                      </TableSortLabel>
-                    ) : (
-                      column.label
-                    )}
-                  </TableCell>
-                );
-              })}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={columns.length} align="center">
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      padding: '2rem',
-                    }}
-                  >
-                    <CircularProgress aria-label="Loading data" />
-                  </Box>
-                </TableCell>
-              </TableRow>
-            ) : data.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  align="center"
-                  sx={{
-                    padding: '2rem',
-                    color: 'rgba(0, 0, 0, 0.6)',
-                  }}
-                >
-                  <Box role="status">{emptyMessage}</Box>
-                </TableCell>
-              </TableRow>
-            ) : enableVirtualization && rowVirtualizer ? (
-              <React.Fragment>
-                {rowVirtualizer.virtualItems.map((virtualRow) => {
-                  const item = data[virtualRow.index];
-                  return (
-                    <TableRow
-                      key={virtualRow.index}
-                      tabIndex={
-                        focusedRowIndex === virtualRow.index ? 0 : -1
-                      }
-                      onFocus={() => handleRowFocus(virtualRow.index)}
-                      onKeyDown={(e) =>
-                        handleRowKeyDown(e, virtualRow.index)
-                      }
-                      aria-label={getRowAriaLabel(item)}
-                      sx={{
-                        height: `${virtualRow.size}px`,
-                        transform: `translateY(${virtualRow.start}px)`,
-                        '&:hover': {
-                          backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                        },
-                        '&:focus-within': {
-                          backgroundColor: 'rgba(0, 102, 204, 0.08)',
-                          outline: '2px solid #0066CC',
-                          outlineOffset: '-2px',
-                        },
-                      }}
-                    >
-                      {columns.map((column) => (
-                        <TableCell
-                          key={column.id}
-                          className={column.cellClassName}
-                        >
-                          {column.render(item)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  );
-                })}
-              </React.Fragment>
-            ) : (
-              data.map((item, index) => (
-                <TableRow
-                  key={index}
-                  tabIndex={focusedRowIndex === index ? 0 : -1}
-                  onFocus={() => handleRowFocus(index)}
-                  onKeyDown={(e) => handleRowKeyDown(e, index)}
-                  aria-label={getRowAriaLabel(item)}
-                  sx={{
-                    '&:hover': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                    '&:focus-within': {
-                      backgroundColor: 'rgba(0, 102, 204, 0.08)',
-                      outline: '2px solid #0066CC',
-                      outlineOffset: '-2px',
-                    },
-                  }}
-                >
-                  {columns.map((column) => (
-                    <TableCell
-                      key={column.id}
-                      className={column.cellClassName}
-                    >
-                      {column.render(item)}
-                    </TableCell>
-                  ))}
-                </TableRow>
-              ))
-            )}
-          </TableBody>
+        <Table>
+          {renderHeader()}
+          <TableBody>{renderBody()}</TableBody>
         </Table>
       </TableContainer>
 
@@ -313,10 +238,62 @@ const DataTable = <T extends Record<string, any>>({
         total={total}
         onPageChange={onPageChange}
         loading={loading}
-        ariaLabel="Table pagination controls"
+        ariaLabel={`${ariaLabel} pagination`}
       />
-    </div>
+    </Paper>
   );
 };
+
+// Styles following design system specifications
+const styles = {
+  'table-container': {
+    width: '100%',
+    overflow: 'auto',
+    position: 'relative',
+  },
+  'table-header-cell': {
+    fontWeight: 600,
+    backgroundColor: '#f5f5f5',
+    '&[aria-sort]:hover': {
+      backgroundColor: '#e0e0e0',
+    },
+  },
+  'table-cell': {
+    padding: '16px',
+    '&[data-focus-visible]:focus-within': {
+      outline: '2px solid #0066CC',
+    },
+  },
+  'table-row-hover': {
+    '&:hover': {
+      backgroundColor: 'rgba(0, 0, 0, 0.04)',
+    },
+    '&:focus-within': {
+      backgroundColor: 'rgba(0, 102, 204, 0.08)',
+    },
+  },
+  'sort-label': {
+    marginLeft: '8px',
+    '&[aria-sort]:focus': {
+      outline: '2px solid #0066CC',
+    },
+  },
+  'loading-overlay': {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  'empty-message': {
+    textAlign: 'center',
+    padding: '32px',
+    color: 'rgba(0, 0, 0, 0.6)',
+  },
+} as const;
 
 export default DataTable;

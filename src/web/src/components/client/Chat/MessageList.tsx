@@ -1,12 +1,20 @@
-import React, { useRef, useEffect, useCallback } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual'; // v3.0.0
-import { styled } from '@mui/material/styles'; // v5.14.0
-import { Box } from '@mui/material'; // v5.14.0
-import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
+import React from 'react'; // react@18.2.0
+import { useVirtualizer } from '@tanstack/react-virtual'; // @tanstack/react-virtual@3.0.0
+import { styled } from '@mui/material/styles'; // @mui/material/styles@5.14.0
+import { Box } from '@mui/material'; // @mui/material@5.14.0
+import { ErrorBoundary } from 'react-error-boundary'; // react-error-boundary@4.0.11
+import { useSelector } from 'react-redux'; // react-redux@8.1.0
+
 import ChatBubble from './ChatBubble';
 import { Message } from '../../../types/chat';
 import { selectCurrentSession } from '../../../redux/slices/chatSlice';
-import { useSelector } from 'react-redux';
+
+// Props interface with comprehensive options
+interface MessageListProps {
+  isLoading: boolean;
+  onScrollTop: () => void;
+  hasMoreMessages: boolean;
+}
 
 // Styled container with enhanced accessibility and scrolling behavior
 const MessageListContainer = styled(Box)(({ theme }) => ({
@@ -18,72 +26,94 @@ const MessageListContainer = styled(Box)(({ theme }) => ({
   gap: theme.spacing(2),
   scrollBehavior: 'smooth',
   position: 'relative',
-  backgroundColor: theme.palette.background.paper,
+  background: theme.palette.background.paper,
   borderRadius: theme.shape.borderRadius,
+  
+  // Enhanced scrollbar styling
   '&::-webkit-scrollbar': {
     width: '8px',
   },
   '&::-webkit-scrollbar-track': {
-    backgroundColor: theme.palette.mode === 'light' 
+    background: theme.palette.mode === 'light' 
       ? theme.palette.grey[200] 
       : theme.palette.grey[800],
     borderRadius: '4px',
   },
   '&::-webkit-scrollbar-thumb': {
-    backgroundColor: theme.palette.mode === 'light'
+    background: theme.palette.mode === 'light'
       ? theme.palette.grey[400]
       : theme.palette.grey[600],
     borderRadius: '4px',
     '&:hover': {
-      backgroundColor: theme.palette.mode === 'light'
+      background: theme.palette.mode === 'light'
         ? theme.palette.grey[500]
         : theme.palette.grey[500],
     },
   },
+
+  // Focus management
   '&:focus': {
     outline: `2px solid ${theme.palette.primary.main}`,
     outlineOffset: '2px',
   },
+
+  // Touch optimization
+  '@media (hover: none)': {
+    touchAction: 'manipulation',
+  },
+
+  // Reduced motion support
   '@media (prefers-reduced-motion: reduce)': {
     scrollBehavior: 'auto',
   },
-  touchAction: 'manipulation',
 }));
 
-interface MessageListProps {
-  isLoading: boolean;
-  onScrollTop: () => void;
-  hasMoreMessages: boolean;
-}
-
 // Custom hook for managing scroll behavior
-const useScrollToBottom = (containerRef: React.RefObject<HTMLDivElement>, shouldScroll: boolean) => {
-  const scrollToBottom = useCallback(() => {
-    if (containerRef.current && shouldScroll) {
-      const { scrollHeight, clientHeight } = containerRef.current;
-      const scrollTo = scrollHeight - clientHeight;
-      
+const useScrollToBottom = (
+  containerRef: React.RefObject<HTMLDivElement>,
+  shouldScroll: boolean
+): (() => void) => {
+  return React.useCallback(() => {
+    if (!containerRef.current || !shouldScroll) return;
+
+    const { scrollHeight, clientHeight } = containerRef.current;
+    const maxScroll = scrollHeight - clientHeight;
+
+    if (maxScroll > 0) {
       containerRef.current.scrollTo({
-        top: scrollTo,
+        top: maxScroll,
         behavior: 'smooth',
       });
     }
   }, [containerRef, shouldScroll]);
-
-  return scrollToBottom;
 };
 
+// Error fallback component
+const ErrorFallback: React.FC<{ error: Error }> = ({ error }) => (
+  <Box
+    role="alert"
+    p={2}
+    bgcolor="error.main"
+    color="error.contrastText"
+    borderRadius={1}
+  >
+    <h3>Something went wrong displaying messages</h3>
+    <pre>{error.message}</pre>
+  </Box>
+);
+
+// Main component with performance optimizations
 const MessageList = React.memo<MessageListProps>(({
   isLoading,
   onScrollTop,
   hasMoreMessages,
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const observerRef = useRef<IntersectionObserver | null>(null);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const observerRef = React.useRef<IntersectionObserver | null>(null);
   const currentSession = useSelector(selectCurrentSession);
-  const messages = currentSession?.messages || [];
+  const messages = currentSession?.messages ?? [];
 
-  // Set up virtualized list
+  // Virtual list configuration
   const rowVirtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => containerRef.current,
@@ -91,64 +121,64 @@ const MessageList = React.memo<MessageListProps>(({
     overscan: 5,
   });
 
-  // Set up infinite scroll observer
-  useEffect(() => {
-    if (hasMoreMessages) {
-      const observer = new IntersectionObserver(
-        (entries) => {
-          if (entries[0].isIntersecting) {
-            onScrollTop();
-          }
-        },
-        { threshold: 0.1 }
-      );
+  // Auto-scroll management
+  const shouldAutoScroll = React.useRef(true);
+  const scrollToBottom = useScrollToBottom(containerRef, shouldAutoScroll.current);
 
-      if (containerRef.current) {
-        observer.observe(containerRef.current);
-      }
+  // Scroll position tracking
+  const handleScroll = React.useCallback(() => {
+    if (!containerRef.current) return;
 
-      observerRef.current = observer;
+    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
+    shouldAutoScroll.current = scrollHeight - scrollTop === clientHeight;
+  }, []);
 
-      return () => {
-        if (observerRef.current) {
-          observerRef.current.disconnect();
+  // Infinite scroll setup
+  React.useEffect(() => {
+    if (!hasMoreMessages) return;
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          onScrollTop();
         }
-      };
+      },
+      { threshold: 0.1 }
+    );
+
+    const firstMessage = containerRef.current?.firstElementChild;
+    if (firstMessage) {
+      observerRef.current.observe(firstMessage);
     }
+
+    return () => observerRef.current?.disconnect();
   }, [hasMoreMessages, onScrollTop]);
 
-  // Auto-scroll to bottom on new messages
-  const scrollToBottom = useScrollToBottom(containerRef, messages.length > 0);
-  
-  useEffect(() => {
-    scrollToBottom();
+  // Auto-scroll on new messages
+  React.useEffect(() => {
+    if (shouldAutoScroll.current) {
+      scrollToBottom();
+    }
   }, [messages.length, scrollToBottom]);
 
   // Keyboard navigation
-  const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
-    if (event.key === 'Home') {
-      containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-    } else if (event.key === 'End') {
+  const handleKeyDown = React.useCallback((event: React.KeyboardEvent) => {
+    if (event.key === 'End') {
+      event.preventDefault();
       scrollToBottom();
     }
   }, [scrollToBottom]);
 
   return (
-    <ErrorBoundary
-      fallback={
-        <Box p={2} color="error.main">
-          Error loading messages. Please refresh the page.
-        </Box>
-      }
-    >
+    <ErrorBoundary FallbackComponent={ErrorFallback}>
       <MessageListContainer
         ref={containerRef}
+        onScroll={handleScroll}
+        onKeyDown={handleKeyDown}
+        tabIndex={0}
         role="log"
         aria-live="polite"
-        aria-label="Chat message list"
-        tabIndex={0}
-        onKeyDown={handleKeyDown}
-        data-testid="message-list"
+        aria-label="Chat message history"
       >
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
           const message = messages[virtualRow.index];
@@ -157,21 +187,10 @@ const MessageList = React.memo<MessageListProps>(({
               key={message.id}
               message={message}
               isLoading={isLoading && virtualRow.index === messages.length - 1}
+              className="message-item"
             />
           );
         })}
-        
-        {messages.length === 0 && !isLoading && (
-          <Box
-            sx={{
-              textAlign: 'center',
-              color: 'text.secondary',
-              py: 4,
-            }}
-          >
-            No messages yet. Start a conversation!
-          </Box>
-        )}
       </MessageListContainer>
     </ErrorBoundary>
   );

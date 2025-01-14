@@ -1,10 +1,12 @@
 import React, { useMemo, useCallback } from 'react';
 import { Tooltip, Chip, Skeleton } from '@mui/material'; // v5.14.0
 import { Edit, Delete, Settings } from '@mui/icons-material'; // v5.14.0
-import { DataTable, Column } from '../../common/Tables/DataTable';
-import { IconButton } from '../../common/Buttons/IconButton';
+
+import DataTable, { Column } from '../../common/Tables/DataTable';
+import IconButton from '../../common/Buttons/IconButton';
 import { Client, ClientStatus } from '../../../types/client';
 
+// Props interface following the requirements
 interface ClientTableProps {
   clients: Client[];
   page: number;
@@ -18,22 +20,23 @@ interface ClientTableProps {
   onSettings: (client: Client) => Promise<void>;
 }
 
+// Status color mapping following design system specifications
 const getClientStatusColor = (status: ClientStatus): string => {
   switch (status) {
     case ClientStatus.ACTIVE:
-      return '#4CAF50';
+      return '#4CAF50'; // success.main
     case ClientStatus.INACTIVE:
-      return '#DC3545';
+      return '#DC3545'; // error.main
     case ClientStatus.PENDING:
-      return '#FFC107';
+      return '#FFC107'; // warning.main
     case ClientStatus.SUSPENDED:
-      return '#9E1C23';
+      return '#B71C1C'; // error.dark
     default:
-      return '#757575';
+      return '#757575'; // grey.600
   }
 };
 
-const ClientTable: React.FC<ClientTableProps> = React.memo(({
+const ClientTable: React.FC<ClientTableProps> = ({
   clients,
   page,
   pageSize,
@@ -43,109 +46,110 @@ const ClientTable: React.FC<ClientTableProps> = React.memo(({
   onPageChange,
   onEdit,
   onDelete,
-  onSettings
+  onSettings,
 }) => {
-  const handlePageChange = useCallback(({ page: newPage, pageSize: newPageSize }) => {
-    onPageChange(newPage, newPageSize);
-  }, [onPageChange]);
+  // Memoized action handlers for performance
+  const handleEdit = useCallback(async (client: Client) => {
+    await onEdit(client);
+  }, [onEdit]);
 
+  const handleDelete = useCallback(async (client: Client) => {
+    await onDelete(client);
+  }, [onDelete]);
+
+  const handleSettings = useCallback(async (client: Client) => {
+    await onSettings(client);
+  }, [onSettings]);
+
+  // Memoized column definitions
   const columns = useMemo<Column<Client>[]>(() => [
     {
       id: 'name',
       label: 'Client Name',
       sortable: true,
-      ariaLabel: 'Sort by client name',
       render: (client: Client) => (
-        <span className="client-name" style={{ fontWeight: 500, color: '#0066CC' }}>
+        <span className="client-name" sx={styles['client-name']}>
           {client.name}
         </span>
       ),
-      headerClassName: 'client-name-header'
+      ariaLabel: 'Sort by client name'
     },
     {
       id: 'status',
       label: 'Status',
       sortable: true,
-      ariaLabel: 'Sort by status',
       render: (client: Client) => (
         <Chip
           label={client.status}
           sx={{
+            ...styles['status-chip'],
             backgroundColor: getClientStatusColor(client.status),
-            color: '#FFFFFF',
-            minWidth: '80px',
-            textAlign: 'center',
-            borderRadius: '16px',
-            padding: '4px 12px',
-            fontWeight: 500
+            color: '#FFFFFF'
           }}
-          aria-label={`Status: ${client.status}`}
         />
-      )
+      ),
+      ariaLabel: 'Sort by status'
     },
     {
-      id: 'maxUsers',
-      label: 'Users',
+      id: 'documents',
+      label: 'Documents',
       sortable: true,
-      ariaLabel: 'Sort by maximum users',
-      render: (client: Client) => client.config.maxUsers.toString()
+      render: (client: Client) => client.metadata.documentCount || 0,
+      ariaLabel: 'Sort by document count'
     },
     {
       id: 'lastActive',
       label: 'Last Active',
       sortable: true,
-      ariaLabel: 'Sort by last active date',
       render: (client: Client) => {
-        const date = new Date(client.updatedAt);
+        const date = new Date(client.metadata.lastActive as string);
         return date.toLocaleDateString('en-US', {
           year: 'numeric',
           month: 'short',
           day: 'numeric'
         });
-      }
+      },
+      ariaLabel: 'Sort by last active date'
     },
     {
       id: 'actions',
       label: 'Actions',
       sortable: false,
       render: (client: Client) => (
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
-          <Tooltip title="Edit client">
+        <div className="action-cell" sx={styles['action-cell']}>
+          <Tooltip title="Edit Client">
             <span>
               <IconButton
                 color="primary"
-                size="medium"
-                onClick={() => onEdit(client)}
-                ariaLabel={`Edit ${client.name}`}
+                onClick={() => handleEdit(client)}
+                ariaLabel="Edit client"
                 disabled={loading}
               >
                 <Edit />
               </IconButton>
             </span>
           </Tooltip>
-
-          <Tooltip title="Client settings">
+          
+          <Tooltip title="Client Settings">
             <span>
               <IconButton
                 color="info"
-                size="medium"
-                onClick={() => onSettings(client)}
-                ariaLabel={`Settings for ${client.name}`}
+                onClick={() => handleSettings(client)}
+                ariaLabel="Client settings"
                 disabled={loading}
               >
                 <Settings />
               </IconButton>
             </span>
           </Tooltip>
-
-          <Tooltip title="Delete client">
+          
+          <Tooltip title="Delete Client">
             <span>
               <IconButton
                 color="error"
-                size="medium"
-                onClick={() => onDelete(client)}
-                ariaLabel={`Delete ${client.name}`}
-                disabled={loading || client.status === ClientStatus.ACTIVE}
+                onClick={() => handleDelete(client)}
+                ariaLabel="Delete client"
+                disabled={loading}
               >
                 <Delete />
               </IconButton>
@@ -154,50 +158,81 @@ const ClientTable: React.FC<ClientTableProps> = React.memo(({
         </div>
       )
     }
-  ], [loading, onEdit, onDelete, onSettings]);
+  ], [loading, handleEdit, handleDelete, handleSettings]);
 
-  if (error) {
-    return (
-      <div role="alert" style={{ color: '#DC3545', padding: '16px', textAlign: 'center' }}>
-        Error loading clients: {error.message}
-      </div>
-    );
-  }
-
-  if (loading && !clients.length) {
+  // Loading state
+  if (loading) {
     return (
       <div>
         {[...Array(5)].map((_, index) => (
           <Skeleton
             key={index}
             variant="rectangular"
-            height={40}
-            sx={{ marginBottom: 1, borderRadius: '4px' }}
-            aria-label="Loading client data"
+            sx={styles['loading-skeleton']}
           />
         ))}
       </div>
     );
   }
 
+  // Error state
+  if (error) {
+    return (
+      <div className="error-message" sx={styles['error-message']}>
+        Error loading clients: {error.message}
+      </div>
+    );
+  }
+
   return (
-    <DataTable
+    <DataTable<Client>
       data={clients}
       columns={columns}
       page={page}
       pageSize={pageSize}
       total={total}
-      onPageChange={handlePageChange}
+      onPageChange={({ page: newPage, pageSize: newPageSize }) => {
+        onPageChange(newPage, newPageSize);
+      }}
       loading={loading}
-      emptyMessage="No clients found"
-      enableVirtualization={clients.length > 100}
+      enableVirtualization
       virtualRowHeight={52}
-      ariaLabel="Clients table"
-      getRowAriaLabel={(client) => `Client: ${client.name}`}
+      ariaLabel="Client management table"
+      getRowAriaLabel={(client) => `Client ${client.name}`}
     />
   );
-});
+};
 
-ClientTable.displayName = 'ClientTable';
+// Styles following design system specifications
+const styles = {
+  'action-cell': {
+    display: 'flex',
+    gap: '8px',
+    justifyContent: 'flex-end',
+    alignItems: 'center'
+  },
+  'status-chip': {
+    minWidth: '80px',
+    textAlign: 'center',
+    borderRadius: '16px',
+    padding: '4px 12px',
+    fontWeight: 500
+  },
+  'client-name': {
+    fontWeight: 500,
+    color: 'primary.main',
+    textDecoration: 'none'
+  },
+  'loading-skeleton': {
+    height: '40px',
+    borderRadius: '4px',
+    marginBottom: '8px'
+  },
+  'error-message': {
+    color: 'error.main',
+    padding: '16px',
+    textAlign: 'center'
+  }
+} as const;
 
-export default ClientTable;
+export default React.memo(ClientTable);

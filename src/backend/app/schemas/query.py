@@ -1,7 +1,12 @@
+"""
+Pydantic schema models for handling natural language queries and search requests.
+Implements comprehensive validation for query processing, vector search parameters, and response formats.
+"""
+
 # pydantic v2.0.0
-from datetime import datetime
-from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict, UUID4
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 from app.schemas.chunk import Chunk
 
@@ -20,22 +25,21 @@ class QueryBase(BaseModel):
         examples=[{
             "document_type": "technical_spec",
             "product_category": "pumps",
-            "previous_queries": ["Show me all pump models"]
+            "previous_context": "discussing flow rates"
         }]
     )
     request_id: Optional[str] = Field(
         default=None,
         description="Unique identifier for request tracing",
-        examples=["req_123e4567-e89b-12d3-a456-426614174000"]
+        examples=["req_123abc456def"]
     )
     telemetry: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
         description="Query telemetry data",
         examples=[{
-            "client_id": "123e4567-e89b-12d3-a456-426614174000",
-            "timestamp": "2024-01-20T12:00:00Z",
-            "user_agent": "Mozilla/5.0",
-            "session_id": "sess_987fcdeb"
+            "client_timestamp": "2024-01-20T12:00:00Z",
+            "client_info": {"browser": "Chrome", "version": "90.0"},
+            "session_id": "sess_xyz789"
         }]
     )
 
@@ -48,10 +52,10 @@ class QueryBase(BaseModel):
                     "document_type": "technical_spec",
                     "product_category": "pumps"
                 },
-                "request_id": "req_123e4567-e89b-12d3-a456-426614174000",
+                "request_id": "req_123abc456def",
                 "telemetry": {
-                    "client_id": "123e4567-e89b-12d3-a456-426614174000",
-                    "timestamp": "2024-01-20T12:00:00Z"
+                    "client_timestamp": "2024-01-20T12:00:00Z",
+                    "client_info": {"browser": "Chrome", "version": "90.0"}
                 }
             }
         }
@@ -82,6 +86,7 @@ class SearchParameters(BaseModel):
     )
 
     model_config = ConfigDict(
+        populate_by_name=True,
         json_schema_extra={
             "example": {
                 "top_k": 5,
@@ -96,12 +101,11 @@ class QueryResult(BaseModel):
     answer: str = Field(
         ...,
         description="Generated answer text",
-        examples=["The A123 pump model has a flow rate of 500 GPM and pressure of 150 PSI."]
+        examples=["The pump model A123 has a flow rate of 500 GPM and pressure of 150 PSI."]
     )
     relevant_chunks: List[Chunk] = Field(
-        ...,
-        description="List of relevant document chunks used for answer generation",
-        min_items=1
+        default_factory=list,
+        description="Relevant document chunks used for answer generation"
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
@@ -109,7 +113,7 @@ class QueryResult(BaseModel):
         examples=[{
             "model_version": "gpt-4",
             "tokens_used": 150,
-            "processing_steps": ["retrieval", "synthesis", "validation"]
+            "processing_steps": ["retrieval", "reranking", "generation"]
         }]
     )
     confidence_score: float = Field(
@@ -123,55 +127,61 @@ class QueryResult(BaseModel):
         ...,
         ge=0.0,
         description="Total processing time in seconds",
-        examples=[0.45, 1.23, 2.01]
+        examples=[0.45, 1.23, 2.56]
     )
     source_documents: List[str] = Field(
-        ...,
+        default_factory=list,
         description="List of source document references",
-        examples=[
-            ["technical_spec_a123.pdf", "pump_catalog_2024.pdf"]
-        ]
+        examples=[["tech_spec_123.pdf", "product_manual_456.docx"]]
     )
     error_message: Optional[str] = Field(
-        None,
+        default=None,
         description="Error message if query processing failed",
         examples=["Failed to retrieve relevant documents"]
     )
     telemetry_data: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Detailed telemetry data for monitoring and analytics",
+        description="Detailed telemetry data for monitoring",
         examples=[{
-            "request_id": "req_123e4567",
-            "timestamp": "2024-01-20T12:00:00Z",
-            "vector_search_time": 0.15,
-            "llm_processing_time": 0.85
+            "retrieval_time": 0.15,
+            "generation_time": 0.30,
+            "cache_hits": 0,
+            "vector_operations": 125
         }]
     )
     cache_info: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Cache hit/miss information",
+        default=None,
+        description="Cache-related information",
         examples=[{
             "cache_hit": True,
-            "cache_key": "query_12345",
+            "cache_key": "query_xyz789",
             "ttl": 3600
         }]
     )
 
     model_config = ConfigDict(
+        populate_by_name=True,
         json_schema_extra={
             "example": {
-                "answer": "The A123 pump model has a flow rate of 500 GPM and pressure of 150 PSI.",
+                "answer": "The pump model A123 has a flow rate of 500 GPM and pressure of 150 PSI.",
                 "relevant_chunks": [],
                 "metadata": {
                     "model_version": "gpt-4",
-                    "tokens_used": 150
+                    "tokens_used": 150,
+                    "processing_steps": ["retrieval", "reranking", "generation"]
                 },
                 "confidence_score": 0.95,
-                "processing_time": 1.23,
-                "source_documents": ["technical_spec_a123.pdf"],
+                "processing_time": 0.45,
+                "source_documents": ["tech_spec_123.pdf"],
+                "error_message": None,
                 "telemetry_data": {
-                    "request_id": "req_123e4567",
-                    "timestamp": "2024-01-20T12:00:00Z"
+                    "retrieval_time": 0.15,
+                    "generation_time": 0.30,
+                    "cache_hits": 0
+                },
+                "cache_info": {
+                    "cache_hit": False,
+                    "cache_key": "query_xyz789"
                 }
             }
         }

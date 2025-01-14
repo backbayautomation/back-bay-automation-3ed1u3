@@ -1,15 +1,25 @@
 /**
- * WebSocket Context Provider for managing real-time communication
- * Version: 1.0.0
- * Dependencies:
- * - react: 18.2.0
+ * @fileoverview Enhanced WebSocket context provider for real-time communication
+ * @version 1.0.0
  */
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'; // v18.2.0
 import { WebSocketClient, WS_EVENTS } from '../api/websocket';
 import { Message } from '../types/chat';
 
-// Enhanced WebSocket context state interface
+/**
+ * Enhanced interface for WebSocket connection status
+ */
+enum ConnectionStatus {
+  DISCONNECTED = 'disconnected',
+  CONNECTING = 'connecting',
+  CONNECTED = 'connected',
+  RECONNECTING = 'reconnecting'
+}
+
+/**
+ * Enhanced interface for WebSocket context state
+ */
 interface WebSocketContextState {
   isConnected: boolean;
   isConnecting: boolean;
@@ -22,10 +32,12 @@ interface WebSocketContextState {
   addListener: (event: string, callback: Function) => void;
   removeListener: (event: string, callback: Function) => void;
   clearMessageQueue: () => void;
-  getConnectionStatus: () => string;
+  getConnectionStatus: () => ConnectionStatus;
 }
 
-// Enhanced provider props interface
+/**
+ * Enhanced interface for WebSocket provider props
+ */
 interface WebSocketProviderProps {
   children: React.ReactNode;
   baseUrl: string;
@@ -37,10 +49,12 @@ interface WebSocketProviderProps {
   messageQueueSize?: number;
 }
 
-// Create context with comprehensive type safety
+// Create WebSocket context with enhanced error handling
 const WebSocketContext = createContext<WebSocketContextState | null>(null);
 
-// Enhanced WebSocket Provider component
+/**
+ * Enhanced WebSocket provider component with advanced features
+ */
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
   children,
   baseUrl,
@@ -51,75 +65,63 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
   heartbeatInterval = 30000,
   messageQueueSize = 100
 }) => {
+  const wsClient = useRef<WebSocketClient | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [lastError, setLastError] = useState<Error | null>(null);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
   const [messageQueue, setMessageQueue] = useState<Message[]>([]);
+  const heartbeatTimer = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // Mutable refs for cleanup and state management
-  const wsClientRef = useRef<WebSocketClient | null>(null);
-  const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Enhanced connection handler with retry logic
+  /**
+   * Enhanced connection handler with retry logic
+   */
   const connect = useCallback(async () => {
     if (isConnecting || isConnected) return;
 
-    setIsConnecting(true);
-    setLastError(null);
-
     try {
-      if (!wsClientRef.current) {
-        wsClientRef.current = new WebSocketClient(baseUrl, token, {
+      setIsConnecting(true);
+      setLastError(null);
+
+      if (!wsClient.current) {
+        wsClient.current = new WebSocketClient(baseUrl, token, {
           reconnectMaxAttempts: maxRetries,
+          reconnectBaseDelay: retryDelay,
           heartbeatInterval,
           messageBufferSize: messageQueueSize
         });
       }
 
-      // Set up connection state listeners
-      wsClientRef.current.on(WS_EVENTS.CONNECTION_HEALTH, ({ connected }) => {
-        setIsConnected(connected);
-        setIsConnecting(false);
-        if (connected) {
-          setConnectionAttempts(0);
-        }
-      });
-
-      // Handle connection errors
-      wsClientRef.current.on(WS_EVENTS.ERROR, (error: Error) => {
-        setLastError(error);
-        setIsConnecting(false);
-        setIsConnected(false);
-
-        if (connectionAttempts < maxRetries) {
-          setConnectionAttempts(prev => prev + 1);
-          reconnectTimerRef.current = setTimeout(() => {
-            connect();
-          }, retryDelay * Math.pow(2, connectionAttempts));
-        }
-      });
-
-      await wsClientRef.current.connect();
+      await wsClient.current.connect();
+      setIsConnected(true);
+      setConnectionAttempts(0);
+      processMessageQueue();
     } catch (error) {
       setLastError(error as Error);
+      handleReconnection();
+    } finally {
       setIsConnecting(false);
     }
-  }, [baseUrl, token, maxRetries, heartbeatInterval, messageQueueSize, connectionAttempts, isConnecting, isConnected, retryDelay]);
+  }, [baseUrl, token, maxRetries, retryDelay, heartbeatInterval, messageQueueSize]);
 
-  // Enhanced disconnect handler with cleanup
+  /**
+   * Enhanced disconnect handler with cleanup
+   */
   const disconnect = useCallback(() => {
-    if (heartbeatTimerRef.current) {
-      clearInterval(heartbeatTimerRef.current);
-    }
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
+    if (heartbeatTimer.current) {
+      clearInterval(heartbeatTimer.current);
+      heartbeatTimer.current = null;
     }
 
-    if (wsClientRef.current) {
-      wsClientRef.current.disconnect();
-      wsClientRef.current = null;
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+
+    if (wsClient.current) {
+      wsClient.current.disconnect();
+      wsClient.current = null;
     }
 
     setIsConnected(false);
@@ -127,46 +129,76 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
     setConnectionAttempts(0);
   }, []);
 
-  // Enhanced message sender with queue support
+  /**
+   * Enhanced message sender with queue support
+   */
   const sendMessage = useCallback(async (event: string, data: any) => {
-    if (!wsClientRef.current || !isConnected) {
+    if (!wsClient.current || !isConnected) {
       if (messageQueue.length < messageQueueSize) {
         setMessageQueue(prev => [...prev, { event, data } as Message]);
         return;
       }
-      throw new Error('WebSocket not connected and message queue full');
+      throw new Error('WebSocket disconnected and message queue full');
     }
 
     try {
-      await wsClientRef.current.send(event, data, { retry: true });
+      await wsClient.current.send(event, data, { retry: true });
     } catch (error) {
       setLastError(error as Error);
       throw error;
     }
-  }, [isConnected, messageQueue.length, messageQueueSize]);
+  }, [isConnected, messageQueueSize]);
 
-  // Event listener management
+  /**
+   * Enhanced event listener management
+   */
   const addListener = useCallback((event: string, callback: Function) => {
-    wsClientRef.current?.on(event, callback as any);
+    wsClient.current?.eventEmitter.on(event, callback);
   }, []);
 
   const removeListener = useCallback((event: string, callback: Function) => {
-    wsClientRef.current?.off(event, callback as any);
+    wsClient.current?.eventEmitter.off(event, callback);
   }, []);
 
-  // Message queue management
-  const clearMessageQueue = useCallback(() => {
+  /**
+   * Enhanced message queue processor
+   */
+  const processMessageQueue = useCallback(async () => {
+    if (!isConnected || messageQueue.length === 0) return;
+
+    const queue = [...messageQueue];
     setMessageQueue([]);
-  }, []);
 
-  // Connection status getter
-  const getConnectionStatus = useCallback(() => {
-    if (isConnected) return 'connected';
-    if (isConnecting) return 'connecting';
-    return 'disconnected';
-  }, [isConnected, isConnecting]);
+    for (const message of queue) {
+      try {
+        await sendMessage(message.event as string, message.content);
+      } catch (error) {
+        setMessageQueue(prev => [...prev, message]);
+        break;
+      }
+    }
+  }, [isConnected, messageQueue, sendMessage]);
 
-  // Auto-connect effect
+  /**
+   * Enhanced reconnection handler with exponential backoff
+   */
+  const handleReconnection = useCallback(() => {
+    if (connectionAttempts >= maxRetries) {
+      setLastError(new Error('Max reconnection attempts reached'));
+      return;
+    }
+
+    setConnectionAttempts(prev => prev + 1);
+    const delay = Math.min(retryDelay * Math.pow(2, connectionAttempts), 30000);
+
+    reconnectTimer.current = setTimeout(() => {
+      connect();
+    }, delay);
+  }, [connectionAttempts, maxRetries, retryDelay, connect]);
+
+  /**
+   * Initialize WebSocket connection
+   */
   useEffect(() => {
     if (autoConnect) {
       connect();
@@ -177,22 +209,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
     };
   }, [autoConnect, connect, disconnect]);
 
-  // Heartbeat monitoring effect
-  useEffect(() => {
-    if (isConnected) {
-      heartbeatTimerRef.current = setInterval(() => {
-        sendMessage(WS_EVENTS.CONNECTION_HEALTH, { timestamp: Date.now() })
-          .catch(() => setIsConnected(false));
-      }, heartbeatInterval);
-    }
-
-    return () => {
-      if (heartbeatTimerRef.current) {
-        clearInterval(heartbeatTimerRef.current);
-      }
-    };
-  }, [isConnected, heartbeatInterval, sendMessage]);
-
+  /**
+   * Enhanced context value with comprehensive state and methods
+   */
   const contextValue: WebSocketContextState = {
     isConnected,
     isConnecting,
@@ -204,8 +223,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
     sendMessage,
     addListener,
     removeListener,
-    clearMessageQueue,
-    getConnectionStatus
+    clearMessageQueue: () => setMessageQueue([]),
+    getConnectionStatus: () => {
+      if (isConnected) return ConnectionStatus.CONNECTED;
+      if (isConnecting) return ConnectionStatus.CONNECTING;
+      if (connectionAttempts > 0) return ConnectionStatus.RECONNECTING;
+      return ConnectionStatus.DISCONNECTED;
+    }
   };
 
   return (
@@ -215,7 +239,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({
   );
 };
 
-// Enhanced custom hook for accessing WebSocket context
+/**
+ * Enhanced custom hook for accessing WebSocket context
+ */
 export const useWebSocketContext = (): WebSocketContextState => {
   const context = useContext(WebSocketContext);
   if (!context) {

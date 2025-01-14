@@ -1,45 +1,84 @@
 """
 Celery task module implementing enterprise-grade asynchronous document processing tasks.
-Provides distributed document processing with GPU acceleration, monitoring, and tenant isolation.
+Handles multi-format document ingestion, GPU-accelerated OCR processing, chunking, and vector indexing
+with comprehensive monitoring, error handling, and multi-tenant isolation.
 
 Version: 1.0.0
 """
 
 import logging
 import asyncio
-import celery
-from typing import Dict, Optional
 from uuid import UUID
+from datetime import datetime
+from typing import Dict, Optional
 from prometheus_client import Counter, Histogram, Gauge
-from opentelemetry import trace
 
+from celery import Task
 from app.tasks.celery_app import task
 from app.services.document_processor import DocumentProcessor
-from app.models.document import Document
+from app.models.document import Document, VALID_STATUSES
 from app.core.config import settings
 
-# Configure logging
+# Initialize logger
 logger = logging.getLogger(__name__)
 
-# Constants
+# Global constants from settings
 RETRY_BACKOFF = 300  # 5 minutes
 MAX_RETRIES = 3
 BATCH_SIZE = 32
 MAX_DOCUMENT_SIZE_MB = 100
 PROCESSING_TIMEOUT = 600  # 10 minutes
 
-# Prometheus metrics
-PROCESSING_REQUESTS = Counter('document_processing_requests_total', 'Total document processing requests')
-PROCESSING_ERRORS = Counter('document_processing_errors_total', 'Total processing errors')
-PROCESSING_DURATION = Histogram('document_processing_duration_seconds', 'Document processing duration')
-PROCESSING_QUEUE_SIZE = Gauge('document_processing_queue_size', 'Current size of processing queue')
-OCR_QUALITY_SCORE = Gauge('document_ocr_quality_score', 'OCR processing quality score')
+# Initialize Prometheus metrics
+PROCESSING_DURATION = Histogram(
+    'document_processing_duration_seconds',
+    'Time spent processing documents'
+)
+PROCESSING_ERRORS = Counter(
+    'document_processing_errors_total',
+    'Total number of document processing errors',
+    ['error_type']
+)
+ACTIVE_DOCUMENTS = Gauge(
+    'document_processing_active',
+    'Number of documents currently being processed'
+)
 
-# Initialize tracer
-tracer = trace.get_tracer(__name__)
+class DocumentProcessingTask(Task):
+    """Base task class with enhanced error handling and monitoring."""
+    
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        """Handle task failure with comprehensive error tracking."""
+        PROCESSING_ERRORS.labels(error_type='task_failure').inc()
+        
+        logger.error(
+            f"Document processing task failed: {str(exc)}",
+            extra={
+                'task_id': task_id,
+                'args': args,
+                'kwargs': kwargs,
+                'exception': str(exc),
+                'traceback': einfo.traceback if einfo else None
+            }
+        )
+        
+        # Attempt to update document status
+        try:
+            document_id = args[0] if args else kwargs.get('document_id')
+            if document_id:
+                document = Document.query.get(document_id)
+                if document:
+                    document.update_status('failed')
+                    document.update_metadata({
+                        'error': str(exc),
+                        'failure_time': datetime.utcnow().isoformat()
+                    })
+        except Exception as e:
+            logger.error(f"Failed to update document status: {str(e)}")
 
 @task(
     bind=True,
+    base=DocumentProcessingTask,
     name='tasks.process_document',
     max_retries=MAX_RETRIES,
     retry_backoff=True,
@@ -54,161 +93,109 @@ async def process_document_task(
 ) -> Dict:
     """
     Enterprise-grade Celery task for processing documents with comprehensive monitoring.
-
+    
     Args:
-        document_id: Document identifier
-        tenant_id: Client/tenant identifier
+        document_id: UUID of document to process
+        tenant_id: UUID of tenant for isolation
         processing_options: Optional processing configuration
-
+        
     Returns:
         Dict containing processing results and metrics
-
+        
     Raises:
-        celery.exceptions.Retry: If task should be retried
-        RuntimeError: If processing fails permanently
+        Exception: If processing fails after retries
     """
-    PROCESSING_REQUESTS.inc()
-    processing_start = asyncio.get_event_loop().time()
-
+    ACTIVE_DOCUMENTS.inc()
+    processing_start = datetime.utcnow()
+    
     try:
-        # Initialize correlation ID for request tracking
-        correlation_id = f"proc_{document_id}_{self.request.id}"
-        logger.info(
-            "Starting document processing",
-            extra={
-                'correlation_id': correlation_id,
-                'document_id': str(document_id),
-                'tenant_id': str(tenant_id),
-                'task_id': self.request.id
-            }
+        # Initialize document processor
+        document_processor = DocumentProcessor(
+            ocr_service=settings.get_ocr_service(),
+            ai_service=settings.get_ai_service(),
+            vector_search=settings.get_vector_search_service(),
+            config=processing_options or {}
         )
-
-        # Get document from database
-        document = await Document.get_by_id(document_id)
-        if not document:
-            raise ValueError(f"Document {document_id} not found")
-
-        # Validate tenant access
-        if str(document.client.id) != str(tenant_id):
-            raise PermissionError("Invalid tenant access")
-
+        
+        # Retrieve document with tenant validation
+        document = Document.query.get(document_id)
+        if not document or str(document.client.org_id) != str(tenant_id):
+            raise ValueError("Invalid document or tenant ID")
+            
+        # Validate document size
+        if document.metadata.get('file_size', 0) > MAX_DOCUMENT_SIZE_MB * 1024 * 1024:
+            raise ValueError(f"Document exceeds maximum size of {MAX_DOCUMENT_SIZE_MB}MB")
+            
         # Update document status
         await document.update_status('processing')
-        await document.update_progress(0)
-
-        # Initialize document processor
-        processor = DocumentProcessor(
-            settings.get_document_processing_settings(),
-            tenant_id=tenant_id
-        )
-
-        # Process document with progress tracking
-        async def progress_callback(progress: float):
-            await document.update_progress(progress)
-
-        processing_result = await processor.process_document(
-            document,
-            progress_callback=progress_callback,
-            options=processing_options
-        )
-
+        await document.update_metadata({
+            'processing_start': processing_start.isoformat(),
+            'processor_version': '1.0.0'
+        })
+        
+        # Process document with monitoring
+        with PROCESSING_DURATION.time():
+            processing_result = await document_processor.process_document(
+                document=document,
+                tenant_id=str(tenant_id)
+            )
+            
         # Update document status and metadata
+        processing_time = (datetime.utcnow() - processing_start).total_seconds()
         await document.update_status('completed')
         await document.update_metadata({
-            'processing_metrics': processing_result['metrics'],
-            'ocr_quality': processing_result['metrics']['ocr_quality'],
-            'chunk_count': processing_result['metrics']['chunk_count'],
-            'processing_time': asyncio.get_event_loop().time() - processing_start
+            'processing_end': datetime.utcnow().isoformat(),
+            'processing_time': processing_time,
+            'chunks_processed': processing_result.get('chunks_processed', 0),
+            'embeddings_generated': processing_result.get('embeddings_generated', 0)
         })
-
-        # Update monitoring metrics
-        PROCESSING_DURATION.observe(processing_result['metrics']['processing_time'])
-        OCR_QUALITY_SCORE.set(processing_result['metrics']['ocr_quality'])
-
+        
         logger.info(
-            "Document processing completed successfully",
+            "Document processed successfully",
             extra={
-                'correlation_id': correlation_id,
                 'document_id': str(document_id),
-                'processing_time': processing_result['metrics']['processing_time'],
-                'chunks_processed': processing_result['metrics']['chunk_count']
+                'tenant_id': str(tenant_id),
+                'processing_time': processing_time
             }
         )
-
+        
         return {
-            'status': 'completed',
+            'status': 'success',
             'document_id': str(document_id),
-            'processing_time': processing_result['metrics']['processing_time'],
-            'metrics': processing_result['metrics']
+            'processing_time': processing_time,
+            'metrics': processing_result
         }
-
-    except (ValueError, PermissionError) as e:
-        # Non-retryable errors
-        logger.error(
-            f"Document processing failed permanently: {str(e)}",
-            extra={
-                'correlation_id': correlation_id,
-                'document_id': str(document_id),
-                'error_type': type(e).__name__
-            },
-            exc_info=True
-        )
-        PROCESSING_ERRORS.inc()
         
-        # Update document status
-        await document.update_status('failed')
-        await document.update_metadata({
-            'error': str(e),
-            'error_type': type(e).__name__
-        })
-
-        # Trigger cleanup
-        await cleanup_failed_document_task.delay(
-            document_id,
-            tenant_id,
-            str(e)
-        )
-
-        raise RuntimeError(f"Document processing failed: {str(e)}")
-
     except Exception as e:
-        # Retryable errors
-        retry_count = self.request.retries
-        
-        logger.warning(
-            f"Document processing failed (attempt {retry_count + 1}/{MAX_RETRIES}): {str(e)}",
+        PROCESSING_ERRORS.labels(error_type='processing').inc()
+        logger.error(
+            f"Document processing failed: {str(e)}",
             extra={
-                'correlation_id': correlation_id,
                 'document_id': str(document_id),
-                'retry_count': retry_count,
-                'error_type': type(e).__name__
+                'tenant_id': str(tenant_id),
+                'error': str(e)
             },
             exc_info=True
         )
-
-        # Update document status
-        await document.update_metadata({
-            'last_error': str(e),
-            'retry_count': retry_count + 1
-        })
-
-        if retry_count < MAX_RETRIES:
+        
+        # Retry task if attempts remain
+        if self.request.retries < MAX_RETRIES:
             raise self.retry(
                 exc=e,
-                countdown=RETRY_BACKOFF * (retry_count + 1),
-                max_retries=MAX_RETRIES
+                countdown=RETRY_BACKOFF * (2 ** self.request.retries)
             )
-        
-        # Max retries exceeded
-        PROCESSING_ERRORS.inc()
-        await document.update_status('failed')
+            
+        # Update document status on final failure
         await cleanup_failed_document_task.delay(
-            document_id,
-            tenant_id,
-            str(e)
+            document_id=document_id,
+            tenant_id=tenant_id,
+            failure_reason=str(e)
         )
         
-        raise RuntimeError(f"Document processing failed after {MAX_RETRIES} retries: {str(e)}")
+        raise
+        
+    finally:
+        ACTIVE_DOCUMENTS.dec()
 
 @task(
     name='tasks.cleanup_failed_document',
@@ -221,82 +208,61 @@ async def cleanup_failed_document_task(
 ) -> Dict:
     """
     Cleanup task for failed document processing with resource management.
-
+    
     Args:
-        document_id: Document identifier
-        tenant_id: Client/tenant identifier
-        failure_reason: Reason for processing failure
-
+        document_id: UUID of failed document
+        tenant_id: UUID of tenant
+        failure_reason: Reason for failure
+        
     Returns:
-        Dict containing cleanup status and details
+        Dict containing cleanup status
     """
     try:
+        # Retrieve document with tenant validation
+        document = Document.query.get(document_id)
+        if not document or str(document.client.org_id) != str(tenant_id):
+            raise ValueError("Invalid document or tenant ID")
+            
+        # Update document status
+        await document.update_status('failed')
+        await document.update_metadata({
+            'failure_reason': failure_reason,
+            'failure_time': datetime.utcnow().isoformat(),
+            'cleanup_performed': True
+        })
+        
+        # Release GPU resources if held
+        document_processor = DocumentProcessor(
+            ocr_service=settings.get_ocr_service(),
+            ai_service=settings.get_ai_service(),
+            vector_search=settings.get_vector_search_service(),
+            config={}
+        )
+        await document_processor.cleanup_resources(document_id)
+        
         logger.info(
-            "Starting cleanup for failed document",
+            "Failed document cleanup completed",
             extra={
                 'document_id': str(document_id),
                 'tenant_id': str(tenant_id),
                 'failure_reason': failure_reason
             }
         )
-
-        # Get document
-        document = await Document.get_by_id(document_id)
-        if not document:
-            raise ValueError(f"Document {document_id} not found")
-
-        # Validate tenant access
-        if str(document.client.id) != str(tenant_id):
-            raise PermissionError("Invalid tenant access")
-
-        # Initialize processor for cleanup
-        processor = DocumentProcessor(
-            settings.get_document_processing_settings(),
-            tenant_id=tenant_id
-        )
-
-        # Release GPU resources
-        await processor.cleanup_resources(document_id)
-
-        # Remove temporary files
-        await processor.cleanup_temporary_files(document_id)
-
-        # Update document status and metadata
-        await document.update_status('failed')
-        await document.update_metadata({
-            'cleanup_timestamp': asyncio.get_event_loop().time(),
-            'failure_reason': failure_reason,
-            'resources_cleaned': True
-        })
-
-        logger.info(
-            "Document cleanup completed",
-            extra={
-                'document_id': str(document_id),
-                'tenant_id': str(tenant_id)
-            }
-        )
-
+        
         return {
-            'status': 'completed',
+            'status': 'success',
             'document_id': str(document_id),
-            'cleanup_successful': True
+            'cleanup_time': datetime.utcnow().isoformat()
         }
-
+        
     except Exception as e:
         logger.error(
             f"Document cleanup failed: {str(e)}",
             extra={
                 'document_id': str(document_id),
                 'tenant_id': str(tenant_id),
-                'error_type': type(e).__name__
+                'error': str(e)
             },
             exc_info=True
         )
-        
-        return {
-            'status': 'failed',
-            'document_id': str(document_id),
-            'error': str(e),
-            'cleanup_successful': False
-        }
+        raise

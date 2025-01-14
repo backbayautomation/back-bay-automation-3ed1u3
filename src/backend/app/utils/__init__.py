@@ -1,6 +1,6 @@
 """
-Main entry point for the utils package, exposing commonly used utility functions for security,
-validation, document processing, and vector operations.
+Main entry point for the utils package, exposing commonly used utility functions
+for security, validation, document processing, and vector operations.
 
 Version: 1.0.0
 """
@@ -16,11 +16,12 @@ from .security import (
 from .validators import (
     validate_email,
     validate_password,
+    validate_document_type
 )
 
 # Import document processing utilities
 from .document_utils import (
-    validate_document_type,
+    validate_file_type,
     prepare_for_ocr
 )
 
@@ -40,9 +41,10 @@ __all__ = [
     # Validation utilities
     'validate_email',
     'validate_password',
+    'validate_document_type',
     
     # Document processing utilities
-    'validate_document_type',
+    'validate_file_type',
     'prepare_for_ocr',
     
     # Vector operation utilities
@@ -58,9 +60,5 @@ Comprehensive utility package providing enterprise-grade functions for:
 - Security and input validation
 - Document processing and OCR preparation
 - Vector operations and similarity search
+- Data masking and protection
 '''
-
-# Verify all imported functions are available
-for func_name in __all__:
-    if not func_name in locals():
-        raise ImportError(f"Required function '{func_name}' not properly imported")

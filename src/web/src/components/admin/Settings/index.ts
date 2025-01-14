@@ -9,23 +9,38 @@ import ApiSettings from './ApiSettings';
 import BrandingSettings, { BrandingSettingsProps } from './BrandingSettings';
 import SecuritySettings, { SecuritySettingsProps } from './SecuritySettings';
 
-// Export settings components and their props interfaces
-export {
-    // API Settings component for managing API configuration
+// Export individual components and their props interfaces
+export { 
     ApiSettings,
-    
-    // Branding Settings component and props for portal customization
     BrandingSettings,
-    BrandingSettingsProps,
-    
-    // Security Settings component and props for access control configuration
     SecuritySettings,
-    SecuritySettingsProps,
+    // Export prop interfaces for external consumption
+    type BrandingSettingsProps,
+    type SecuritySettingsProps
 };
 
 // Default export for convenient importing
 export default {
     ApiSettings,
     BrandingSettings,
-    SecuritySettings,
+    SecuritySettings
 };
+
+/**
+ * Component Documentation:
+ * 
+ * ApiSettings: API configuration management component for admin portal
+ * - Handles API key management
+ * - Rate limiting configuration
+ * - CORS and security settings
+ * 
+ * BrandingSettings: Portal customization component with props interface
+ * - Company branding configuration
+ * - Theme customization
+ * - Logo and color management
+ * 
+ * SecuritySettings: Security configuration component with props interface
+ * - Authentication settings
+ * - Password policies
+ * - Compliance controls
+ */

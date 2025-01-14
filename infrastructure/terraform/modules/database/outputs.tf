@@ -1,4 +1,4 @@
-# SQL Server outputs
+# Output variables for Azure SQL Server resources
 output "sql_server_id" {
   value       = azurerm_mssql_server.main.id
   description = "Resource ID of the provisioned Azure SQL Server for resource referencing"
@@ -9,7 +9,6 @@ output "sql_server_fqdn" {
   description = "Fully qualified domain name of the Azure SQL Server for connection purposes"
 }
 
-# SQL Database outputs
 output "sql_database_id" {
   value       = azurerm_mssql_database.main.id
   description = "Resource ID of the provisioned Azure SQL Database for resource referencing"
@@ -20,7 +19,7 @@ output "sql_database_name" {
   description = "Name of the provisioned SQL Database for connection strings and resource identification"
 }
 
-# Cosmos DB outputs
+# Output variables for Cosmos DB resources
 output "cosmos_db_id" {
   value       = azurerm_cosmosdb_account.main.id
   description = "Resource ID of the provisioned Cosmos DB account for resource referencing"

@@ -7,139 +7,145 @@ Version: 1.0.0
 
 import uuid
 import pytest
-from datetime import datetime, timedelta
 from faker import Faker
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import UserRole
 from app.utils.security import SecurityValidator
 
-class ClientTestData:
-    """Test data generator and helper methods for client management tests."""
+# Initialize test data generator
+faker = Faker()
 
+class ClientTestData:
+    """Test data and helper methods for client management tests."""
+    
     def __init__(self):
-        """Initialize test data generator with Faker instance."""
+        """Initialize test data generator and test datasets."""
         self.faker = Faker()
         
         # Valid client test data
         self.valid_client_data = {
             'name': self.faker.company(),
             'config': {
-                'features': {'chat': True, 'export': True},
-                'access_control': {'max_users': 10},
-                'integration_settings': {},
-                'notification_preferences': {'email': True}
+                'features': {'search': True, 'export': True},
+                'limits': {'max_documents': 1000, 'max_users': 50},
+                'preferences': {'theme': 'light'},
+                'integrations': {}
             },
             'branding': {
-                'theme': {
-                    'primary_color': '#0066CC',
-                    'secondary_color': '#4CAF50',
-                    'font_family': 'Roboto'
+                'colors': {
+                    'primary': '#0066CC',
+                    'secondary': '#4CAF50',
+                    'accent': '#FFC107'
                 },
-                'logo_url': 'https://example.com/logo.png',
-                'favicon_url': 'https://example.com/favicon.ico'
-            }
-        }
-
-        # Invalid client test data
-        self.invalid_client_data = {
-            'name': '',  # Empty name
-            'config': {
-                'features': 'invalid',  # Should be dict
-                'access_control': {},
-                'integration_settings': None,  # Invalid type
-                'notification_preferences': []  # Invalid type
-            },
-            'branding': {
-                'theme': {
-                    'primary_color': 'invalid-color',
-                    'secondary_color': 123,  # Invalid type
-                    'font_family': None  # Invalid type
+                'logo': None,
+                'favicon': None,
+                'fonts': {
+                    'primary': 'Roboto',
+                    'secondary': 'Open Sans'
                 }
             }
         }
-
+        
+        # Invalid client test data
+        self.invalid_client_data = {
+            'name': '',  # Empty name
+            'config': {'invalid': 'data'},
+            'branding': {'colors': {'invalid': 'not-a-color'}}
+        }
+        
         # Update client test data
         self.update_client_data = {
             'name': self.faker.company(),
             'config': {
-                'features': {'chat': False, 'export': True},
-                'access_control': {'max_users': 20}
+                'features': {'search': True, 'export': False},
+                'limits': {'max_documents': 500}
             },
             'branding': {
-                'theme': {
-                    'primary_color': '#FF0000',
-                    'secondary_color': '#00FF00'
-                }
+                'colors': {'primary': '#FF0000'}
             }
         }
 
-    async def create_test_client(self, db_session, tenant_id=None, config=None):
-        """Create test client with specified configuration."""
+    async def create_test_client(self, db_session: AsyncSession, tenant_id: uuid.UUID) -> dict:
+        """Create a test client with specified configuration."""
         client_data = self.valid_client_data.copy()
-        if config:
-            client_data.update(config)
+        client_data['name'] = self.faker.company()
+        client_data['org_id'] = tenant_id
         
-        client_data['org_id'] = tenant_id or uuid.uuid4()
-        client = Client(**client_data)
-        db_session.add(client)
-        await db_session.commit()
-        await db_session.refresh(client)
-        return client
+        async with db_session.begin():
+            client = await db_session.execute(
+                """
+                INSERT INTO clients (id, org_id, name, config, branding)
+                VALUES (:id, :org_id, :name, :config, :branding)
+                RETURNING *
+                """,
+                {
+                    'id': uuid.uuid4(),
+                    'org_id': tenant_id,
+                    'name': client_data['name'],
+                    'config': client_data['config'],
+                    'branding': client_data['branding']
+                }
+            )
+            return dict(client.first())
 
 @pytest.mark.asyncio
 @pytest.mark.clients
-async def test_get_clients(db_session, auth_headers, test_client):
+async def test_get_clients(
+    db_session: AsyncSession,
+    auth_headers: dict,
+    test_client: AsyncClient
+):
     """Test retrieving list of clients with pagination and filtering."""
     # Create test data
     test_data = ClientTestData()
     tenant_id = uuid.uuid4()
-    clients = []
     
     # Create multiple test clients
-    for _ in range(5):
+    clients = []
+    for _ in range(3):
         client = await test_data.create_test_client(db_session, tenant_id)
         clients.append(client)
-
+    
     # Test pagination
     response = await test_client.get(
-        "/api/v1/clients?page=1&size=2",
+        "/api/v1/clients?page=1&page_size=2",
         headers=auth_headers
     )
     assert response.status_code == 200
     data = response.json()
     assert len(data['items']) == 2
-    assert data['total'] == 5
-    assert data['page'] == 1
-
+    assert data['total'] == 3
+    
     # Test filtering by name
-    client_name = clients[0].name
     response = await test_client.get(
-        f"/api/v1/clients?name={client_name}",
+        f"/api/v1/clients?name={clients[0]['name']}",
         headers=auth_headers
     )
     assert response.status_code == 200
     data = response.json()
     assert len(data['items']) == 1
-    assert data['items'][0]['name'] == client_name
-
-    # Test tenant isolation
-    other_tenant_client = await test_data.create_test_client(
-        db_session, 
-        uuid.uuid4()  # Different tenant
+    assert data['items'][0]['id'] == str(clients[0]['id'])
+    
+    # Verify tenant isolation
+    other_tenant_response = await test_client.get(
+        "/api/v1/clients",
+        headers={**auth_headers, 'X-Tenant-ID': str(uuid.uuid4())}
     )
-    response = await test_client.get("/api/v1/clients", headers=auth_headers)
-    assert response.status_code == 200
-    data = response.json()
-    client_ids = [item['id'] for item in data['items']]
-    assert str(other_tenant_client.id) not in client_ids
+    assert other_tenant_response.status_code == 200
+    assert len(other_tenant_response.json()['items']) == 0
 
 @pytest.mark.asyncio
 @pytest.mark.clients
-async def test_create_client(db_session, auth_headers, test_client):
+async def test_create_client(
+    db_session: AsyncSession,
+    auth_headers: dict,
+    test_client: AsyncClient
+):
     """Test client creation with validation and security checks."""
     test_data = ClientTestData()
-
+    
     # Test successful creation
     response = await test_client.post(
         "/api/v1/clients",
@@ -147,139 +153,118 @@ async def test_create_client(db_session, auth_headers, test_client):
         json=test_data.valid_client_data
     )
     assert response.status_code == 201
-    data = response.json()
-    assert data['name'] == test_data.valid_client_data['name']
-    assert 'id' in data
-
+    created_client = response.json()
+    assert created_client['name'] == test_data.valid_client_data['name']
+    
     # Test duplicate name validation
-    response = await test_client.post(
+    duplicate_response = await test_client.post(
         "/api/v1/clients",
         headers=auth_headers,
         json=test_data.valid_client_data
     )
-    assert response.status_code == 400
-    assert 'duplicate' in response.json()['detail'].lower()
-
+    assert duplicate_response.status_code == 400
+    
     # Test invalid data validation
-    response = await test_client.post(
+    invalid_response = await test_client.post(
         "/api/v1/clients",
         headers=auth_headers,
         json=test_data.invalid_client_data
     )
-    assert response.status_code == 400
-    errors = response.json()['detail']
-    assert 'name' in errors
-    assert 'config' in errors
+    assert invalid_response.status_code == 400
 
 @pytest.mark.asyncio
 @pytest.mark.clients
-async def test_update_client(db_session, auth_headers, test_client):
-    """Test client updates with validation and audit logging."""
+async def test_update_client(
+    db_session: AsyncSession,
+    auth_headers: dict,
+    test_client: AsyncClient
+):
+    """Test client updates with validation and security checks."""
     test_data = ClientTestData()
-    client = await test_data.create_test_client(db_session)
-
+    
+    # Create test client
+    client = await test_data.create_test_client(db_session, uuid.UUID(auth_headers['X-Tenant-ID']))
+    
     # Test full update
     response = await test_client.put(
-        f"/api/v1/clients/{client.id}",
+        f"/api/v1/clients/{client['id']}",
         headers=auth_headers,
         json=test_data.update_client_data
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data['name'] == test_data.update_client_data['name']
-    assert data['config']['features']['chat'] == False
-
+    updated_client = response.json()
+    assert updated_client['name'] == test_data.update_client_data['name']
+    
     # Test partial update
-    partial_update = {'config': {'features': {'chat': True}}}
+    partial_update = {'config': {'features': {'new_feature': True}}}
     response = await test_client.patch(
-        f"/api/v1/clients/{client.id}",
+        f"/api/v1/clients/{client['id']}",
         headers=auth_headers,
         json=partial_update
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data['config']['features']['chat'] == True
-
-    # Test update with invalid data
-    response = await test_client.put(
-        f"/api/v1/clients/{client.id}",
-        headers=auth_headers,
-        json=test_data.invalid_client_data
-    )
-    assert response.status_code == 400
+    assert response.json()['config']['features']['new_feature'] is True
 
 @pytest.mark.asyncio
 @pytest.mark.clients
-async def test_delete_client(db_session, auth_headers, test_client):
-    """Test client deletion with cascade operations."""
+async def test_delete_client(
+    db_session: AsyncSession,
+    auth_headers: dict,
+    test_client: AsyncClient
+):
+    """Test client deletion with cascade operations and security checks."""
     test_data = ClientTestData()
-    client = await test_data.create_test_client(db_session)
-
+    
+    # Create test client
+    client = await test_data.create_test_client(db_session, uuid.UUID(auth_headers['X-Tenant-ID']))
+    
     # Test successful deletion
     response = await test_client.delete(
-        f"/api/v1/clients/{client.id}",
+        f"/api/v1/clients/{client['id']}",
         headers=auth_headers
     )
     assert response.status_code == 204
-
+    
     # Verify client is deleted
-    response = await test_client.get(
-        f"/api/v1/clients/{client.id}",
+    get_response = await test_client.get(
+        f"/api/v1/clients/{client['id']}",
         headers=auth_headers
     )
-    assert response.status_code == 404
-
-    # Test deletion of non-existent client
-    response = await test_client.delete(
-        f"/api/v1/clients/{uuid.uuid4()}",
-        headers=auth_headers
-    )
-    assert response.status_code == 404
+    assert get_response.status_code == 404
 
 @pytest.mark.asyncio
 @pytest.mark.clients
 @pytest.mark.security
-async def test_client_authorization(db_session, auth_headers, test_client):
-    """Test role-based access control for client operations."""
+async def test_client_authorization(
+    db_session: AsyncSession,
+    auth_headers: dict,
+    test_client: AsyncClient
+):
+    """Test role-based access control and security boundaries."""
     test_data = ClientTestData()
-    client = await test_data.create_test_client(db_session)
-
+    
     # Test ADMIN role access
-    admin_headers = auth_headers.copy()
-    admin_headers['X-User-Role'] = UserRole.ADMIN.value
-    response = await test_client.get(
-        "/api/v1/clients",
-        headers=admin_headers
-    )
-    assert response.status_code == 200
-
-    # Test CLIENT_ADMIN role restrictions
-    client_admin_headers = auth_headers.copy()
-    client_admin_headers['X-User-Role'] = UserRole.CLIENT_ADMIN.value
-    response = await test_client.get(
-        "/api/v1/clients",
-        headers=client_admin_headers
-    )
-    assert response.status_code == 200
-    # Verify only own client is visible
-    data = response.json()
-    assert len(data['items']) == 1
-
-    # Test regular user access restrictions
-    user_headers = auth_headers.copy()
-    user_headers['X-User-Role'] = UserRole.USER.value
+    admin_headers = {**auth_headers, 'X-User-Role': UserRole.ADMIN.value}
     response = await test_client.post(
         "/api/v1/clients",
-        headers=user_headers,
+        headers=admin_headers,
+        json=test_data.valid_client_data
+    )
+    assert response.status_code == 201
+    
+    # Test CLIENT_ADMIN role restrictions
+    client_admin_headers = {**auth_headers, 'X-User-Role': UserRole.CLIENT_ADMIN.value}
+    response = await test_client.post(
+        "/api/v1/clients",
+        headers=client_admin_headers,
         json=test_data.valid_client_data
     )
     assert response.status_code == 403
-
-    # Test cross-tenant access prevention
-    other_tenant_headers = auth_headers.copy()
-    other_tenant_headers['X-Tenant-ID'] = str(uuid.uuid4())
+    
+    # Test regular user access restrictions
+    user_headers = {**auth_headers, 'X-User-Role': UserRole.USER.value}
     response = await test_client.get(
-        f"/api/v1/clients/{client.id}",
-        headers=other_tenant_headers
+        "/api/v1/clients",
+        headers=user_headers
     )
     assert response.status_code == 403

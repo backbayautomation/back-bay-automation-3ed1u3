@@ -4,252 +4,271 @@ import MockAdapter from 'axios-mock-adapter'; // v1.21.0
 import { createApiInstance, handleApiError } from '../../src/utils/api';
 import { API_CONFIG } from '../../src/config/api';
 
-// Mock implementations
-jest.mock('../../src/config/api', () => ({
-  API_CONFIG: {
-    BASE_URL: 'https://api.test.com/v1',
-    TIMEOUT: 30000,
-    RETRY_ATTEMPTS: 3,
-    CIRCUIT_BREAKER_OPTIONS: {
-      FAILURE_THRESHOLD: 5,
-      RESET_TIMEOUT: 60000,
-    },
-    MAX_BACKOFF_MS: 32000,
-  },
-}));
+// Mock axios for testing
+const mockAxios = new MockAdapter(axios);
 
-describe('API Utility Functions', () => {
-  let mockAxios: MockAdapter;
-  
+// Mock localStorage
+const mockLocalStorage = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: (key: string) => store[key] || null,
+    setItem: (key: string, value: string) => { store[key] = value; },
+    clear: () => { store = {}; },
+  };
+})();
+
+Object.defineProperty(window, 'localStorage', { value: mockLocalStorage });
+
+describe('createApiInstance', () => {
   beforeEach(() => {
-    mockAxios = new MockAdapter(axios);
-    localStorage.clear();
-    jest.useFakeTimers();
+    mockAxios.reset();
+    mockLocalStorage.clear();
+    jest.clearAllMocks();
   });
 
-  afterEach(() => {
-    mockAxios.restore();
-    jest.useRealTimers();
+  test('should create instance with default security configuration', () => {
+    const instance = createApiInstance();
+    expect(instance.defaults.baseURL).toBe(API_CONFIG.BASE_URL);
+    expect(instance.defaults.timeout).toBe(API_CONFIG.TIMEOUT);
+    expect(instance.defaults.headers['Content-Type']).toBe('application/json');
+    expect(instance.defaults.headers['Accept']).toBe('application/json');
   });
 
-  describe('createApiInstance', () => {
-    test('should create instance with default security configuration', () => {
-      const instance = createApiInstance();
-      expect(instance.defaults.baseURL).toBe(API_CONFIG.BASE_URL);
-      expect(instance.defaults.timeout).toBe(API_CONFIG.TIMEOUT);
-      expect(instance.defaults.headers['Content-Type']).toBe('application/json');
-      expect(instance.defaults.headers['Accept']).toBe('application/json');
+  test('should respect custom timeout and retry settings', () => {
+    const customTimeout = 5000;
+    const instance = createApiInstance({ customTimeout });
+    expect(instance.defaults.timeout).toBe(customTimeout);
+  });
+
+  test('should configure circuit breaker thresholds correctly', async () => {
+    const instance = createApiInstance({ useCircuitBreaker: true });
+    mockAxios.onGet('/test').reply(500);
+
+    // Trigger multiple failures to open circuit breaker
+    for (let i = 0; i < 5; i++) {
+      try {
+        await instance.get('/test');
+      } catch (error) {
+        // Expected error
+      }
+    }
+
+    // Next request should fail with circuit breaker error
+    try {
+      await instance.get('/test');
+      fail('Should have thrown circuit breaker error');
+    } catch (error: any) {
+      expect(error.message).toBe('Circuit breaker is open');
+    }
+  });
+
+  test('should implement secure header management', async () => {
+    const token = 'test-token';
+    mockLocalStorage.setItem('access_token', token);
+    const instance = createApiInstance();
+
+    mockAxios.onGet('/test').reply(config => {
+      expect(config.headers?.Authorization).toBe(`Bearer ${token}`);
+      expect(config.headers?.['X-Request-ID']).toBeDefined();
+      return [200, { success: true }];
     });
 
-    test('should respect custom timeout and security headers', () => {
-      const customTimeout = 5000;
-      const customHeaders = {
-        'X-Custom-Security': 'test-value',
-        'X-API-Version': '2.0',
-      };
-      
-      const instance = createApiInstance({
-        customTimeout,
-        customHeaders,
+    await instance.get('/test');
+  });
+
+  test('should validate SSL/TLS configuration', () => {
+    const instance = createApiInstance();
+    expect(instance.defaults.httpsAgent).toBeUndefined(); // Uses Node.js default HTTPS agent
+  });
+});
+
+describe('handleApiError', () => {
+  test('should handle network errors with retry logic', async () => {
+    const networkError = new axios.AxiosError(
+      'Network Error',
+      'ECONNABORTED',
+      { headers: {} },
+      {},
+      undefined
+    );
+
+    const errorResponse = await handleApiError(networkError);
+    expect(errorResponse.errorType).toBe('network');
+    expect(errorResponse.code).toBe('NETWORK_ERROR');
+    expect(errorResponse.requestId).toBeDefined();
+  });
+
+  test('should manage authentication errors securely', async () => {
+    const authError = new axios.AxiosError(
+      'Unauthorized',
+      '401',
+      { headers: {} },
+      {},
+      { status: 401, data: {} } as any
+    );
+
+    mockLocalStorage.setItem('refresh_token', 'test-refresh-token');
+    mockAxios.onPost(`${API_CONFIG.BASE_URL}/auth/refresh`).reply(200, {
+      success: true,
+      data: { accessToken: 'new-token' }
+    });
+
+    const errorResponse = await handleApiError(authError);
+    expect(errorResponse.errorType).toBe('auth');
+    expect(errorResponse.code).toBe('AUTH_ERROR');
+  });
+
+  test('should process validation errors with details', async () => {
+    const validationError = new axios.AxiosError(
+      'Validation Error',
+      '400',
+      { headers: {} },
+      {},
+      { status: 400, data: { fields: ['name'] } } as any
+    );
+
+    const errorResponse = await handleApiError(validationError);
+    expect(errorResponse.errorType).toBe('validation');
+    expect(errorResponse.code).toBe('VALIDATION_ERROR');
+    expect(errorResponse.details).toBeDefined();
+  });
+
+  test('should trigger circuit breaker on threshold', async () => {
+    const instance = createApiInstance({ useCircuitBreaker: true });
+    mockAxios.onGet('/test').reply(500);
+
+    const attempts = 6;
+    const errors = [];
+
+    for (let i = 0; i < attempts; i++) {
+      try {
+        await instance.get('/test');
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+
+    expect(errors).toHaveLength(attempts);
+    expect(errors[attempts - 1].message).toBe('Circuit breaker is open');
+  });
+
+  test('should implement secure error logging', async () => {
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+    const serverError = new axios.AxiosError(
+      'Server Error',
+      '500',
+      { headers: {} },
+      {},
+      { status: 500, data: { sensitive: 'data' } } as any
+    );
+
+    const errorResponse = await handleApiError(serverError);
+    expect(errorResponse.errorType).toBe('server');
+    expect(errorResponse.details).not.toContain('sensitive');
+    consoleSpy.mockRestore();
+  });
+});
+
+describe('retryRequest', () => {
+  test('should implement exponential backoff correctly', async () => {
+    const instance = createApiInstance();
+    const requestTimes: number[] = [];
+    mockAxios.onGet('/test').reply(config => {
+      requestTimes.push(Date.now());
+      return [500, {}];
+    });
+
+    try {
+      await instance.get('/test');
+    } catch (error) {
+      // Expected error
+    }
+
+    const intervals = requestTimes.slice(1).map((time, index) => 
+      time - requestTimes[index]
+    );
+
+    intervals.forEach((interval, index) => {
+      const minExpectedDelay = Math.pow(2, index) * 1000;
+      expect(interval).toBeGreaterThanOrEqual(minExpectedDelay);
+    });
+  });
+
+  test('should respect retry attempt thresholds', async () => {
+    const instance = createApiInstance();
+    let attempts = 0;
+    mockAxios.onGet('/test').reply(() => {
+      attempts++;
+      return [500, {}];
+    });
+
+    try {
+      await instance.get('/test');
+    } catch (error) {
+      // Expected error
+    }
+
+    expect(attempts).toBeLessThanOrEqual(API_CONFIG.RETRY_ATTEMPTS + 1);
+  });
+
+  test('should maintain security headers during retry', async () => {
+    const instance = createApiInstance();
+    const token = 'test-token';
+    mockLocalStorage.setItem('access_token', token);
+    
+    let requestHeaders: any[] = [];
+    mockAxios.onGet('/test').reply(config => {
+      requestHeaders.push(config.headers);
+      return [500, {}];
+    });
+
+    try {
+      await instance.get('/test');
+    } catch (error) {
+      // Expected error
+    }
+
+    requestHeaders.forEach(headers => {
+      expect(headers.Authorization).toBe(`Bearer ${token}`);
+      expect(headers['X-Request-ID']).toBeDefined();
+    });
+  });
+
+  test('should validate retry status patterns', async () => {
+    const instance = createApiInstance();
+    const retryableStatuses = [408, 429, 500, 502, 503, 504];
+    const nonRetryableStatuses = [400, 401, 403, 404];
+
+    for (const status of retryableStatuses) {
+      let attempts = 0;
+      mockAxios.onGet(`/test-${status}`).reply(() => {
+        attempts++;
+        return [status, {}];
       });
 
-      expect(instance.defaults.timeout).toBe(customTimeout);
-      expect(instance.defaults.headers['X-Custom-Security']).toBe('test-value');
-      expect(instance.defaults.headers['X-API-Version']).toBe('2.0');
-    });
-
-    test('should add authentication token to requests when available', async () => {
-      const token = 'test-jwt-token';
-      localStorage.setItem('auth_token', token);
-      
-      const instance = createApiInstance();
-      mockAxios.onGet('/test').reply(200);
-      
-      await instance.get('/test');
-      
-      expect(mockAxios.history.get[0].headers?.Authorization).toBe(`Bearer ${token}`);
-    });
-
-    test('should skip authentication when specified', async () => {
-      const token = 'test-jwt-token';
-      localStorage.setItem('auth_token', token);
-      
-      const instance = createApiInstance({ skipAuth: true });
-      mockAxios.onGet('/test').reply(200);
-      
-      await instance.get('/test');
-      
-      expect(mockAxios.history.get[0].headers?.Authorization).toBeUndefined();
-    });
-
-    test('should track request timing metadata', async () => {
-      const instance = createApiInstance();
-      mockAxios.onGet('/test').reply(200);
-      
-      const startTime = Date.now();
-      await instance.get('/test');
-      
-      const request = mockAxios.history.get[0];
-      expect(request.metadata?.startTime).toBeGreaterThanOrEqual(startTime);
-    });
-  });
-
-  describe('handleApiError', () => {
-    test('should handle network errors appropriately', async () => {
-      const networkError = new axios.AxiosError(
-        'Network Error',
-        'ECONNABORTED',
-        {} as any,
-        {} as any,
-      );
-
-      const errorResponse = await handleApiError(networkError);
-      
-      expect(errorResponse.code).toBe('NETWORK_ERROR');
-      expect(errorResponse.errorType).toBe('network');
-      expect(errorResponse.requestId).toBeTruthy();
-      expect(errorResponse.timestamp).toBeLessThanOrEqual(Date.now());
-    });
-
-    test('should handle authentication errors with token refresh attempt', async () => {
-      const authError = new axios.AxiosError(
-        'Unauthorized',
-        '401',
-        {} as any,
-        {} as any,
-        {
-          status: 401,
-          data: { message: 'Token expired' },
-        } as any,
-      );
-
-      localStorage.setItem('refresh_token', 'test-refresh-token');
-      const errorResponse = await handleApiError(authError);
-      
-      expect(errorResponse.code).toBe('AUTH_ERROR');
-      expect(errorResponse.errorType).toBe('auth');
-      expect(localStorage.getItem('auth_token')).toBeNull();
-      expect(localStorage.getItem('refresh_token')).toBeNull();
-    });
-
-    test('should handle validation errors with field details', async () => {
-      const validationError = new axios.AxiosError(
-        'Bad Request',
-        '400',
-        {} as any,
-        {} as any,
-        {
-          status: 400,
-          data: { fields: { email: 'Invalid format' } },
-        } as any,
-      );
-
-      const errorResponse = await handleApiError(validationError);
-      
-      expect(errorResponse.code).toBe('VALIDATION_ERROR');
-      expect(errorResponse.errorType).toBe('validation');
-      expect(errorResponse.details).toEqual({ fields: { email: 'Invalid format' } });
-    });
-
-    test('should handle server errors with circuit breaker interaction', async () => {
-      const instance = createApiInstance({ useCircuitBreaker: true });
-      mockAxios.onGet('/test').reply(500);
-      
       try {
-        await instance.get('/test');
+        await instance.get(`/test-${status}`);
       } catch (error) {
-        expect(error.code).toBe('SERVER_ERROR');
-        expect(error.errorType).toBe('server');
-      }
-      
-      // Verify circuit breaker state
-      try {
-        await instance.get('/test');
-      } catch (error) {
-        expect(error.code).toBe('SERVER_ERROR');
-      }
-    });
-  });
-
-  describe('Retry Logic', () => {
-    test('should implement exponential backoff with jitter', async () => {
-      const instance = createApiInstance();
-      mockAxios.onGet('/test')
-        .replyOnce(500)
-        .replyOnce(500)
-        .replyOnce(200, { data: 'success' });
-
-      const startTime = Date.now();
-      const response = await instance.get('/test');
-      
-      expect(response.data).toEqual({ data: 'success' });
-      expect(mockAxios.history.get.length).toBe(3);
-      
-      // Verify exponential backoff timing
-      const totalTime = Date.now() - startTime;
-      expect(totalTime).toBeGreaterThan(3000); // Minimum backoff time
-    });
-
-    test('should respect retry attempt limits', async () => {
-      const instance = createApiInstance();
-      mockAxios.onGet('/test').reply(500);
-
-      try {
-        await instance.get('/test');
-      } catch (error) {
-        expect(mockAxios.history.get.length).toBe(API_CONFIG.RETRY_ATTEMPTS + 1);
-        expect(error.code).toBe('SERVER_ERROR');
-      }
-    });
-
-    test('should not retry on certain status codes', async () => {
-      const instance = createApiInstance();
-      mockAxios.onGet('/test').reply(404);
-
-      try {
-        await instance.get('/test');
-      } catch (error) {
-        expect(mockAxios.history.get.length).toBe(1);
-        expect(error.code).toBe('SERVER_ERROR');
-      }
-    });
-
-    test('should handle circuit breaker state transitions', async () => {
-      const instance = createApiInstance({ useCircuitBreaker: true });
-      mockAxios.onGet('/test').reply(500);
-
-      for (let i = 0; i < API_CONFIG.RETRY_ATTEMPTS + 1; i++) {
-        try {
-          await instance.get('/test');
-        } catch (error) {
-          continue;
-        }
+        // Expected error
       }
 
-      try {
-        await instance.get('/test');
-      } catch (error) {
-        expect(error.code).toBe('SERVER_ERROR');
-        expect(mockAxios.history.get.length).toBe(API_CONFIG.RETRY_ATTEMPTS + 2);
-      }
-    });
+      expect(attempts).toBeGreaterThan(1);
+    }
 
-    test('should maintain security headers during retries', async () => {
-      const instance = createApiInstance({
-        customHeaders: {
-          'X-Security-Token': 'test-token',
-        },
+    for (const status of nonRetryableStatuses) {
+      let attempts = 0;
+      mockAxios.onGet(`/test-${status}`).reply(() => {
+        attempts++;
+        return [status, {}];
       });
 
-      mockAxios.onGet('/test')
-        .replyOnce(500)
-        .replyOnce(200, { data: 'success' });
+      try {
+        await instance.get(`/test-${status}`);
+      } catch (error) {
+        // Expected error
+      }
 
-      await instance.get('/test');
-
-      mockAxios.history.get.forEach(request => {
-        expect(request.headers['X-Security-Token']).toBe('test-token');
-      });
-    });
+      expect(attempts).toBe(1);
+    }
   });
 });

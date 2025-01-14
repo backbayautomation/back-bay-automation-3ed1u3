@@ -7,7 +7,13 @@ import AdminLayout from '../layouts/AdminLayout';
 import ClientLayout from '../layouts/ClientLayout';
 import AuthLayout from '../layouts/AuthLayout';
 
-// Route metadata interface for enhanced tracking and SEO
+// Analytics configuration
+const analytics = new Analytics({
+  connectionString: process.env.VITE_APPINSIGHTS_CONNECTION_STRING,
+  enableAutoRouteTracking: true
+});
+
+// Route metadata interface
 interface RouteMeta {
   title: string;
   analyticsId: string;
@@ -16,51 +22,71 @@ interface RouteMeta {
 
 // Enhanced route configuration interface
 interface RouteConfig extends RouteObject {
-  auth: boolean;
-  roles: string[];
-  meta: RouteMeta;
+  auth?: boolean;
+  roles?: string[];
+  meta?: RouteMeta;
   errorBoundary?: React.ComponentType;
 }
 
 // Lazy-loaded components with retry logic
-const withRetry = (factory: () => Promise<any>, maxRetries = 3) => {
-  return async () => {
-    let retries = 0;
-    while (retries < maxRetries) {
-      try {
-        return await factory();
-      } catch (error) {
-        retries++;
-        if (retries === maxRetries) throw error;
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, retries) * 1000));
-      }
-    }
-  };
+const retryLazyLoad = (componentImport: () => Promise<any>) => {
+  return new Promise((resolve, reject) => {
+    const retryImport = (retries: number) => {
+      componentImport()
+        .then(resolve)
+        .catch((error) => {
+          if (retries > 0) {
+            setTimeout(() => retryImport(retries - 1), 1000);
+          } else {
+            reject(error);
+          }
+        });
+    };
+    retryImport(3);
+  });
 };
+
+// Lazy-loaded page components
+const Login = lazy(() => retryLazyLoad(() => import('../pages/auth/Login')));
+const Register = lazy(() => retryLazyLoad(() => import('../pages/auth/Register')));
+const ForgotPassword = lazy(() => retryLazyLoad(() => import('../pages/auth/ForgotPassword')));
+const AdminDashboard = lazy(() => retryLazyLoad(() => import('../pages/admin/Dashboard')));
+const AdminClients = lazy(() => retryLazyLoad(() => import('../pages/admin/Clients')));
+const AdminDocuments = lazy(() => retryLazyLoad(() => import('../pages/admin/Documents')));
+const AdminAnalytics = lazy(() => retryLazyLoad(() => import('../pages/admin/Analytics')));
+const AdminSettings = lazy(() => retryLazyLoad(() => import('../pages/admin/Settings')));
+const ClientDashboard = lazy(() => retryLazyLoad(() => import('../pages/client/Dashboard')));
+const ClientChat = lazy(() => retryLazyLoad(() => import('../pages/client/Chat')));
+const ClientDocuments = lazy(() => retryLazyLoad(() => import('../pages/client/Documents')));
+const ClientSettings = lazy(() => retryLazyLoad(() => import('../pages/client/Settings')));
+const NotFound = lazy(() => retryLazyLoad(() => import('../pages/errors/NotFound')));
 
 // Authentication routes
 const AUTH_ROUTES: RouteConfig[] = [
   {
     path: '/login',
-    element: <AuthLayout redirectTo="/client" />,
-    Component: lazy(() => withRetry(() => import('../pages/auth/Login'))),
-    auth: false,
-    roles: [],
+    element: <AuthLayout redirectTo="/"><Login /></AuthLayout>,
     meta: {
-      title: 'Login - AI Catalog Search',
-      analyticsId: 'auth_login',
+      title: 'Login',
+      analyticsId: 'auth_login_view',
       cacheStrategy: 'no-cache'
     }
   },
   {
-    path: '/mfa',
-    element: <AuthLayout redirectTo="/client" />,
-    Component: lazy(() => withRetry(() => import('../pages/auth/MFA'))),
-    auth: true,
-    roles: [],
+    path: '/register',
+    element: <AuthLayout redirectTo="/"><Register /></AuthLayout>,
     meta: {
-      title: 'Two-Factor Authentication',
-      analyticsId: 'auth_mfa',
+      title: 'Register',
+      analyticsId: 'auth_register_view',
+      cacheStrategy: 'no-cache'
+    }
+  },
+  {
+    path: '/forgot-password',
+    element: <AuthLayout redirectTo="/"><ForgotPassword /></AuthLayout>,
+    meta: {
+      title: 'Forgot Password',
+      analyticsId: 'auth_forgot_password_view',
       cacheStrategy: 'no-cache'
     }
   }
@@ -70,52 +96,58 @@ const AUTH_ROUTES: RouteConfig[] = [
 const ADMIN_ROUTES: RouteConfig[] = [
   {
     path: '/admin',
-    element: <AdminLayout />,
+    element: <AdminLayout><AdminDashboard /></AdminLayout>,
     auth: true,
     roles: ['SYSTEM_ADMIN'],
     meta: {
       title: 'Admin Dashboard',
-      analyticsId: 'admin_dashboard',
+      analyticsId: 'admin_dashboard_view',
       cacheStrategy: 'network-first'
-    },
-    children: [
-      {
-        path: 'dashboard',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Dashboard'))),
-        meta: {
-          title: 'Admin Dashboard',
-          analyticsId: 'admin_dashboard_view',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'clients',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Clients'))),
-        meta: {
-          title: 'Client Management',
-          analyticsId: 'admin_clients',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'documents',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Documents'))),
-        meta: {
-          title: 'Document Management',
-          analyticsId: 'admin_documents',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'analytics',
-        Component: lazy(() => withRetry(() => import('../pages/admin/Analytics'))),
-        meta: {
-          title: 'System Analytics',
-          analyticsId: 'admin_analytics',
-          cacheStrategy: 'network-first'
-        }
-      }
-    ]
+    }
+  },
+  {
+    path: '/admin/clients',
+    element: <AdminLayout><AdminClients /></AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Client Management',
+      analyticsId: 'admin_clients_view',
+      cacheStrategy: 'network-first'
+    }
+  },
+  {
+    path: '/admin/documents',
+    element: <AdminLayout><AdminDocuments /></AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Document Management',
+      analyticsId: 'admin_documents_view',
+      cacheStrategy: 'network-first'
+    }
+  },
+  {
+    path: '/admin/analytics',
+    element: <AdminLayout><AdminAnalytics /></AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Analytics',
+      analyticsId: 'admin_analytics_view',
+      cacheStrategy: 'network-first'
+    }
+  },
+  {
+    path: '/admin/settings',
+    element: <AdminLayout><AdminSettings /></AdminLayout>,
+    auth: true,
+    roles: ['SYSTEM_ADMIN'],
+    meta: {
+      title: 'Admin Settings',
+      analyticsId: 'admin_settings_view',
+      cacheStrategy: 'network-first'
+    }
   }
 ];
 
@@ -123,77 +155,68 @@ const ADMIN_ROUTES: RouteConfig[] = [
 const CLIENT_ROUTES: RouteConfig[] = [
   {
     path: '/client',
-    element: <ClientLayout />,
+    element: <ClientLayout><ClientDashboard /></ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
+    meta: {
+      title: 'Client Dashboard',
+      analyticsId: 'client_dashboard_view',
+      cacheStrategy: 'network-first'
+    }
+  },
+  {
+    path: '/client/chat',
+    element: <ClientLayout><ClientChat /></ClientLayout>,
     auth: true,
     roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
     meta: {
       title: 'Product Search',
-      analyticsId: 'client_portal',
+      analyticsId: 'client_chat_view',
       cacheStrategy: 'network-first'
-    },
-    children: [
-      {
-        path: '',
-        Component: lazy(() => withRetry(() => import('../pages/client/Home'))),
-        meta: {
-          title: 'Home - Product Search',
-          analyticsId: 'client_home',
-          cacheStrategy: 'network-first'
-        }
-      },
-      {
-        path: 'chat',
-        Component: lazy(() => withRetry(() => import('../pages/client/Chat'))),
-        meta: {
-          title: 'Chat - Product Search',
-          analyticsId: 'client_chat',
-          cacheStrategy: 'no-cache'
-        }
-      },
-      {
-        path: 'documents',
-        Component: lazy(() => withRetry(() => import('../pages/client/Documents'))),
-        meta: {
-          title: 'Documents - Product Search',
-          analyticsId: 'client_documents',
-          cacheStrategy: 'network-first'
-        }
-      }
-    ]
+    }
+  },
+  {
+    path: '/client/documents',
+    element: <ClientLayout><ClientDocuments /></ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN', 'REGULAR_USER'],
+    meta: {
+      title: 'Documents',
+      analyticsId: 'client_documents_view',
+      cacheStrategy: 'network-first'
+    }
+  },
+  {
+    path: '/client/settings',
+    element: <ClientLayout><ClientSettings /></ClientLayout>,
+    auth: true,
+    roles: ['CLIENT_ADMIN'],
+    meta: {
+      title: 'Settings',
+      analyticsId: 'client_settings_view',
+      cacheStrategy: 'network-first'
+    }
   }
 ];
 
 // Error routes
 const ERROR_ROUTES: RouteConfig[] = [
   {
-    path: '/error',
-    Component: lazy(() => withRetry(() => import('../pages/error/ErrorPage'))),
-    auth: false,
-    roles: [],
-    meta: {
-      title: 'Error',
-      analyticsId: 'error_page',
-      cacheStrategy: 'no-cache'
-    }
-  },
-  {
     path: '*',
-    Component: lazy(() => withRetry(() => import('../pages/error/NotFound'))),
-    auth: false,
-    roles: [],
+    element: <NotFound />,
     meta: {
-      title: '404 - Not Found',
-      analyticsId: 'error_404',
-      cacheStrategy: 'no-cache'
+      title: 'Page Not Found',
+      analyticsId: 'error_404_view',
+      cacheStrategy: 'cache-first'
     }
   }
 ];
 
-// Route validation and access control
+// Route validation function
 const validateRouteAccess = (route: RouteConfig, user: any): boolean => {
   if (!route.auth) return true;
   if (!user) return false;
-  if (route.roles.length === 0) return true;
+  if (!route.roles || route.roles.length === 0) return true;
   return route.roles.some(role => user.role === role);
 };
 
@@ -205,29 +228,18 @@ const generateRouteConfig = (): RouteObject[] => {
     ...route,
     element: (
       <ErrorBoundary
-        FallbackComponent={route.errorBoundary || ErrorPage}
+        FallbackComponent={route.errorBoundary || NotFound}
         onError={(error) => {
-          Analytics.trackException({
-            error,
-            severityLevel: 3,
-            properties: {
-              path: route.path,
-              analyticsId: route.meta.analyticsId
-            }
-          });
+          analytics.trackException({ error });
         }}
       >
         {route.element}
       </ErrorBoundary>
     ),
     loader: async () => {
-      Analytics.trackPageView({
-        name: route.meta.title,
-        properties: {
-          path: route.path,
-          analyticsId: route.meta.analyticsId
-        }
-      });
+      if (route.meta?.analyticsId) {
+        analytics.trackPageView({ name: route.meta.title });
+      }
       return null;
     }
   }));
@@ -236,4 +248,5 @@ const generateRouteConfig = (): RouteObject[] => {
 // Export final route configuration
 export const routes = generateRouteConfig();
 
-export default routes;
+export type { RouteConfig, RouteMeta };
+export { validateRouteAccess };

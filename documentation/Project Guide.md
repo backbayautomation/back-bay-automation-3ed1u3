@@ -1,18 +1,18 @@
-Based on the technical specification and file analysis, I'll now generate the Project Guide document following the template:
+Based on the technical specification and code analysis, I'll now generate the comprehensive project guide following the template.
 
 ```markdown
 # Project Guide
 
 # PROJECT OVERVIEW
-The AI-powered Product Catalog Search System is an enterprise-grade solution that revolutionizes technical product information access. Built using cutting-edge AI technologies including GPT-4, NVidia OCR, and LLamaindex, the system provides an intuitive chatbot interface for rapid access to product specifications from complex technical documentation.
+The AI-powered Product Catalog Search System is an enterprise-grade solution that revolutionizes technical product information access. Built on a modern tech stack including React, FastAPI, GPT-4, and Azure cloud services, it features a dual-portal architecture with separate admin and client interfaces. The system leverages advanced AI technologies for automated document processing, intelligent search, and natural language querying of technical product information.
 
-The system features:
-- Dual-portal architecture (admin/client interfaces)
-- Advanced document processing with OCR and AI analysis
-- Vector-based semantic search capabilities
-- Multi-tenant data isolation
-- Enterprise-grade security
-- Real-time analytics and monitoring
+Key features include:
+- Multi-tenant architecture with enterprise-grade security
+- AI-powered document processing with NVidia OCR
+- Vector-based semantic search using LLamaindex
+- Real-time chat interface with context-aware responses
+- Comprehensive analytics and monitoring
+- Kubernetes-based scalable deployment
 
 # PROJECT STATUS
 
@@ -29,94 +29,98 @@ pie title Project Completion Status
 # CODE GUIDE
 
 ## /src/web Directory
-The frontend implementation using React and TypeScript.
+Frontend implementation using React and TypeScript
 
-### Key Components:
+### Core Application Files
+- `App.tsx`: Root application component implementing the dual-portal system with security headers and routing
+- `index.tsx`: Application entry point with provider configuration
+- `vite.config.ts`: Build and development server configuration
 
-1. /src/web/src/App.tsx
-- Main application entry point
-- Implements routing and layout structure
-- Handles authentication and theme providers
-- Configures security headers and error boundaries
+### /src/web/src Directory Structure
 
-2. /src/web/src/components
-- /admin: Administrative interface components
-- /client: Client portal components
-- /common: Shared UI components
-- Each component follows Material-UI patterns with TypeScript
+#### /components
+- `/admin`: Admin portal components (Analytics, Client Management, Document Processing)
+- `/client`: Client portal components (Chat Interface, Document Viewer)
+- `/common`: Shared components (Buttons, Forms, Layout, Loaders, Modals)
 
-3. /src/web/src/contexts
-- AuthContext: Authentication state management
-- ThemeContext: Theme customization
-- WebSocketContext: Real-time communication
+#### /contexts
+- `AuthContext.tsx`: Authentication state and user session management
+- `ThemeContext.tsx`: Theme customization and preferences
+- `WebSocketContext.tsx`: Real-time communication handling
 
-4. /src/web/src/services
-- API integration services
-- Analytics tracking
-- Document processing
-- Chat functionality
+#### /redux
+- `/slices`: State management for auth, chat, documents, and UI
+- `store.ts`: Redux store configuration with middleware
+
+#### /services
+- `auth.ts`: Authentication and authorization services
+- `documents.ts`: Document processing and management
+- `analytics.ts`: Usage tracking and metrics
+- `chat.ts`: Chat functionality and message handling
+
+#### /utils
+- `api.ts`: API client configuration and interceptors
+- `validation.ts`: Form and input validation
+- `storage.ts`: Local storage management
+- `format.ts`: Data formatting utilities
 
 ## /src/backend Directory
-The Python-based backend implementation using FastAPI.
+Python backend implementation using FastAPI
 
-### Key Components:
+### Core Application Files
+- `main.py`: Application entry point with middleware and route configuration
+- `config.py`: Environment and application configuration
+- `dependencies.py`: Dependency injection setup
 
-1. /src/backend/app/main.py
-- FastAPI application configuration
-- Middleware setup (security, CORS, rate limiting)
-- Error handling and logging
-- Application lifecycle management
+### /src/backend/app Directory Structure
 
-2. /src/backend/app/services
-- ai_service.py: GPT-4 integration and response generation
-- vector_search.py: Document similarity search
-- ocr_service.py: Document processing
-- cache_service.py: Response caching
+#### /api
+- `/v1/endpoints`: REST API endpoints for documents, auth, chat
+- `router.py`: API route configuration and versioning
 
-3. /src/backend/app/models
-- Database models with SQLAlchemy
-- Multi-tenant data structures
-- Vector embeddings schema
+#### /services
+- `ai_service.py`: GPT-4 integration and response generation
+- `vector_search.py`: LLamaindex-based semantic search
+- `document_processor.py`: Document processing pipeline
+- `ocr_service.py`: NVidia OCR integration
 
-4. /src/backend/app/api
-- REST endpoints
-- WebSocket handlers
-- Authentication routes
-- Document processing endpoints
+#### /models
+- Database models for organizations, clients, documents, embeddings
+- SQLAlchemy ORM implementations with relationships
+
+#### /schemas
+- Pydantic models for request/response validation
+- Data transfer objects and serialization
+
+#### /middleware
+- Security, logging, and tenant isolation middleware
+- Request/response processing and monitoring
 
 ## /infrastructure Directory
-Infrastructure as Code using Terraform and Kubernetes.
+Infrastructure as Code and deployment configuration
 
-### Key Components:
+### /terraform
+- Cloud infrastructure definition for Azure services
+- Environment-specific configurations
+- Module-based resource organization
 
-1. /infrastructure/terraform
-- Azure resource provisioning
-- Network security configuration
-- Database setup
-- Kubernetes cluster configuration
-
-2. /infrastructure/kubernetes
-- Deployment manifests
-- Service configurations
-- Ingress rules
-- Resource quotas
+### /kubernetes
+- Deployment manifests for microservices
+- Service configurations and scaling policies
+- Monitoring and logging setup
 
 # HUMAN INPUTS NEEDED
 
-| Category | Task | Priority | Estimated Hours |
-|----------|------|----------|-----------------|
-| Security | Configure Azure AD B2C tenant and application registration | High | 16 |
-| API Keys | Set up OpenAI API key and configure rate limits | High | 8 |
-| Infrastructure | Configure GPU-enabled node pools in AKS for OCR processing | High | 24 |
-| Database | Initialize database schema and run migrations | High | 16 |
-| Monitoring | Set up Azure Application Insights and configure alerts | Medium | 24 |
-| Storage | Configure Azure Blob Storage containers and access policies | Medium | 16 |
-| Cache | Deploy and configure Azure Redis Cache | Medium | 16 |
-| Testing | Perform load testing and security penetration testing | Medium | 40 |
-| Documentation | Complete API documentation and deployment guides | Low | 24 |
-| CI/CD | Configure deployment pipelines and environment promotion | Low | 32 |
-| Dependencies | Validate and update all package versions | Low | 16 |
-| Environment | Set up development, staging, and production environments | Low | 24 |
+| Task Category | Description | Priority | Estimated Hours |
+|--------------|-------------|----------|-----------------|
+| Environment Setup | Configure Azure environment variables and service principals | High | 16 |
+| API Integration | Set up OpenAI API keys and rate limiting | High | 8 |
+| Security | Configure Azure AD B2C tenant and policies | High | 24 |
+| Infrastructure | Set up Azure Kubernetes Service and node pools | High | 40 |
+| Monitoring | Configure Application Insights and alerts | Medium | 16 |
+| Testing | Validate end-to-end testing scenarios | Medium | 40 |
+| Documentation | Complete API documentation and deployment guides | Medium | 24 |
+| Performance | Fine-tune vector search parameters and caching | Low | 32 |
+| UI/UX | Implement final design tweaks and responsiveness | Low | 24 |
+| Compliance | Validate security compliance requirements | Low | 40 |
 ```
-
-This guide provides a comprehensive overview of the project structure, implementation details, and remaining tasks for production readiness. The code guide section details the purpose and organization of each major component, while the human inputs section identifies specific tasks needed for deployment.

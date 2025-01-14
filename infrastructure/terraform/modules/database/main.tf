@@ -23,7 +23,7 @@ locals {
   geo_redundant_backup_enabled = true
 }
 
-# Random string generator for unique resource names
+# Random string generator for unique resource naming
 resource "random_string" "suffix" {
   length  = 6
   special = false
@@ -34,11 +34,11 @@ resource "random_string" "suffix" {
 # Azure SQL Server with enhanced security
 resource "azurerm_mssql_server" "main" {
   name                         = local.sql_server_name
-  resource_group_name         = var.resource_group_name
-  location                    = var.location
-  version                     = var.sql_server_config.version
-  administrator_login         = var.sql_server_config.admin_username
-  administrator_login_password = var.sql_server_config.admin_password
+  resource_group_name          = var.resource_group_name
+  location                     = var.location
+  version                      = var.sql_server_config.version
+  administrator_login          = var.sql_server_config.administrator_login
+  administrator_login_password = var.sql_server_config.administrator_login_password
   minimum_tls_version         = "1.2"
   public_network_access_enabled = false
 
@@ -55,7 +55,7 @@ resource "azurerm_mssql_server" "main" {
   tags = var.tags
 }
 
-# Azure SQL Database with high availability configuration
+# Azure SQL Database with high availability and backup policies
 resource "azurerm_mssql_database" "main" {
   name                = local.sql_database_name
   server_id           = azurerm_mssql_server.main.id
@@ -65,7 +65,7 @@ resource "azurerm_mssql_database" "main" {
   storage_account_type = "Premium_ZRS"
   read_scale          = true
   geo_backup_enabled  = local.geo_redundant_backup_enabled
-  
+
   short_term_retention_policy {
     retention_days = 7
     backup_interval_in_hours = 24
@@ -91,11 +91,11 @@ resource "azurerm_cosmosdb_account" "main" {
   
   enable_automatic_failover = true
   enable_multiple_write_locations = true
-  
+
   consistency_policy {
     consistency_level       = var.cosmos_db_config.consistency_policy.level
     max_interval_in_seconds = var.cosmos_db_config.consistency_policy.max_interval_in_seconds
-    max_staleness_prefix    = var.cosmos_db_config.consistency_policy.max_staleness_prefix
+    max_staleness_prefix   = var.cosmos_db_config.consistency_policy.max_staleness_prefix
   }
 
   dynamic "geo_location" {
@@ -168,28 +168,23 @@ resource "azurerm_private_endpoint" "database" {
     subresource_names             = each.value.private_service_connection.subresource_names
   }
 
-  private_dns_zone_group {
-    name = "default"
-    private_dns_zone_ids = each.value.name == "sql" ? [var.private_dns_zone_ids.sql] : [var.private_dns_zone_ids.cosmos]
-  }
-
   tags = var.tags
 }
 
-# Outputs
+# Outputs for resource references
 output "sql_server_id" {
   value       = azurerm_mssql_server.main.id
   description = "Resource ID of the provisioned SQL Server"
 }
 
-output "cosmos_db_id" {
-  value       = azurerm_cosmosdb_account.main.id
-  description = "Resource ID of the provisioned Cosmos DB account"
-}
-
 output "sql_database_name" {
   value       = azurerm_mssql_database.main.name
   description = "Name of the provisioned SQL Database"
+}
+
+output "cosmos_db_id" {
+  value       = azurerm_cosmosdb_account.main.id
+  description = "Resource ID of the provisioned Cosmos DB account"
 }
 
 output "cosmos_connection_strings" {

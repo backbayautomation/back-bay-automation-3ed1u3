@@ -1,6 +1,6 @@
 /**
- * Barrel export file for notification components.
- * Provides centralized access to Alert and Toast components for displaying user feedback and system notifications.
+ * Barrel export file for notification components providing standardized visual feedback
+ * across the application following the design system specifications.
  * @version 1.0.0
  */
 

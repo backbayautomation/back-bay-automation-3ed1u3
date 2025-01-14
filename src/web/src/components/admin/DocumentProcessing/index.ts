@@ -1,6 +1,6 @@
 /**
- * Barrel export file for the DocumentProcessing module.
- * Provides centralized access to document processing UI components with type safety.
+ * Barrel export file for the DocumentProcessing module providing centralized access
+ * to document processing UI components with comprehensive type safety.
  * @version 1.0.0
  */
 
@@ -13,12 +13,3 @@ export type { DocumentListProps } from './DocumentList';
 
 export { default as ProcessingQueue } from './ProcessingQueue';
 export type { ProcessingQueueProps } from './ProcessingQueue';
-
-// Re-export common types used across components
-export type {
-  Document,
-  DocumentType,
-  ProcessingStatus,
-  DocumentMetadata,
-  DocumentUploadRequest
-} from '../../../types/document';

@@ -2,12 +2,13 @@ import React, { useCallback, useMemo } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useMediaQuery, useTheme } from '@mui/material';
 import { 
-  Home as HomeIcon,
-  Chat as ChatIcon,
-  Description as DocumentIcon,
-  Settings as SettingsIcon
+  Home,
+  Chat,
+  Description,
+  Settings
 } from '@mui/icons-material';
 import { ErrorBoundary } from 'react-error-boundary';
+
 import MainLayout from '../components/common/Layout/MainLayout';
 import { useAuth } from '../hooks/useAuth';
 
@@ -17,13 +18,13 @@ interface ClientLayoutProps {
   className?: string;
 }
 
-// Navigation items configuration with role-based access control
+// Navigation items configuration with role-based access
 const CLIENT_NAVIGATION_ITEMS = [
   {
     id: 'home',
     label: 'Home',
     path: '/client',
-    icon: <HomeIcon />,
+    icon: <Home />,
     ariaLabel: 'Navigate to home dashboard',
     roles: ['client_user', 'client_admin']
   },
@@ -31,7 +32,7 @@ const CLIENT_NAVIGATION_ITEMS = [
     id: 'chat',
     label: 'Chat',
     path: '/client/chat',
-    icon: <ChatIcon />,
+    icon: <Chat />,
     ariaLabel: 'Open chat interface',
     roles: ['client_user', 'client_admin']
   },
@@ -39,7 +40,7 @@ const CLIENT_NAVIGATION_ITEMS = [
     id: 'documents',
     label: 'Documents',
     path: '/client/documents',
-    icon: <DocumentIcon />,
+    icon: <Description />,
     ariaLabel: 'View documents',
     roles: ['client_user', 'client_admin']
   },
@@ -47,36 +48,26 @@ const CLIENT_NAVIGATION_ITEMS = [
     id: 'settings',
     label: 'Settings',
     path: '/client/settings',
-    icon: <SettingsIcon />,
+    icon: <Settings />,
     ariaLabel: 'Manage settings',
     roles: ['client_admin']
   }
 ];
 
 // Error fallback component
-const ErrorFallback: React.FC<{ error: Error }> = ({ error }) => {
-  const theme = useTheme();
-  
-  return (
-    <div
-      role="alert"
-      style={{
-        padding: theme.spacing(3),
-        color: theme.palette.error.main,
-        textAlign: 'center'
-      }}
-    >
-      <h2>Client Portal Error</h2>
-      <pre style={{ whiteSpace: 'pre-wrap' }}>{error.message}</pre>
-    </div>
-  );
-};
+const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => (
+  <div role="alert" aria-live="assertive">
+    <h2>Something went wrong in the client portal:</h2>
+    <pre style={{ color: 'red' }}>{error.message}</pre>
+    <button onClick={resetErrorBoundary}>Try again</button>
+  </div>
+);
 
-// Main ClientLayout component
-const ClientLayout: React.FC<ClientLayoutProps> = React.memo(({ children, className }) => {
+// Client layout component with memoization
+const ClientLayout = React.memo<ClientLayoutProps>(({ children, className }) => {
   const { isAuthenticated, user } = useAuth();
-  const theme = useTheme();
   const location = useLocation();
+  const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
   // Redirect to login if not authenticated
@@ -87,39 +78,29 @@ const ClientLayout: React.FC<ClientLayoutProps> = React.memo(({ children, classN
   // Filter navigation items based on user roles
   const filteredNavItems = useMemo(() => {
     return CLIENT_NAVIGATION_ITEMS.filter(item => {
-      return item.roles.some(role => user.role.toLowerCase().includes(role));
+      return item.roles.some(role => user.role.includes(role));
     });
   }, [user.role]);
 
-  // Analytics tracking callback
-  const handleAnalytics = useCallback((path: string) => {
+  // Handle navigation analytics
+  const handleNavigate = useCallback((path: string) => {
     try {
-      // Track navigation events
-      const analyticsData = {
-        event: 'client_navigation',
+      window.gtag?.('event', 'client_navigation', {
         path,
-        userId: user.id,
-        clientId: user.clientId,
-        timestamp: new Date().toISOString()
-      };
-      
-      // Send analytics data
-      fetch('/api/analytics/navigation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(analyticsData)
+        user_id: user.id,
+        client_id: user.clientId
       });
     } catch (error) {
-      console.error('Analytics Error:', error);
+      console.error('Analytics error:', error);
     }
-  }, [user.id, user.clientId]);
+  }, [user]);
 
   return (
     <ErrorBoundary
       FallbackComponent={ErrorFallback}
-      onError={(error) => {
-        console.error('Client Layout Error:', error);
-        // Additional error logging or reporting could be added here
+      onReset={() => {
+        // Reset error state and retry
+        window.location.reload();
       }}
     >
       <MainLayout
@@ -127,27 +108,30 @@ const ClientLayout: React.FC<ClientLayoutProps> = React.memo(({ children, classN
         className={className}
         analyticsEnabled={true}
         items={filteredNavItems}
-        onNavigate={handleAnalytics}
+        onNavigate={handleNavigate}
         sx={{
           // Responsive layout adjustments
-          padding: {
-            xs: theme.spacing(2),
-            sm: theme.spacing(3),
-            md: theme.spacing(4)
+          [theme.breakpoints.down('sm')]: {
+            padding: theme.spacing(1)
           },
-          // Ensure minimum touch target sizes for mobile
+          [theme.breakpoints.up('sm')]: {
+            padding: theme.spacing(2)
+          },
+          [theme.breakpoints.up('md')]: {
+            padding: theme.spacing(3)
+          },
+          // Ensure minimum touch target size for accessibility
           '& .MuiButtonBase-root': {
-            minHeight: isMobile ? 44 : 36,
-            minWidth: isMobile ? 44 : 36
-          },
-          // Improve focus visibility for accessibility
-          '& :focus-visible': {
-            outline: `2px solid ${theme.palette.primary.main}`,
-            outlineOffset: '2px'
+            minHeight: '44px',
+            minWidth: '44px'
           },
           // High contrast mode support
           '@media (forced-colors: active)': {
             borderColor: 'CanvasText'
+          },
+          // Reduced motion support
+          '@media (prefers-reduced-motion: reduce)': {
+            transition: 'none'
           }
         }}
       >

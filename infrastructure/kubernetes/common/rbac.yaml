@@ -1,9 +1,6 @@
-# Kubernetes RBAC configuration for AI-powered Product Catalog Search System
-# Version: v1.25+
-# Purpose: Define role-based access control policies with security boundaries and compliance controls
-
----
-# Backend Role - Provides necessary permissions for backend service operations
+# Kubernetes RBAC Configuration v1.25+
+# Purpose: Define comprehensive role-based access control policies for AI-powered Product Catalog Search System
+# Security Compliance: SOC 2 Type II and ISO 27001 standards
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -13,18 +10,16 @@ metadata:
     app: ai-catalog-search
     component: backend
     security-monitoring: enabled
+    compliance: soc2-iso27001
 rules:
-  # Access to core resources required by backend service
+  # Backend service permissions
   - apiGroups: [""]
     resources: ["secrets", "configmaps", "services"]
     verbs: ["get", "list", "watch"]
-  # Access to deployment information for health checks
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch"]
-
 ---
-# Frontend Role - Limited permissions for frontend service requirements
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -34,14 +29,13 @@ metadata:
     app: ai-catalog-search
     component: frontend
     security-monitoring: enabled
+    compliance: soc2-iso27001
 rules:
-  # Minimal access for frontend configuration
+  # Frontend service permissions (minimal required access)
   - apiGroups: [""]
     resources: ["configmaps", "services"]
     verbs: ["get", "list"]
-
 ---
-# Celery Worker Role - Specific permissions for async task processing
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -51,14 +45,13 @@ metadata:
     app: ai-catalog-search
     component: worker
     security-monitoring: enabled
+    compliance: soc2-iso27001
 rules:
-  # Access to resources required for task processing
+  # Celery worker permissions
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["get", "list", "watch"]
-
 ---
-# Backend Role Binding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -68,17 +61,15 @@ metadata:
     app: ai-catalog-search
     component: backend
     security-monitoring: enabled
-subjects:
-- kind: ServiceAccount
-  name: backend-sa
-  namespace: product-search
 roleRef:
+  apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: backend-role
-  apiGroup: rbac.authorization.k8s.io
-
+subjects:
+  - kind: ServiceAccount
+    name: backend-sa
+    namespace: product-search
 ---
-# Frontend Role Binding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -88,17 +79,15 @@ metadata:
     app: ai-catalog-search
     component: frontend
     security-monitoring: enabled
-subjects:
-- kind: ServiceAccount
-  name: frontend-sa
-  namespace: product-search
 roleRef:
+  apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: frontend-role
-  apiGroup: rbac.authorization.k8s.io
-
+subjects:
+  - kind: ServiceAccount
+    name: frontend-sa
+    namespace: product-search
 ---
-# Celery Worker Role Binding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -108,11 +97,11 @@ metadata:
     app: ai-catalog-search
     component: worker
     security-monitoring: enabled
-subjects:
-- kind: ServiceAccount
-  name: celery-sa
-  namespace: product-search
 roleRef:
+  apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: celery-role
-  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: celery-sa
+    namespace: product-search

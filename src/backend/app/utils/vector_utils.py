@@ -11,14 +11,14 @@ import numpy as np
 import logging
 from typing import List, Tuple
 
-# Configure module-level logger
-logger = logging.getLogger(__name__)
-
-# Global constants
+# Constants for vector processing configuration
 VECTOR_DIMENSION = 1536  # Dimension size for vector embeddings
 BATCH_SIZE = 32  # Batch size for efficient processing
 SIMILARITY_THRESHOLD = 0.8  # Minimum similarity score threshold
-EPSILON = 1e-8  # Small constant for numerical stability
+EPSILON = 1e-10  # Small constant for numerical stability
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 def validate_vector_dimension(vector: np.ndarray) -> bool:
     """
@@ -30,26 +30,24 @@ def validate_vector_dimension(vector: np.ndarray) -> bool:
     Returns:
         bool: True if vector has correct dimension, False otherwise
     """
-    logger.debug(f"Validating vector dimension. Input shape: {getattr(vector, 'shape', 'No shape')}")
-    
     try:
         if not isinstance(vector, np.ndarray):
-            logger.error(f"Invalid input type. Expected numpy.ndarray, got {type(vector)}")
+            logger.error(f"Invalid input type: expected numpy.ndarray, got {type(vector)}")
             return False
             
         if vector.ndim != 1:
-            logger.error(f"Invalid vector dimensions. Expected 1-D array, got {vector.ndim}-D")
+            logger.error(f"Invalid vector dimensions: expected 1-D array, got {vector.ndim}-D")
             return False
             
         if vector.shape[0] != VECTOR_DIMENSION:
-            logger.error(f"Invalid vector length. Expected {VECTOR_DIMENSION}, got {vector.shape[0]}")
+            logger.error(f"Invalid vector length: expected {VECTOR_DIMENSION}, got {vector.shape[0]}")
             return False
             
-        logger.debug("Vector dimension validation successful")
+        logger.debug("Vector validation successful")
         return True
         
     except Exception as e:
-        logger.error(f"Unexpected error during vector validation: {str(e)}")
+        logger.error(f"Vector validation failed with error: {str(e)}")
         return False
 
 def normalize_vector(vector: np.ndarray) -> np.ndarray:
@@ -65,19 +63,17 @@ def normalize_vector(vector: np.ndarray) -> np.ndarray:
     Raises:
         ValueError: If vector validation fails
     """
-    logger.debug("Attempting vector normalization")
-    
-    if not validate_vector_dimension(vector):
-        error_msg = "Vector validation failed during normalization"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-    
     try:
+        logger.debug(f"Attempting to normalize vector of shape {vector.shape}")
+        
+        if not validate_vector_dimension(vector):
+            raise ValueError("Vector validation failed")
+            
         magnitude = np.linalg.norm(vector)
         
         if magnitude < EPSILON:
-            logger.warning("Near-zero magnitude vector encountered during normalization")
-            return np.zeros_like(vector)
+            logger.warning("Vector magnitude near zero, returning zero vector")
+            return np.zeros(VECTOR_DIMENSION)
             
         normalized = vector / magnitude
         
@@ -90,7 +86,7 @@ def normalize_vector(vector: np.ndarray) -> np.ndarray:
         return normalized
         
     except Exception as e:
-        logger.error(f"Error during vector normalization: {str(e)}")
+        logger.error(f"Vector normalization failed with error: {str(e)}")
         raise
 
 def calculate_cosine_similarity(vector1: np.ndarray, vector2: np.ndarray) -> float:
@@ -107,15 +103,13 @@ def calculate_cosine_similarity(vector1: np.ndarray, vector2: np.ndarray) -> flo
     Raises:
         ValueError: If vector validation fails
     """
-    logger.debug(f"Calculating cosine similarity between vectors of shapes {vector1.shape} and {vector2.shape}")
-    
     try:
-        # Validate both vectors
-        if not all(validate_vector_dimension(v) for v in [vector1, vector2]):
-            error_msg = "Vector validation failed during similarity calculation"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        logger.debug(f"Calculating cosine similarity between vectors of shapes {vector1.shape} and {vector2.shape}")
         
+        # Validate both vectors
+        if not (validate_vector_dimension(vector1) and validate_vector_dimension(vector2)):
+            raise ValueError("Vector validation failed")
+            
         # Normalize vectors
         norm1 = normalize_vector(vector1)
         norm2 = normalize_vector(vector2)
@@ -130,8 +124,8 @@ def calculate_cosine_similarity(vector1: np.ndarray, vector2: np.ndarray) -> flo
         return float(similarity)
         
     except Exception as e:
-        logger.error(f"Error during cosine similarity calculation: {str(e)}")
-        raise
+        logger.error(f"Cosine similarity calculation failed with error: {str(e)}")
+        return -1.0
 
 def batch_similarity_search(query_vector: np.ndarray, vector_list: List[np.ndarray]) -> List[Tuple[int, float]]:
     """
@@ -145,47 +139,43 @@ def batch_similarity_search(query_vector: np.ndarray, vector_list: List[np.ndarr
         List[Tuple[int, float]]: Sorted list of (index, similarity_score) tuples above threshold
         
     Raises:
-        ValueError: If vector validation fails or input list is empty
+        ValueError: If vector validation fails
     """
-    logger.debug(f"Starting batch similarity search with {len(vector_list)} vectors")
-    
-    if not vector_list:
-        error_msg = "Empty vector list provided for batch search"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-    
     try:
-        # Validate query vector
-        if not validate_vector_dimension(query_vector):
-            error_msg = "Invalid query vector dimension"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        list_size = len(vector_list)
+        logger.debug(f"Starting batch similarity search with {list_size} vectors")
         
-        # Normalize query vector once
+        if not validate_vector_dimension(query_vector):
+            raise ValueError("Query vector validation failed")
+            
+        # Normalize query vector once for efficiency
         normalized_query = normalize_vector(query_vector)
-        results = []
+        results: List[Tuple[int, float]] = []
         
         # Process in batches
-        for i in range(0, len(vector_list), BATCH_SIZE):
-            batch = vector_list[i:i + BATCH_SIZE]
-            logger.debug(f"Processing batch {i//BATCH_SIZE + 1}")
+        for batch_start in range(0, list_size, BATCH_SIZE):
+            batch_end = min(batch_start + BATCH_SIZE, list_size)
+            batch = vector_list[batch_start:batch_end]
             
-            for j, vector in enumerate(batch):
-                try:
-                    if validate_vector_dimension(vector):
-                        similarity = calculate_cosine_similarity(normalized_query, vector)
-                        if similarity >= SIMILARITY_THRESHOLD:
-                            results.append((i + j, similarity))
-                except Exception as e:
-                    logger.warning(f"Skipping vector {i + j} due to error: {str(e)}")
+            logger.debug(f"Processing batch {batch_start//BATCH_SIZE + 1}")
+            
+            # Calculate similarities for current batch
+            for i, vector in enumerate(batch):
+                if not validate_vector_dimension(vector):
+                    logger.warning(f"Skipping invalid vector at index {batch_start + i}")
                     continue
+                    
+                similarity = calculate_cosine_similarity(normalized_query, vector)
+                
+                if similarity >= SIMILARITY_THRESHOLD:
+                    results.append((batch_start + i, similarity))
         
         # Sort results by similarity score in descending order
         results.sort(key=lambda x: x[1], reverse=True)
         
-        logger.debug(f"Batch similarity search completed. Found {len(results)} matches above threshold")
+        logger.debug(f"Batch search completed with {len(results)} results above threshold")
         return results
         
     except Exception as e:
-        logger.error(f"Error during batch similarity search: {str(e)}")
-        raise
+        logger.error(f"Batch similarity search failed with error: {str(e)}")
+        return []

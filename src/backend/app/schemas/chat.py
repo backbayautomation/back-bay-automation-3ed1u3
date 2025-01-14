@@ -11,29 +11,27 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, constr  # version: ^1.9.0
 
-# Custom type for HAL links
-HalLinks = Dict[str, Dict[str, str]]
+# Validation constants
+MAX_CONTENT_LENGTH = 4096
+MAX_TITLE_LENGTH = 255
+VALID_ROLES = ["user", "system"]
 
 class MessageBase(BaseModel):
     """Enhanced base Pydantic model for chat messages with strict validation."""
-    content: constr(min_length=1, max_length=4096) = Field(
+    content: constr(min_length=1, max_length=MAX_CONTENT_LENGTH) = Field(
         ...,
-        description="Message content with length validation",
-        example="What are the specifications for pump model A123?"
+        description="Message content with length validation"
     )
-    role: constr(regex='^(user|system)$') = Field(
+    role: constr(regex=f"^({'|'.join(VALID_ROLES)})$") = Field(
         ...,
-        description="Message role (user/system)",
-        example="user"
+        description="Message role (user/system)"
     )
     metadata: Optional[Dict[str, Any]] = Field(
-        default={},
-        description="Message metadata and context",
-        example={
-            "context": {"document_id": "123"},
-            "processing": {"confidence": 0.95},
-            "source": "chat"
-        }
+        default={
+            'context': {},
+            'analytics': {}
+        },
+        description="Optional metadata with required structure"
     )
     client_id: UUID = Field(
         ...,
@@ -42,19 +40,18 @@ class MessageBase(BaseModel):
 
     class Config:
         """Enhanced Pydantic model configuration."""
+        orm_mode = True
         schema_extra = {
             "example": {
                 "content": "What are the specifications for pump model A123?",
                 "role": "user",
                 "metadata": {
-                    "context": {"document_id": "123"},
-                    "processing": {"confidence": 0.95},
-                    "source": "chat"
+                    "context": {"document_ids": ["abc-123"]},
+                    "analytics": {"confidence": 0.95}
                 },
                 "client_id": "550e8400-e29b-41d4-a716-446655440000"
             }
         }
-        orm_mode = True
         json_encoders = {
             datetime: lambda v: v.isoformat(),
             UUID: lambda v: str(v)
@@ -64,42 +61,41 @@ class MessageCreate(MessageBase):
     """Enhanced schema for creating new chat messages with validation."""
     chat_session_id: UUID = Field(
         ...,
-        description="ID of the parent chat session",
-        example="550e8400-e29b-41d4-a716-446655440000"
+        description="Parent chat session ID"
     )
 
 class MessageResponse(MessageBase):
     """Enhanced schema for message responses with HAL links."""
     id: UUID = Field(
         ...,
-        description="Unique message identifier"
+        description="Message unique identifier"
     )
     created_at: datetime = Field(
         ...,
         description="Message creation timestamp"
     )
-    _links: HalLinks = Field(
+    _links: Dict[str, Dict[str, str]] = Field(
         default_factory=lambda: {
-            "self": {"href": "/api/v1/messages/{id}"},
-            "chat_session": {"href": "/api/v1/chat-sessions/{chat_session_id}"}
+            "self": {},
+            "chat_session": {},
+            "client": {}
         },
         description="HAL links for related resources"
     )
 
 class ChatSessionBase(BaseModel):
     """Enhanced base Pydantic model for chat sessions."""
-    title: constr(min_length=1, max_length=255) = Field(
+    title: constr(min_length=1, max_length=MAX_TITLE_LENGTH) = Field(
         ...,
-        description="Chat session title",
-        example="Product Specifications Query"
+        description="Chat session title"
     )
     metadata: Optional[Dict[str, Any]] = Field(
-        default={},
-        description="Session metadata and configuration",
-        example={
-            "context": {"product_line": "pumps"},
-            "preferences": {"response_format": "detailed"}
-        }
+        default={
+            'context': {},
+            'preferences': {},
+            'analytics': {}
+        },
+        description="Optional session metadata"
     )
     client_id: UUID = Field(
         ...,
@@ -108,17 +104,18 @@ class ChatSessionBase(BaseModel):
 
     class Config:
         """Enhanced Pydantic model configuration."""
+        orm_mode = True
         schema_extra = {
             "example": {
                 "title": "Product Specifications Query",
                 "metadata": {
                     "context": {"product_line": "pumps"},
-                    "preferences": {"response_format": "detailed"}
+                    "preferences": {"response_format": "detailed"},
+                    "analytics": {"session_duration": 300}
                 },
                 "client_id": "550e8400-e29b-41d4-a716-446655440000"
             }
         }
-        orm_mode = True
         json_encoders = {
             datetime: lambda v: v.isoformat(),
             UUID: lambda v: str(v)
@@ -128,19 +125,18 @@ class ChatSessionCreate(ChatSessionBase):
     """Enhanced schema for creating new chat sessions."""
     user_id: UUID = Field(
         ...,
-        description="ID of the user creating the session",
-        example="550e8400-e29b-41d4-a716-446655440000"
+        description="User creating the session"
     )
 
 class ChatSessionResponse(ChatSessionBase):
     """Enhanced schema for chat session responses with HAL links."""
     id: UUID = Field(
         ...,
-        description="Unique session identifier"
+        description="Session unique identifier"
     )
     messages: List[MessageResponse] = Field(
         default_factory=list,
-        description="Messages in this chat session"
+        description="Session messages with pagination"
     )
     created_at: datetime = Field(
         ...,
@@ -148,17 +144,18 @@ class ChatSessionResponse(ChatSessionBase):
     )
     updated_at: datetime = Field(
         ...,
-        description="Last session update timestamp"
+        description="Last update timestamp"
     )
-    _links: HalLinks = Field(
+    _links: Dict[str, Dict[str, str]] = Field(
         default_factory=lambda: {
-            "self": {"href": "/api/v1/chat-sessions/{id}"},
-            "messages": {"href": "/api/v1/chat-sessions/{id}/messages"},
-            "user": {"href": "/api/v1/users/{user_id}"}
+            "self": {},
+            "messages": {"href": "/messages{?page,size}"},
+            "client": {},
+            "user": {}
         },
         description="HAL links for related resources"
     )
     _embedded: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Embedded resources (e.g., latest messages)"
+        description="Embedded resources for pagination"
     )

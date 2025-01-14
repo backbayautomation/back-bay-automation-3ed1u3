@@ -2,82 +2,110 @@ import React from 'react';
 import { render, fireEvent, waitFor, screen } from '@testing-library/react'; // ^14.0.0
 import userEvent from '@testing-library/user-event'; // ^14.0.0
 import { axe, toHaveNoViolations } from 'jest-axe'; // ^4.7.0
-import FormField from '../../src/components/common/Forms/FormField';
-import SearchField from '../../src/components/common/Forms/SearchField';
-import SelectField from '../../src/components/common/Forms/SelectField';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals'; // ^29.0.0
 
-// Extend Jest matchers for accessibility testing
+import FormField from '../../../src/components/common/Forms/FormField';
+import SearchField from '../../../src/components/common/Forms/SearchField';
+import SelectField from '../../../src/components/common/Forms/SelectField';
+
+// Extend Jest matchers
 expect.extend(toHaveNoViolations);
 
-// Mock tenant context for multi-tenant testing
+// Mock tenant context
 const mockTenantContext = {
   id: 'tenant-123',
   validationRules: {
     maxLength: 50,
     required: true,
-    pattern: /^[a-zA-Z0-9\s]*$/,
+    patterns: {
+      email: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
+    },
   },
-  errorMessages: {
-    required: 'This field is required',
-    pattern: 'Only alphanumeric characters allowed',
-    maxLength: 'Maximum length exceeded',
+  theme: {
+    colors: {
+      primary: '#0066CC',
+      error: '#DC3545',
+    },
   },
 };
 
 describe('FormField Component', () => {
-  // Standard props for testing
-  const defaultProps = {
-    name: 'test-field',
-    label: 'Test Field',
-    value: '',
-    onChange: jest.fn(),
-  };
+  const mockOnChange = jest.fn();
+  const mockOnBlur = jest.fn();
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockOnChange.mockClear();
+    mockOnBlur.mockClear();
   });
 
   it('should render with tenant-specific validation rules', () => {
-    const { getByTestId } = render(
+    const { getByRole } = render(
       <FormField
-        {...defaultProps}
+        name="test-field"
+        label="Test Field"
+        value=""
         required={mockTenantContext.validationRules.required}
+        onChange={mockOnChange}
         maxLength={mockTenantContext.validationRules.maxLength}
       />
     );
 
-    const input = getByTestId('form-field-test-field');
-    expect(input).toHaveAttribute('maxLength', '50');
+    const input = getByRole('textbox');
     expect(input).toHaveAttribute('aria-required', 'true');
+    expect(input).toHaveAttribute('maxLength', '50');
   });
 
   it('should handle input masking per tenant configuration', async () => {
-    const { getByTestId } = render(<FormField {...defaultProps} />);
-    const input = getByTestId('form-field-test-field');
+    const { getByRole } = render(
+      <FormField
+        name="email"
+        label="Email"
+        value=""
+        type="email"
+        onChange={mockOnChange}
+      />
+    );
 
-    await userEvent.type(input, 'Test@123!');
-    expect(defaultProps.onChange).toHaveBeenCalledWith(
+    const input = getByRole('textbox');
+    await userEvent.type(input, 'test@example.com');
+    expect(mockOnChange).toHaveBeenCalledWith(
       expect.objectContaining({
-        target: expect.objectContaining({
-          value: 'Test123',
-        }),
+        target: expect.objectContaining({ value: 'test@example.com' })
       })
     );
   });
 
-  it('should maintain WCAG 2.1 AA compliance', async () => {
-    const { container } = render(<FormField {...defaultProps} />);
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
-  });
-
-  it('should announce validation errors to screen readers', async () => {
-    const { getByTestId, getByRole } = render(
-      <FormField {...defaultProps} error={mockTenantContext.errorMessages.required} />
+  it('should display localized error messages accessibly', async () => {
+    const { getByRole, getByText } = render(
+      <FormField
+        name="required-field"
+        label="Required Field"
+        value=""
+        required
+        error="This field is required"
+        onChange={mockOnChange}
+      />
     );
 
-    const errorMessage = getByRole('alert');
-    expect(errorMessage).toHaveTextContent(mockTenantContext.errorMessages.required);
+    const input = getByRole('textbox');
+    const errorMessage = getByText('This field is required');
+
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(errorMessage).toHaveAttribute('role', 'alert');
+  });
+
+  it('should pass accessibility audit', async () => {
+    const { container } = render(
+      <FormField
+        name="accessible-field"
+        label="Accessible Field"
+        value=""
+        onChange={mockOnChange}
+      />
+    );
+
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
   });
 });
 
@@ -85,59 +113,63 @@ describe('SearchField Component', () => {
   const mockOnSearch = jest.fn();
   const mockOnClear = jest.fn();
 
-  const defaultProps = {
-    value: '',
-    onSearch: mockOnSearch,
-    onClear: mockOnClear,
-  };
-
   beforeEach(() => {
-    jest.clearAllMocks();
     jest.useFakeTimers();
+    mockOnSearch.mockClear();
+    mockOnClear.mockClear();
   });
 
   afterEach(() => {
+    jest.runOnlyPendingTimers();
     jest.useRealTimers();
   });
 
   it('should debounce search with configured timeout', async () => {
-    const { getByTestId } = render(
-      <SearchField {...defaultProps} debounceMs={300} />
+    const { getByRole } = render(
+      <SearchField
+        value=""
+        onSearch={mockOnSearch}
+        debounceMs={300}
+      />
     );
 
-    const input = getByTestId('search-input');
-    await userEvent.type(input, 'test query');
+    const searchInput = getByRole('searchbox');
+    await userEvent.type(searchInput, 'test query');
 
     expect(mockOnSearch).not.toHaveBeenCalled();
     jest.advanceTimersByTime(300);
     expect(mockOnSearch).toHaveBeenCalledWith('test query');
   });
 
-  it('should handle loading states accessibly', () => {
-    const { getByRole } = render(
-      <SearchField {...defaultProps} isLoading={true} />
+  it('should handle loading states accessibly', async () => {
+    const { getByRole, getByLabelText } = render(
+      <SearchField
+        value=""
+        onSearch={mockOnSearch}
+        isLoading={true}
+      />
     );
 
-    const searchbox = getByRole('searchbox');
-    expect(searchbox).toHaveAttribute('aria-busy', 'true');
+    const searchInput = getByRole('searchbox');
+    const clearButton = getByLabelText('Clear search');
+
+    expect(searchInput).toHaveAttribute('aria-busy', 'true');
+    expect(clearButton).toBeDisabled();
   });
 
   it('should clear search with keyboard shortcuts', async () => {
-    const { getByTestId } = render(
-      <SearchField {...defaultProps} value="test query" />
+    const { getByRole } = render(
+      <SearchField
+        value="test"
+        onSearch={mockOnSearch}
+        onClear={mockOnClear}
+      />
     );
 
-    const input = getByTestId('search-input');
-    fireEvent.keyDown(input, { key: 'Escape' });
+    const searchInput = getByRole('searchbox');
+    fireEvent.keyDown(searchInput, { key: 'Escape' });
+
     expect(mockOnClear).toHaveBeenCalled();
-  });
-
-  it('should maintain WCAG 2.1 AA compliance in all states', async () => {
-    const { container } = render(
-      <SearchField {...defaultProps} isLoading={true} value="test" />
-    );
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
   });
 });
 
@@ -148,66 +180,79 @@ describe('SelectField Component', () => {
     { value: '3', label: 'Option 3' },
   ];
 
-  const defaultProps = {
-    name: 'test-select',
-    label: 'Test Select',
-    options,
-    value: '',
-    onChange: jest.fn(),
-  };
+  const mockOnChange = jest.fn();
 
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockOnChange.mockClear();
   });
 
-  it('should support keyboard navigation', async () => {
-    const { getByRole } = render(<SelectField {...defaultProps} />);
-    const select = getByRole('button');
+  it('should support keyboard navigation in dropdown', async () => {
+    const { getByRole } = render(
+      <SelectField
+        name="test-select"
+        label="Test Select"
+        options={options}
+        value=""
+        onChange={mockOnChange}
+      />
+    );
+
+    const select = getByRole('combobox');
+    await userEvent.tab();
+    expect(select).toHaveFocus();
 
     // Open dropdown with keyboard
     fireEvent.keyDown(select, { key: 'ArrowDown' });
-    await waitFor(() => {
-      expect(screen.getByRole('listbox')).toBeInTheDocument();
-    });
-
+    
     // Navigate options
-    fireEvent.keyDown(screen.getByRole('listbox'), { key: 'ArrowDown' });
-    expect(screen.getByText('Option 1')).toHaveFocus();
+    const option1 = screen.getByText('Option 1');
+    const option2 = screen.getByText('Option 2');
+    
+    expect(option1).toHaveFocus();
+    fireEvent.keyDown(option1, { key: 'ArrowDown' });
+    expect(option2).toHaveFocus();
   });
 
-  it('should handle multi-select mode accessibly', async () => {
+  it('should announce selected options correctly', async () => {
     const { getByRole } = render(
-      <SelectField {...defaultProps} multiple value={[]} />
-    );
-
-    const select = getByRole('button');
-    fireEvent.mouseDown(select);
-
-    const options = screen.getAllByRole('option');
-    await userEvent.click(options[0]);
-    await userEvent.click(options[1]);
-
-    expect(defaultProps.onChange).toHaveBeenCalledWith(['1', '2']);
-  });
-
-  it('should maintain WCAG 2.1 AA compliance with option groups', async () => {
-    const { container } = render(
       <SelectField
-        {...defaultProps}
-        options={[
-          { value: 'group1', label: 'Group 1' },
-          { value: 'group2', label: 'Group 2' },
-        ]}
+        name="test-select"
+        label="Test Select"
+        options={options}
+        value={['1', '2']}
+        multiple={true}
+        onChange={mockOnChange}
       />
     );
-    const results = await axe(container);
-    expect(results).toHaveNoViolations();
+
+    const select = getByRole('combobox');
+    expect(select).toHaveAttribute(
+      'aria-label',
+      expect.stringContaining('Option 1, Option 2')
+    );
   });
 
-  it('should announce selected options to screen readers', async () => {
-    render(<SelectField {...defaultProps} value="1" />);
-    const select = screen.getByRole('button');
-    expect(select).toHaveAttribute('aria-selected', 'true');
-    expect(select).toHaveTextContent('Option 1');
+  it('should handle large option lists performantly', async () => {
+    const manyOptions = Array.from({ length: 1000 }, (_, i) => ({
+      value: `${i}`,
+      label: `Option ${i}`,
+    }));
+
+    const { getByRole, queryAllByRole } = render(
+      <SelectField
+        name="large-select"
+        label="Large Select"
+        options={manyOptions}
+        value=""
+        onChange={mockOnChange}
+      />
+    );
+
+    const select = getByRole('combobox');
+    fireEvent.mouseDown(select);
+
+    // Verify virtual scrolling or pagination is working
+    const renderedOptions = queryAllByRole('option');
+    expect(renderedOptions.length).toBeLessThan(manyOptions.length);
   });
 });

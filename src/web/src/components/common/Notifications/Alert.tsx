@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React from 'react'; // v18.2.0
 import { styled } from '@mui/material/styles'; // v5.14.0
 import { Alert as MuiAlert } from '@mui/material'; // v5.14.0
 import CloseIcon from '@mui/icons-material/Close'; // v5.14.0
@@ -16,154 +16,132 @@ interface AlertProps {
   role?: 'alert' | 'status';
 }
 
-// Styled component with enhanced accessibility and responsiveness
+// Styled component with enhanced accessibility and responsive design
 const StyledAlert = styled(MuiAlert, {
-  shouldForwardProp: (prop) => 
-    !['elevation', 'dismissible'].includes(prop as string),
-})<{ elevation?: number; dismissible?: boolean }>(({ theme, elevation = 0, dismissible }) => ({
-  // Proper spacing and layout
-  padding: theme.spacing(1.5, 2),
+  shouldForwardProp: (prop) => !['elevation'].includes(prop as string),
+})<{ elevation?: number }>(({ theme, elevation = 1 }) => ({
+  position: 'relative',
+  width: '100%',
+  boxSizing: 'border-box',
   marginBottom: theme.spacing(2),
-  
-  // Elevation and shadows
   boxShadow: elevation ? theme.shadows[elevation] : 'none',
+  borderRadius: theme.shape.borderRadius,
   
-  // Enhanced visibility and contrast
+  // Ensure proper color contrast for WCAG compliance
   '& .MuiAlert-icon': {
-    color: 'inherit',
     opacity: 0.9,
     marginRight: theme.spacing(2),
   },
-  
-  // Title styling
+
+  // Enhanced typography for better readability
   '& .MuiAlert-message': {
-    padding: 0,
-    '& > h6': {
-      margin: 0,
-      marginBottom: theme.spacing(0.5),
-      fontWeight: theme.typography.fontWeightMedium,
-    },
+    padding: theme.spacing(1, 0),
+    fontSize: theme.typography.body1.fontSize,
+    lineHeight: theme.typography.body1.lineHeight,
   },
-  
-  // Proper spacing for dismissible alerts
-  ...(dismissible && {
-    paddingRight: theme.spacing(1),
-  }),
-  
-  // Focus visible indicators
-  '&:focus-visible': {
-    outline: `2px solid ${theme.palette.primary.main}`,
-    outlineOffset: '2px',
+
+  // Proper spacing for the action area
+  '& .MuiAlert-action': {
+    marginRight: -theme.spacing(0.5),
+    padding: theme.spacing(0, 1),
+    alignItems: 'center',
   },
-  
-  // Responsive design adjustments
+
+  // Responsive adjustments
   [theme.breakpoints.down('sm')]: {
-    padding: theme.spacing(1, 1.5),
+    padding: theme.spacing(1.5, 2),
     '& .MuiAlert-icon': {
       marginRight: theme.spacing(1.5),
     },
   },
-  
-  // Smooth transitions
-  transition: theme.transitions.create(
-    ['box-shadow', 'background-color', 'transform'],
-    {
-      duration: theme.transitions.duration.short,
-    }
-  ),
+
+  // Smooth transitions for visibility changes
+  transition: theme.transitions.create(['opacity', 'transform', 'box-shadow'], {
+    duration: theme.transitions.duration.standard,
+  }),
+
+  // Focus visible indicator for keyboard navigation
+  '&:focus-visible': {
+    outline: `2px solid ${theme.palette.primary.main}`,
+    outlineOffset: '2px',
+  },
 }));
 
-// Error boundary for graceful failure handling
-class AlertErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  render(): React.ReactNode {
-    if (this.state.hasError) {
-      return (
-        <MuiAlert severity="error" role="alert">
-          An error occurred while displaying this alert.
-        </MuiAlert>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-// Main component implementation with comprehensive accessibility features
-const Alert: React.FC<AlertProps> = React.memo(({
-  severity,
+// Main Alert component with error boundary protection
+const Alert = React.memo<AlertProps>(({
+  severity = 'info',
   message,
   title,
   onClose,
   autoHideDuration,
   dismissible = true,
-  elevation = 0,
+  elevation = 1,
   role = 'alert',
 }) => {
-  // Auto-hide functionality
-  useEffect(() => {
+  // Auto-hide timer management
+  React.useEffect(() => {
     if (autoHideDuration && onClose) {
       const timer = setTimeout(onClose, autoHideDuration);
       return () => clearTimeout(timer);
     }
   }, [autoHideDuration, onClose]);
 
-  // Memoized close handler
-  const handleClose = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (onClose) {
-      onClose();
-    }
-  }, [onClose]);
+  // Memoized close button to prevent unnecessary re-renders
+  const closeButton = React.useMemo(() => {
+    if (!dismissible || !onClose) return null;
+    
+    return (
+      <IconButton
+        size="small"
+        color="default"
+        onClick={onClose}
+        ariaLabel={`Close ${severity} alert`}
+        testId={`alert-close-${severity}`}
+      >
+        <CloseIcon fontSize="small" />
+      </IconButton>
+    );
+  }, [dismissible, onClose, severity]);
 
-  // Keyboard interaction handler
-  const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
-    if (event.key === 'Escape' && onClose) {
-      onClose();
+  // Enhanced error handling for message content
+  const renderMessage = React.useMemo(() => {
+    try {
+      return (
+        <>
+          {title && (
+            <div
+              style={{ fontWeight: 'bold', marginBottom: '4px' }}
+              role="heading"
+              aria-level={2}
+            >
+              {title}
+            </div>
+          )}
+          {message}
+        </>
+      );
+    } catch (error) {
+      console.error('Error rendering alert message:', error);
+      return 'An error occurred displaying this alert';
     }
-  }, [onClose]);
+  }, [message, title]);
 
   return (
-    <AlertErrorBoundary>
-      <StyledAlert
-        severity={severity}
-        elevation={elevation}
-        dismissible={dismissible}
-        role={role}
-        onKeyDown={handleKeyDown}
-        action={
-          dismissible && onClose ? (
-            <IconButton
-              size="small"
-              color={severity}
-              onClick={handleClose}
-              ariaLabel={`Close ${severity} alert`}
-              testId={`alert-close-${severity}`}
-            >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          ) : null
-        }
-      >
-        {title && (
-          <h6>{title}</h6>
-        )}
-        {message}
-      </StyledAlert>
-    </AlertErrorBoundary>
+    <StyledAlert
+      severity={severity}
+      elevation={elevation}
+      role={role}
+      action={closeButton}
+      aria-atomic="true"
+      aria-live={severity === 'error' ? 'assertive' : 'polite'}
+      data-testid={`alert-${severity}`}
+    >
+      {renderMessage}
+    </StyledAlert>
   );
 });
 
+// Display name for debugging
 Alert.displayName = 'Alert';
 
 export default Alert;

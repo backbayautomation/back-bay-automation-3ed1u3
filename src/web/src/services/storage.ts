@@ -1,6 +1,6 @@
 /**
  * High-level storage service providing secure data persistence, cache management,
- * and storage synchronization with encryption and performance optimizations.
+ * and storage synchronization with advanced security features and performance optimizations.
  * @version 1.0.0
  */
 
@@ -51,8 +51,6 @@ interface QueryResult {
 
 /**
  * Stores user session data with encryption and integrity verification
- * @param session User session data to store
- * @returns ApiResponse indicating success/failure
  */
 export const storeUserSession = (session: UserSession): ApiResponse<void> => {
   try {
@@ -72,17 +70,17 @@ export const storeUserSession = (session: UserSession): ApiResponse<void> => {
     // Calculate integrity checksum
     const checksum = CryptoJS.SHA256(JSON.stringify(encryptedSession)).toString();
 
-    // Store with metadata
-    const storageResult = setLocalStorage(SESSION_KEY, {
-      data: encryptedSession,
+    const storageData = {
+      ...encryptedSession,
       checksum,
       timestamp: Date.now()
-    }, {
+    };
+
+    return setLocalStorage(SESSION_KEY, storageData, {
       encrypt: true,
+      compress: false,
       expiresIn: session.expiresAt - Date.now()
     });
-
-    return storageResult;
   } catch (error) {
     return {
       success: false,
@@ -97,69 +95,54 @@ export const storeUserSession = (session: UserSession): ApiResponse<void> => {
 
 /**
  * Retrieves and decrypts user session data with integrity verification
- * @returns ApiResponse containing the user session or null
  */
 export const getUserSession = (): ApiResponse<UserSession | null> => {
   try {
-    const result = getLocalStorage<{
-      data: UserSession;
-      checksum: string;
-      timestamp: number;
-    }>(SESSION_KEY);
-
-    if (!result.success || !result.data) {
-      return {
-        success: true,
-        data: null,
-        error: null,
-        message: 'No session found',
-        statusCode: 404,
-        metadata: {}
-      };
+    const response = getLocalStorage<UserSession & { checksum: string }>(SESSION_KEY);
+    
+    if (!response.success || !response.data) {
+      return response as ApiResponse<null>;
     }
 
-    const { data: encryptedSession, checksum } = result.data;
+    const { checksum, ...sessionData } = response.data;
 
     // Verify data integrity
-    const calculatedChecksum = CryptoJS.SHA256(JSON.stringify(encryptedSession)).toString();
+    const calculatedChecksum = CryptoJS.SHA256(JSON.stringify(sessionData)).toString();
     if (calculatedChecksum !== checksum) {
-      clearUserSession();
       return {
         success: false,
         data: null,
         error: 'Session data integrity check failed',
-        message: 'Session may have been tampered with',
+        message: 'Storage tampering detected',
         statusCode: 401,
         metadata: {}
       };
     }
 
     // Decrypt sensitive data
-    const session: UserSession = {
-      ...encryptedSession,
-      token: CryptoJS.AES.decrypt(encryptedSession.token, ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8),
-      refreshToken: CryptoJS.AES.decrypt(encryptedSession.refreshToken, ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8),
-      isEncrypted: false
-    };
+    if (sessionData.isEncrypted) {
+      const decryptedSession = {
+        ...sessionData,
+        token: CryptoJS.AES.decrypt(sessionData.token, ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8),
+        refreshToken: CryptoJS.AES.decrypt(sessionData.refreshToken, ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8),
+        isEncrypted: false
+      };
 
-    // Validate session expiration
-    if (Date.now() >= session.expiresAt) {
-      clearUserSession();
       return {
         success: true,
-        data: null,
+        data: decryptedSession,
         error: null,
-        message: 'Session expired',
-        statusCode: 401,
+        message: 'Session retrieved successfully',
+        statusCode: 200,
         metadata: {}
       };
     }
 
     return {
       success: true,
-      data: session,
+      data: sessionData,
       error: null,
-      message: null,
+      message: 'Session retrieved successfully',
       statusCode: 200,
       metadata: {}
     };
@@ -177,33 +160,35 @@ export const getUserSession = (): ApiResponse<UserSession | null> => {
 
 /**
  * Removes user session data with secure cleanup
- * @returns ApiResponse indicating success/failure
  */
 export const clearUserSession = (): ApiResponse<void> => {
   try {
     // Clear session storage
-    const sessionResult = setLocalStorage(SESSION_KEY, null);
-    if (!sessionResult.success) {
-      throw new Error(sessionResult.error || 'Failed to clear session storage');
+    const response = setLocalStorage(SESSION_KEY, null);
+    if (!response.success) {
+      return response;
     }
 
     // Clear related cache entries
     const cacheKeys = Object.keys(sessionStorage).filter(key => 
       key.startsWith(CACHE_PREFIX)
     );
-    cacheKeys.forEach(key => sessionStorage.removeItem(key));
+    
+    cacheKeys.forEach(key => {
+      sessionStorage.removeItem(key);
+    });
 
-    // Perform secure cleanup
-    if (typeof window.crypto?.getRandomValues !== 'undefined') {
-      const cleanup = new Uint8Array(32);
-      window.crypto.getRandomValues(cleanup);
+    // Perform secure memory cleanup
+    if (window.crypto && window.crypto.getRandomValues) {
+      const array = new Uint32Array(10);
+      window.crypto.getRandomValues(array);
     }
 
     return {
       success: true,
       data: void 0,
       error: null,
-      message: null,
+      message: 'Session cleared successfully',
       statusCode: 200,
       metadata: {}
     };
@@ -221,17 +206,17 @@ export const clearUserSession = (): ApiResponse<void> => {
 
 /**
  * Stores query results in session storage with compression and versioning
- * @param queryKey Unique query identifier
- * @param data Query result data to cache
- * @returns ApiResponse indicating success/failure
  */
-export const storeQueryCache = (queryKey: string, data: QueryResult): ApiResponse<void> => {
+export const storeQueryCache = (
+  queryKey: string,
+  data: QueryResult
+): ApiResponse<void> => {
   try {
     const cacheKey = `${CACHE_PREFIX}${queryKey}`;
-    const serializedData = JSON.stringify(data);
     
     // Check storage quota
-    if (serializedData.length > MAX_CACHE_SIZE) {
+    const totalSize = new Blob([JSON.stringify(data)]).size;
+    if (totalSize > MAX_CACHE_SIZE) {
       return {
         success: false,
         data: void 0,
@@ -242,25 +227,20 @@ export const storeQueryCache = (queryKey: string, data: QueryResult): ApiRespons
       };
     }
 
-    // Compress if above threshold
-    const shouldCompress = serializedData.length > COMPRESSION_THRESHOLD;
-    const storageOptions = {
-      compress: shouldCompress,
-      expiresIn: CACHE_TTL
-    };
-
-    // Calculate checksum for integrity
-    const checksum = CryptoJS.SHA256(serializedData).toString();
-
-    const cacheData = {
+    // Prepare cache data
+    const cacheData: QueryResult = {
       ...data,
-      checksum,
-      compressed: shouldCompress,
       timestamp: Date.now(),
+      expiresIn: CACHE_TTL,
+      checksum: CryptoJS.SHA256(JSON.stringify(data.data)).toString(),
+      compressed: totalSize > COMPRESSION_THRESHOLD,
       version: '1.0'
     };
 
-    return setSessionStorage(cacheKey, cacheData, storageOptions);
+    return setSessionStorage(cacheKey, cacheData, {
+      compress: totalSize > COMPRESSION_THRESHOLD,
+      expiresIn: CACHE_TTL
+    });
   } catch (error) {
     return {
       success: false,
@@ -275,45 +255,20 @@ export const storeQueryCache = (queryKey: string, data: QueryResult): ApiRespons
 
 /**
  * Retrieves cached query results with validation and decompression
- * @param queryKey Unique query identifier
- * @returns ApiResponse containing the cached results or null
  */
 export const getQueryCache = (queryKey: string): ApiResponse<QueryResult | null> => {
   try {
     const cacheKey = `${CACHE_PREFIX}${queryKey}`;
-    const result = getSessionStorage<QueryResult>(cacheKey);
+    const response = getSessionStorage<QueryResult>(cacheKey);
 
-    if (!result.success || !result.data) {
-      return {
-        success: true,
-        data: null,
-        error: null,
-        message: 'Cache miss',
-        statusCode: 404,
-        metadata: {}
-      };
+    if (!response.success || !response.data) {
+      return response as ApiResponse<null>;
     }
 
-    const cachedData = result.data;
+    const cachedData = response.data;
 
-    // Verify data integrity
-    const serializedData = JSON.stringify(cachedData.data);
-    const checksum = CryptoJS.SHA256(serializedData).toString();
-    
-    if (checksum !== cachedData.checksum) {
-      sessionStorage.removeItem(cacheKey);
-      return {
-        success: false,
-        data: null,
-        error: 'Cache integrity check failed',
-        message: 'Cached data may be corrupted',
-        statusCode: 500,
-        metadata: {}
-      };
-    }
-
-    // Check expiration
-    if (Date.now() - cachedData.timestamp > CACHE_TTL) {
+    // Validate cache freshness
+    if (Date.now() > cachedData.timestamp + cachedData.expiresIn) {
       sessionStorage.removeItem(cacheKey);
       return {
         success: true,
@@ -325,11 +280,24 @@ export const getQueryCache = (queryKey: string): ApiResponse<QueryResult | null>
       };
     }
 
+    // Verify data integrity
+    const calculatedChecksum = CryptoJS.SHA256(JSON.stringify(cachedData.data)).toString();
+    if (calculatedChecksum !== cachedData.checksum) {
+      return {
+        success: false,
+        data: null,
+        error: 'Cache integrity check failed',
+        message: 'Cache tampering detected',
+        statusCode: 401,
+        metadata: {}
+      };
+    }
+
     return {
       success: true,
       data: cachedData,
       error: null,
-      message: null,
+      message: 'Cache retrieved successfully',
       statusCode: 200,
       metadata: {}
     };

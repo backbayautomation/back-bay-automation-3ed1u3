@@ -1,29 +1,30 @@
 """
-Tenant middleware implementation for handling multi-tenant request processing,
-authentication, and database session management with comprehensive security monitoring.
+FastAPI middleware for multi-tenant request processing with comprehensive security,
+monitoring, and performance optimization features.
 
 Version: 1.0.0
 """
 
-from typing import Dict, Optional, Awaitable, Callable
 import time
 import logging
-from fastapi import Request  # version: ^0.103.0
-from starlette.middleware.base import BaseHTTPMiddleware  # version: ^0.27.0
-from sqlalchemy import event  # version: ^2.0.0
-from prometheus_client import Counter, Histogram  # version: ^0.17.0
+from typing import Dict, Any, Optional
+from contextlib import contextmanager
 
-from ..core.config import settings
+from fastapi import Request, Response  # version: 0.103.0
+from starlette.middleware.base import BaseHTTPMiddleware  # version: 0.27.0
+from sqlalchemy import event  # version: 2.0.0
+from prometheus_client import Counter, Histogram  # version: 0.17.0
+
+from ..core.config import settings, get_settings
 from ..db.session import SessionLocal
 from ..core.security import verify_token, TenantSecurityManager
 from ..exceptions import AuthenticationError, AuthorizationError
-from ..utils.logging import StructuredLogger
 
-# Initialize structured logger
-logger = StructuredLogger(__name__)
+# Initialize logging
+logger = logging.getLogger(__name__)
 
-# Prometheus metrics
-tenant_requests = Counter(
+# Initialize Prometheus metrics
+tenant_metrics = Counter(
     'tenant_requests_total',
     'Total tenant requests',
     ['tenant_id', 'endpoint']
@@ -33,247 +34,215 @@ tenant_latency = Histogram(
     'Request latency by tenant',
     ['tenant_id']
 )
-tenant_errors = Counter(
-    'tenant_errors_total',
-    'Total tenant errors',
-    ['tenant_id', 'error_type']
-)
 
 class TenantMiddleware(BaseHTTPMiddleware):
     """
-    Advanced middleware for handling multi-tenant request processing with comprehensive
-    security, monitoring, and performance optimization.
+    Advanced middleware for handling multi-tenant request processing with
+    comprehensive security, monitoring, and performance optimization.
     """
 
     def __init__(self, app):
         """
-        Initialize tenant middleware with enhanced security and monitoring capabilities.
+        Initialize tenant middleware with enhanced security and monitoring.
         
         Args:
-            app: ASGI application
+            app: ASGI application instance
         """
         super().__init__(app)
         self.app = app
         self.security_manager = TenantSecurityManager()
         self.session_pool: Dict[str, SessionLocal] = {}
-        
-        # Configure session event listeners
-        self._configure_session_events()
+        self.settings = get_settings()
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Awaitable:
+    async def dispatch(self, request: Request, call_next) -> Response:
         """
         Process incoming request with comprehensive tenant context and security validation.
         
         Args:
-            request: Incoming request
-            call_next: Next middleware in chain
+            request: Incoming HTTP request
+            call_next: ASGI application call chain
             
         Returns:
             Response with tenant context and security headers
         """
         start_time = time.time()
         tenant_id = None
+        session = None
 
         try:
-            # Extract and validate tenant ID
+            # Extract and validate tenant information
             tenant_id = await self.get_tenant_id(request)
-            
-            # Set up tenant context
+            if not tenant_id:
+                raise AuthenticationError("Tenant ID not provided")
+
+            # Set up tenant context and monitoring
             request.state.tenant_id = tenant_id
-            
-            # Validate tenant access
-            await self.security_manager.validate_tenant_access(tenant_id, request)
-            
-            # Set up database session with tenant context
+            request.state.correlation_id = request.headers.get('X-Correlation-ID')
+
+            # Configure tenant-specific database session
             session = await self.setup_tenant_session(tenant_id)
             request.state.db = session
 
-            # Process request
+            # Process request with security context
             response = await call_next(request)
-            
+
+            # Add security headers
+            response.headers.update(self.settings.SECURITY_CONFIG['secure_headers'])
+
             # Update metrics
-            tenant_requests.labels(
+            tenant_metrics.labels(
                 tenant_id=tenant_id,
                 endpoint=request.url.path
             ).inc()
-            
-            tenant_latency.labels(
-                tenant_id=tenant_id
-            ).observe(time.time() - start_time)
-            
+
+            # Record request latency
+            request_time = time.time() - start_time
+            tenant_latency.labels(tenant_id=tenant_id).observe(request_time)
+
             # Log successful request
-            logger.log_security_event(
-                "tenant_request_success",
-                {
-                    "tenant_id": tenant_id,
-                    "path": request.url.path,
-                    "method": request.method,
-                    "duration": time.time() - start_time
+            logger.info(
+                "Tenant request processed successfully",
+                extra={
+                    'tenant_id': tenant_id,
+                    'path': request.url.path,
+                    'method': request.method,
+                    'duration': request_time,
+                    'correlation_id': request.state.correlation_id
                 }
             )
 
             return response
 
-        except AuthenticationError as e:
-            tenant_errors.labels(
-                tenant_id=tenant_id or "unknown",
-                error_type="authentication"
-            ).inc()
-            logger.log_security_event(
-                "tenant_authentication_error",
-                {
-                    "tenant_id": tenant_id,
-                    "error": str(e),
-                    "path": request.url.path
+        except AuthenticationError as ae:
+            logger.error(
+                "Tenant authentication failed",
+                extra={
+                    'tenant_id': tenant_id,
+                    'error': str(ae),
+                    'correlation_id': getattr(request.state, 'correlation_id', None)
                 }
             )
             raise
 
-        except AuthorizationError as e:
-            tenant_errors.labels(
-                tenant_id=tenant_id or "unknown",
-                error_type="authorization"
-            ).inc()
-            logger.log_security_event(
-                "tenant_authorization_error",
-                {
-                    "tenant_id": tenant_id,
-                    "error": str(e),
-                    "path": request.url.path
+        except AuthorizationError as ae:
+            logger.error(
+                "Tenant authorization failed",
+                extra={
+                    'tenant_id': tenant_id,
+                    'error': str(ae),
+                    'correlation_id': getattr(request.state, 'correlation_id', None)
                 }
             )
             raise
 
         except Exception as e:
-            tenant_errors.labels(
-                tenant_id=tenant_id or "unknown",
-                error_type="general"
-            ).inc()
-            logger.log_security_event(
-                "tenant_request_error",
-                {
-                    "tenant_id": tenant_id,
-                    "error": str(e),
-                    "path": request.url.path
-                }
+            logger.error(
+                "Tenant request processing failed",
+                extra={
+                    'tenant_id': tenant_id,
+                    'error': str(e),
+                    'correlation_id': getattr(request.state, 'correlation_id', None)
+                },
+                exc_info=True
             )
             raise
 
         finally:
-            # Clean up session if it exists
-            if hasattr(request.state, "db"):
-                request.state.db.close()
+            # Clean up resources
+            if session:
+                session.close()
 
-    async def get_tenant_id(self, request: Request) -> str:
+    async def get_tenant_id(self, request: Request) -> Optional[str]:
         """
         Extract and thoroughly validate tenant ID with security checks.
         
         Args:
-            request: Incoming request
+            request: Incoming HTTP request
             
         Returns:
-            Validated and sanitized tenant ID
-        
-        Raises:
-            AuthenticationError: If tenant authentication fails
+            Validated tenant ID or None
         """
-        # Extract tenant header
-        tenant_header = request.headers.get("X-Tenant-ID")
-        if not tenant_header:
-            raise AuthenticationError(
-                message="Missing tenant ID header",
-                auth_type="tenant",
-                security_context={"path": request.url.path}
-            )
+        # Extract tenant information from request
+        tenant_header = request.headers.get('X-Tenant-ID')
+        auth_header = request.headers.get('Authorization')
+
+        if not tenant_header or not auth_header:
+            raise AuthenticationError("Missing tenant or authorization headers")
 
         try:
-            # Verify tenant token
-            token = request.headers.get("Authorization", "").split("Bearer ")[-1]
-            if not token:
-                raise AuthenticationError(
-                    message="Missing authorization token",
-                    auth_type="tenant",
-                    security_context={"tenant_id": tenant_header}
-                )
+            # Verify JWT token and extract claims
+            token = auth_header.split(' ')[1]
+            token_data = verify_token(token)
 
-            # Verify and decode token
-            payload = verify_token(token)
-            
-            # Validate tenant ID matches token
-            if payload.get("tenant_id") != tenant_header:
-                raise AuthenticationError(
-                    message="Tenant ID mismatch",
-                    auth_type="tenant",
-                    security_context={
-                        "tenant_id": tenant_header,
-                        "token_tenant": payload.get("tenant_id")
-                    }
-                )
+            # Validate tenant access
+            if not self.security_manager.validate_tenant_access(
+                tenant_id=tenant_header,
+                token_data=token_data
+            ):
+                raise AuthorizationError("Invalid tenant access")
+
+            # Log tenant validation
+            self.security_manager.log_tenant_activity(
+                tenant_id=tenant_header,
+                activity_type="tenant_validation",
+                token_data=token_data
+            )
 
             return tenant_header
 
         except Exception as e:
-            raise AuthenticationError(
-                message=f"Tenant authentication failed: {str(e)}",
-                auth_type="tenant",
-                security_context={"tenant_id": tenant_header}
+            logger.error(
+                "Tenant validation failed",
+                extra={
+                    'tenant_id': tenant_header,
+                    'error': str(e)
+                }
             )
+            raise AuthenticationError(f"Tenant validation failed: {str(e)}")
 
     async def setup_tenant_session(self, tenant_id: str) -> SessionLocal:
         """
         Configure optimized database session with tenant isolation.
         
         Args:
-            tenant_id: Validated tenant ID
+            tenant_id: Validated tenant identifier
             
         Returns:
-            Configured and optimized database session
+            Configured database session
         """
-        # Check session pool
-        if tenant_id not in self.session_pool:
-            session = SessionLocal()
+        try:
+            # Get or create session from pool
+            if tenant_id not in self.session_pool:
+                session = SessionLocal()
+                
+                # Configure session for tenant
+                session.execute(f"SET app.current_tenant = '{tenant_id}'")
+                
+                # Set up row-level security
+                @event.listens_for(session, 'before_cursor_execute')
+                def add_tenant_filter(conn, cursor, statement, params, context, executemany):
+                    if 'app.current_tenant' not in statement:
+                        cursor.execute(f"SET app.current_tenant = '{tenant_id}'")
+
+                self.session_pool[tenant_id] = session
             
-            # Configure tenant isolation
-            @event.listens_for(session, "before_cursor_execute")
-            def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-                # Set tenant context for row-level security
-                conn.execute(f"SET app.current_tenant = '{tenant_id}'")
-            
-            self.session_pool[tenant_id] = session
+            return self.session_pool[tenant_id]
 
-        return self.session_pool[tenant_id]
-
-    def _configure_session_events(self):
-        """Configure session event listeners for monitoring and security."""
-        @event.listens_for(SessionLocal, "after_begin")
-        def after_begin(session, transaction, connection):
-            logger.log_metric(
-                "tenant_session_begin",
-                1.0,
-                {"tenant_id": getattr(session, "tenant_id", "unknown")}
+        except Exception as e:
+            logger.error(
+                "Failed to setup tenant session",
+                extra={
+                    'tenant_id': tenant_id,
+                    'error': str(e)
+                }
             )
+            raise
 
-        @event.listens_for(SessionLocal, "after_commit")
-        def after_commit(session):
-            logger.log_metric(
-                "tenant_session_commit",
-                1.0,
-                {"tenant_id": getattr(session, "tenant_id", "unknown")}
-            )
-
-        @event.listens_for(SessionLocal, "after_rollback")
-        def after_rollback(session):
-            logger.log_metric(
-                "tenant_session_rollback",
-                1.0,
-                {"tenant_id": getattr(session, "tenant_id", "unknown")}
-            )
-
-def get_tenant_middleware() -> TenantMiddleware:
+def get_tenant_middleware():
     """
     Factory function to create configured tenant middleware instance.
     
     Returns:
-        Configured tenant middleware with security and monitoring
+        Configured TenantMiddleware instance
     """
     return TenantMiddleware

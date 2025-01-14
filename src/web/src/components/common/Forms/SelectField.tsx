@@ -7,7 +7,7 @@ import {
   FormHelperText,
 } from '@mui/material'; // ^5.14.0
 
-interface SelectOption {
+interface Option {
   value: string | number;
   label: string;
 }
@@ -15,7 +15,7 @@ interface SelectOption {
 interface SelectFieldProps {
   name: string;
   label: string;
-  options: SelectOption[];
+  options: Option[];
   value: string | number | Array<string | number>;
   multiple?: boolean;
   required?: boolean;
@@ -60,21 +60,21 @@ const SelectField: React.FC<SelectFieldProps> = ({
       disabled={disabled}
       required={required}
       sx={{
-        marginBottom: 2, // 16px (2 * 8px base unit)
+        marginBottom: 1, // 8px according to design system
         '& .MuiOutlinedInput-root': {
           '&.Mui-focused fieldset': {
             borderColor: '#0066CC', // Primary color from design system
           },
+        },
+        '& .Mui-error': {
+          color: '#DC3545', // Error color from design system
         },
       }}
     >
       <InputLabel
         id={`${name}-label`}
         sx={{
-          fontFamily: 'Roboto, sans-serif',
-          '&.Mui-error': {
-            color: '#DC3545', // Error color from design system
-          },
+          fontFamily: 'Roboto, sans-serif', // Typography from design system
         }}
       >
         {label}
@@ -94,13 +94,14 @@ const SelectField: React.FC<SelectFieldProps> = ({
               maxHeight: 300, // Reasonable max height for dropdown
             },
           },
-          // Improve keyboard navigation
-          autoFocus: false,
-        }}
-        sx={{
-          fontFamily: 'Roboto, sans-serif',
-          '& .MuiSelect-select': {
-            minHeight: '1.4375em', // Consistent height with other form fields
+          // Improve accessibility with keyboard navigation
+          anchorOrigin: {
+            vertical: 'bottom',
+            horizontal: 'left',
+          },
+          transformOrigin: {
+            vertical: 'top',
+            horizontal: 'left',
           },
         }}
       >
@@ -109,10 +110,7 @@ const SelectField: React.FC<SelectFieldProps> = ({
             key={option.value}
             value={option.value}
             sx={{
-              fontFamily: 'Roboto, sans-serif',
-              '&.Mui-selected': {
-                backgroundColor: 'rgba(0, 102, 204, 0.08)', // Light primary color for selected state
-              },
+              fontFamily: 'Roboto, sans-serif', // Typography from design system
             }}
           >
             {option.label}
@@ -123,10 +121,7 @@ const SelectField: React.FC<SelectFieldProps> = ({
         <FormHelperText
           id={`${name}-helper-text`}
           sx={{
-            fontFamily: 'Roboto, sans-serif',
-            '&.Mui-error': {
-              color: '#DC3545', // Error color from design system
-            },
+            fontFamily: 'Roboto, sans-serif', // Typography from design system
           }}
         >
           {error || helperText}

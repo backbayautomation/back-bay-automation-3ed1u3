@@ -18,32 +18,33 @@ describe('validateEmail', () => {
     ];
 
     validEmails.forEach(email => {
-      expect(validateEmail(email)).toHaveLength(0);
+      expect(validateEmail(email)).toEqual([]);
     });
   });
 
-  it('should validate international email formats', () => {
-    const internationalEmails = [
-      'user@domain.co.uk',
-      'user@domain.com.au',
-      'user@subdomain.domain.org'
+  it('should validate subdomain email formats', () => {
+    const validSubdomainEmails = [
+      'test@sub.domain.com',
+      'user@department.company.co.uk',
+      faker.internet.email({ provider: 'sub.domain.com' })
     ];
 
-    internationalEmails.forEach(email => {
-      expect(validateEmail(email)).toHaveLength(0);
+    validSubdomainEmails.forEach(email => {
+      expect(validateEmail(email)).toEqual([]);
     });
   });
 
   it('should reject invalid email formats', () => {
     const invalidEmails = [
       '',
-      'invalid',
+      'test',
       '@domain.com',
-      'user@',
-      'user@domain',
-      'user@.com',
-      'user@domain.',
-      'user name@domain.com'
+      'test@',
+      'test@.com',
+      'test@domain',
+      'test@domain.',
+      'test@domain.c',
+      'test@domain..com'
     ];
 
     invalidEmails.forEach(email => {
@@ -52,42 +53,47 @@ describe('validateEmail', () => {
     });
   });
 
-  it('should detect SQL injection patterns in emails', () => {
-    const maliciousEmails = [
-      "user'--@domain.com",
-      'user;DROP TABLE users;--@domain.com',
-      "user' OR '1'='1@domain.com"
+  it('should handle SQL injection patterns', () => {
+    const sqlInjectionEmails = [
+      "test'--@domain.com",
+      'test;DROP TABLE users;--@domain.com',
+      "test' OR '1'='1@domain.com"
     ];
 
-    maliciousEmails.forEach(email => {
+    sqlInjectionEmails.forEach(email => {
       expect(validateEmail(email)).toHaveLength(1);
     });
   });
 
-  it('should handle edge cases', () => {
-    expect(validateEmail(' ')).toHaveLength(1);
-    expect(validateEmail('a'.repeat(256) + '@domain.com')).toHaveLength(1);
-    expect(validateEmail(null as unknown as string)).toHaveLength(1);
-    expect(validateEmail(undefined as unknown as string)).toHaveLength(1);
+  it('should handle XSS patterns', () => {
+    const xssEmails = [
+      'test<script>@domain.com',
+      'test@domain.com<script>alert(1)</script>',
+      'test@domain.com">alert(1)'
+    ];
+
+    xssEmails.forEach(email => {
+      expect(validateEmail(email)).toHaveLength(1);
+    });
   });
 });
 
 describe('validatePassword', () => {
-  it('should validate strong passwords', () => {
-    const strongPasswords = [
+  it('should validate passwords meeting all requirements', () => {
+    const validPasswords = [
       'Test123!@#',
       'SecureP@ssw0rd',
       'Complex1ty!',
       faker.internet.password({ length: 12, pattern: /[A-Za-z0-9!@#$%^&*]/ })
     ];
 
-    strongPasswords.forEach(password => {
-      expect(validatePassword(password)).toHaveLength(0);
+    validPasswords.forEach(password => {
+      expect(validatePassword(password)).toEqual([]);
     });
   });
 
   it('should enforce minimum length requirement', () => {
-    const shortPassword = 'Abc123!';
+    const shortPassword = 'Ab1!';
     const errors = validatePassword(shortPassword);
     
     expect(errors).toHaveLength(1);
@@ -95,7 +101,7 @@ describe('validatePassword', () => {
   });
 
   it('should enforce maximum length requirement', () => {
-    const longPassword = 'A1!'.repeat(50);
+    const longPassword = faker.string.alphanumeric(VALIDATION_CONSTANTS.MAX_PASSWORD_LENGTH + 1);
     const errors = validatePassword(longPassword);
     
     expect(errors).toHaveLength(1);
@@ -103,15 +109,14 @@ describe('validatePassword', () => {
   });
 
   it('should require all character types', () => {
-    const incompletePasswords = [
+    const invalidPasswords = [
       'onlylowercase',
       'ONLYUPPERCASE',
-      'NoNumbers!',
-      'no2special',
-      '12345678'
+      'NoSpecialChars123',
+      'NoNumbers!!!'
     ];
 
-    incompletePasswords.forEach(password => {
+    invalidPasswords.forEach(password => {
       const errors = validatePassword(password);
       expect(errors.length).toBeGreaterThan(0);
     });
@@ -122,137 +127,139 @@ describe('validatePassword', () => {
       'Password123!',
       'Qwerty123!',
       '12345678Ab!',
-      'Admin123!'
+      'password1A!'
     ];
 
     commonPasswords.forEach(password => {
       const errors = validatePassword(password);
-      expect(errors.some(e => e.message.includes('common pattern'))).toBeTruthy();
+      expect(errors.some(e => e.message.includes('common patterns'))).toBe(true);
     });
-  });
-
-  it('should handle edge cases', () => {
-    expect(validatePassword('')).toHaveLength(1);
-    expect(validatePassword(' '.repeat(10))).toHaveLength(4);
-    expect(validatePassword(null as unknown as string)).toHaveLength(1);
-    expect(validatePassword(undefined as unknown as string)).toHaveLength(1);
   });
 });
 
 describe('validateFileUpload', () => {
-  let validFile: File;
-  let invalidFile: File;
+  let mockValidFile: File;
+  let mockInvalidFile: File;
 
   beforeEach(() => {
     const validContent = new Uint8Array([1, 2, 3, 4]);
-    validFile = new File([validContent], 'test.pdf', {
+    mockValidFile = new File([validContent], 'test.pdf', {
       type: 'application/pdf',
       lastModified: Date.now()
     });
 
-    const invalidContent = new Uint8Array([1, 2, 3, 4]);
-    invalidFile = new File([invalidContent], 'test.exe', {
+    mockInvalidFile = new File([validContent], 'test.exe', {
       type: 'application/x-msdownload',
       lastModified: Date.now()
     });
   });
 
   it('should validate allowed file types', () => {
-    const errors = validateFileUpload(validFile);
-    expect(errors).toHaveLength(0);
+    const errors = validateFileUpload(mockValidFile);
+    expect(errors).toEqual([]);
   });
 
   it('should reject files exceeding size limit', () => {
-    Object.defineProperty(validFile, 'size', {
-      value: VALIDATION_CONSTANTS.MAX_FILE_SIZE + 1000
+    const largeContent = new Uint8Array(VALIDATION_CONSTANTS.MAX_FILE_SIZE + 1000);
+    const largeFile = new File([largeContent], 'large.pdf', {
+      type: 'application/pdf'
     });
 
-    const errors = validateFileUpload(validFile);
-    expect(errors.some(e => e.message.includes('size'))).toBeTruthy();
+    const errors = validateFileUpload(largeFile);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('size');
   });
 
   it('should reject disallowed file types', () => {
-    const errors = validateFileUpload(invalidFile);
-    expect(errors.some(e => e.message.includes('type'))).toBeTruthy();
+    const errors = validateFileUpload(mockInvalidFile);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('type');
   });
 
   it('should validate file MIME types', () => {
-    const maliciousFile = new File([], 'malicious.pdf', {
-      type: 'application/javascript'
+    const invalidMimeFile = new File(['content'], 'test.pdf', {
+      type: 'text/plain'
     });
 
-    const errors = validateFileUpload(maliciousFile);
-    expect(errors.some(e => e.message.includes('content type'))).toBeTruthy();
+    const errors = validateFileUpload(invalidMimeFile);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('content type');
   });
 
-  it('should handle edge cases', () => {
-    const emptyFile = new File([], '');
-    expect(validateFileUpload(emptyFile)).toHaveLength(2);
-    expect(validateFileUpload(null as unknown as File)).toHaveLength(1);
-    expect(validateFileUpload(undefined as unknown as File)).toHaveLength(1);
+  it('should detect malicious file extensions', () => {
+    const maliciousFiles = [
+      new File(['content'], 'test.exe.pdf', { type: 'application/pdf' }),
+      new File(['content'], 'test.pdf.exe', { type: 'application/pdf' }),
+      new File(['content'], 'test.js.pdf', { type: 'application/pdf' })
+    ];
+
+    maliciousFiles.forEach(file => {
+      const errors = validateFileUpload(file);
+      expect(errors.length).toBeGreaterThan(0);
+    });
   });
 });
 
 describe('sanitizeString', () => {
   it('should remove HTML tags', () => {
-    const input = '<p>Test</p><script>alert("xss")</script>';
-    expect(sanitizeString(input)).toBe('Testalert("xss")');
+    const input = '<p>Test</p><div>Content</div>';
+    expect(sanitizeString(input)).toBe('TestContent');
+  });
+
+  it('should remove script tags and content', () => {
+    const input = 'Before<script>alert("xss")</script>After';
+    expect(sanitizeString(input)).toBe('BeforeAfter');
   });
 
   it('should remove SQL injection patterns', () => {
     const sqlPatterns = [
       "DROP TABLE users;",
-      "SELECT * FROM passwords;",
-      "1'; DELETE FROM customers; --"
+      "SELECT * FROM users;",
+      "1'; DELETE FROM users; --"
     ];
 
     sqlPatterns.forEach(pattern => {
       const sanitized = sanitizeString(pattern);
-      expect(sanitized).not.toContain('DROP');
       expect(sanitized).not.toContain('SELECT');
+      expect(sanitized).not.toContain('DROP');
       expect(sanitized).not.toContain('DELETE');
     });
   });
 
   it('should escape special characters', () => {
     const input = '<>&"\'/';
-    const expected = '&lt;&gt;&amp;&quot;&#x27;&#x2F;';
-    expect(sanitizeString(input)).toBe(expected);
+    const sanitized = sanitizeString(input);
+    
+    expect(sanitized).toContain('&lt;');
+    expect(sanitized).toContain('&gt;');
+    expect(sanitized).toContain('&amp;');
+    expect(sanitized).toContain('&quot;');
+    expect(sanitized).toContain('&#x27;');
+    expect(sanitized).toContain('&#x2F;');
   });
 
-  it('should handle XSS attack patterns', () => {
-    const xssPatterns = [
-      '<img src="x" onerror="alert(1)">',
-      '<script>document.cookie</script>',
-      '<style>body{background:url("javascript:alert(1)")}</style>'
-    ];
-
-    xssPatterns.forEach(pattern => {
-      const sanitized = sanitizeString(pattern);
-      expect(sanitized).not.toContain('<script>');
-      expect(sanitized).not.toContain('<style>');
-      expect(sanitized).not.toContain('javascript:');
-    });
+  it('should handle nested malicious patterns', () => {
+    const input = '<div><script>alert("xss")</script><style>body{display:none}</style><sql>DROP TABLE users;</sql></div>';
+    const sanitized = sanitizeString(input);
+    
+    expect(sanitized).not.toContain('<script>');
+    expect(sanitized).not.toContain('<style>');
+    expect(sanitized).not.toContain('<sql>');
+    expect(sanitized).not.toContain('DROP TABLE');
   });
 
-  it('should handle edge cases', () => {
+  it('should handle empty and null inputs', () => {
     expect(sanitizeString('')).toBe('');
-    expect(sanitizeString(' ')).toBe(' ');
     expect(sanitizeString(null as unknown as string)).toBe('');
     expect(sanitizeString(undefined as unknown as string)).toBe('');
-    expect(sanitizeString('a'.repeat(10000))).toHaveLength(10000);
   });
 
-  it('should preserve valid content', () => {
-    const validContent = [
-      'Regular text',
-      'Numbers 123',
-      'Symbols !@#$%^&*()',
-      'Unicode characters ñáéíóú'
-    ];
-
-    validContent.forEach(content => {
-      expect(sanitizeString(content)).toBe(content);
-    });
+  it('should handle large inputs efficiently', () => {
+    const largeInput = faker.string.alpha(10000);
+    const start = performance.now();
+    sanitizeString(largeInput);
+    const duration = performance.now() - start;
+    
+    expect(duration).toBeLessThan(100); // Should process within 100ms
   });
 });

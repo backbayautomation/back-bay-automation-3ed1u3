@@ -1,11 +1,10 @@
 """
-FastAPI router endpoints for user management with comprehensive security controls,
-multi-tenant isolation, role-based access control, and detailed audit logging.
+FastAPI router endpoints for secure user management with multi-tenant isolation,
+role-based access control, and comprehensive audit logging.
 
 Version: 1.0.0
 """
 
-from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status  # version: ^0.100.0
@@ -13,13 +12,16 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc, asc
 
+from ....db.session import get_db
 from ....models.user import User, UserRole
 from ....schemas.user import UserCreate, UserUpdate, User as UserSchema
-from ....core.security import get_password_hash, verify_password
+from ....core.security import (
+    get_current_user,
+    verify_password,
+    get_password_hash,
+    check_rate_limit
+)
 from ....utils.logging import StructuredLogger
-from ....db.session import get_db
-from ....core.auth import get_current_user, check_user_permissions
-from ....utils.pagination import PaginatedResponse, paginate_query
 
 # Initialize router with prefix and tags
 router = APIRouter(prefix="/users", tags=["users"])
@@ -27,24 +29,46 @@ router = APIRouter(prefix="/users", tags=["users"])
 # Initialize structured logger
 logger = StructuredLogger(__name__)
 
-@router.get("/", response_model=PaginatedResponse[UserSchema])
+@router.get("/", response_model=List[UserSchema])
 async def get_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(100, ge=1, le=1000),
     sort_by: str = Query("created_at", regex="^(email|full_name|role|created_at)$"),
     descending: bool = Query(True),
     org_id: Optional[UUID] = None,
     client_id: Optional[UUID] = None
-) -> PaginatedResponse[UserSchema]:
+) -> List[UserSchema]:
     """
-    Retrieve paginated list of users with filtering and sorting capabilities.
-    Implements multi-tenant isolation and role-based access control.
+    Retrieve paginated list of users with multi-tenant isolation and RBAC.
+    
+    Args:
+        db: Database session
+        current_user: Authenticated user making the request
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        sort_by: Field to sort results by
+        descending: Sort in descending order if True
+        org_id: Optional organization filter
+        client_id: Optional client filter
+        
+    Returns:
+        List[UserSchema]: List of users matching criteria
+        
+    Raises:
+        HTTPException: For authorization or validation errors
     """
     try:
-        # Check user permissions
-        if not check_user_permissions(current_user, ["SYSTEM_ADMIN", "CLIENT_ADMIN"]):
+        # Check rate limit
+        if not check_rate_limit("get_users", str(current_user.id)):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded for user listing"
+            )
+
+        # Verify permissions
+        if current_user.role not in [UserRole.SYSTEM_ADMIN, UserRole.CLIENT_ADMIN]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions to list users"
@@ -54,21 +78,19 @@ async def get_users(
         query = db.query(User)
         
         # Apply tenant filtering
-        if current_user.role != UserRole.SYSTEM_ADMIN:
-            query = query.filter(User.org_id == current_user.org_id)
-            if current_user.client_id:
-                query = query.filter(User.client_id == current_user.client_id)
+        if current_user.role == UserRole.CLIENT_ADMIN:
+            query = query.filter(User.client_id == current_user.client_id)
         elif org_id:
             query = query.filter(User.org_id == org_id)
-            if client_id:
-                query = query.filter(User.client_id == client_id)
+        if client_id:
+            query = query.filter(User.client_id == client_id)
 
         # Apply sorting
         sort_column = getattr(User, sort_by)
         query = query.order_by(desc(sort_column) if descending else asc(sort_column))
 
-        # Get paginated results
-        paginated_users = paginate_query(query, skip, limit)
+        # Apply pagination
+        users = query.offset(skip).limit(limit).all()
 
         # Log successful retrieval
         logger.log_security_event(
@@ -76,25 +98,26 @@ async def get_users(
             {
                 "user_id": str(current_user.id),
                 "org_id": str(current_user.org_id),
-                "filters": {"org_id": org_id, "client_id": client_id},
-                "count": paginated_users.total
+                "client_id": str(current_user.client_id) if current_user.client_id else None,
+                "records_returned": len(users)
             }
         )
 
-        return paginated_users
+        return [UserSchema.from_orm(user) for user in users]
 
+    except HTTPException:
+        raise
     except Exception as e:
-        # Log error
         logger.log_security_event(
-            "error_user_list_access",
+            "user_list_error",
             {
-                "user_id": str(current_user.id),
-                "error": str(e)
+                "error": str(e),
+                "user_id": str(current_user.id)
             }
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve users"
+            detail="Internal server error while retrieving users"
         )
 
 @router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED)
@@ -102,96 +125,108 @@ async def create_user(
     user_create: UserCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
-) -> User:
+) -> UserSchema:
     """
-    Create new user with role-based access control and multi-tenant isolation.
-    Implements comprehensive security controls and audit logging.
+    Create new user with role-based access control and tenant isolation.
+    
+    Args:
+        user_create: User creation data
+        db: Database session
+        current_user: Authenticated user making the request
+        
+    Returns:
+        UserSchema: Created user details
+        
+    Raises:
+        HTTPException: For authorization or validation errors
     """
     try:
-        # Check user permissions
-        if not check_user_permissions(current_user, ["SYSTEM_ADMIN", "CLIENT_ADMIN"]):
+        # Check rate limit
+        if not check_rate_limit("create_user", str(current_user.id)):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded for user creation"
+            )
+
+        # Verify permissions
+        if current_user.role not in [UserRole.SYSTEM_ADMIN, UserRole.CLIENT_ADMIN]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions to create users"
             )
 
-        # Validate tenant access
-        if current_user.role != UserRole.SYSTEM_ADMIN:
-            if user_create.org_id != current_user.org_id:
+        # Verify tenant access
+        if current_user.role == UserRole.CLIENT_ADMIN:
+            if user_create.org_id != current_user.org_id or user_create.client_id != current_user.client_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot create user for different organization"
-                )
-            if current_user.client_id and user_create.client_id != current_user.client_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Cannot create user for different client"
+                    detail="Cannot create user for different organization/client"
                 )
 
-        # Check if email already exists
+        # Check email uniqueness
         if db.query(User).filter(User.email == user_create.email).first():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
 
-        # Create new user instance
-        new_user = User(
+        # Create user instance
+        user = User(
             email=user_create.email,
-            org_id=user_create.org_id,
-            client_id=user_create.client_id,
-            role=user_create.role,
             full_name=user_create.full_name,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            role=user_create.role,
+            org_id=user_create.org_id,
+            client_id=user_create.client_id
         )
-
-        # Set password with secure hashing
-        new_user.hashed_password = get_password_hash(user_create.password)
+        
+        # Set password with validation
+        user.set_password(user_create.password)
 
         # Save to database
-        db.add(new_user)
+        db.add(user)
         db.commit()
-        db.refresh(new_user)
+        db.refresh(user)
 
         # Log user creation
         logger.log_security_event(
             "user_created",
             {
+                "created_user_id": str(user.id),
                 "created_by": str(current_user.id),
-                "new_user_id": str(new_user.id),
-                "org_id": str(new_user.org_id),
-                "client_id": str(new_user.client_id) if new_user.client_id else None,
-                "role": new_user.role
+                "org_id": str(user.org_id),
+                "client_id": str(user.client_id) if user.client_id else None,
+                "role": user.role.value
             }
         )
 
-        return new_user
+        return UserSchema.from_orm(user)
 
+    except HTTPException:
+        raise
     except IntegrityError as e:
         db.rollback()
         logger.log_security_event(
-            "error_user_create",
+            "user_creation_error",
             {
-                "created_by": str(current_user.id),
                 "error": "Database integrity error",
-                "details": str(e)
+                "details": str(e),
+                "attempted_by": str(current_user.id)
             }
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Database integrity error"
+            detail="Database integrity error during user creation"
         )
     except Exception as e:
         db.rollback()
         logger.log_security_event(
-            "error_user_create",
+            "user_creation_error",
             {
-                "created_by": str(current_user.id),
-                "error": str(e)
+                "error": str(e),
+                "attempted_by": str(current_user.id)
             }
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user"
+            detail="Internal server error during user creation"
         )

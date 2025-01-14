@@ -1,85 +1,120 @@
-import React, { useCallback, useState, useEffect } from 'react';
-import { withErrorBoundary } from 'react-error-boundary';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Box, Typography, CircularProgress, Alert } from '@mui/material';
+import { withErrorBoundary } from 'react-error-boundary';
+import { memo } from 'react';
+
 import AdminLayout from '../../layouts/AdminLayout';
 import AnalyticsDashboard from '../../components/admin/AnalyticsDashboard/AnalyticsDashboard';
+import { useAuth } from '../../hooks/useAuth';
 
 // Constants for analytics configuration
 const REFRESH_INTERVAL = 60000; // 1 minute in milliseconds
 const ERROR_MESSAGES = {
-  LOAD_ERROR: 'Failed to load analytics data. Please try again.',
-  REFRESH_ERROR: 'Error refreshing analytics data. Data may be stale.',
-};
+  LOAD_ERROR: 'Failed to load analytics data',
+  REFRESH_ERROR: 'Error refreshing analytics data',
+  AUTH_ERROR: 'You do not have permission to view analytics'
+} as const;
 
 // Interface for component props
 interface AnalyticsPageProps {
   refreshInterval?: number;
   initialDateRange?: {
-    start: Date;
-    end: Date;
+    startDate: Date;
+    endDate: Date;
   };
 }
 
-// Analytics page component with error boundary and performance optimization
-const AnalyticsPage: React.FC<AnalyticsPageProps> = React.memo(({
+/**
+ * Analytics page component providing comprehensive system metrics and performance indicators
+ * with real-time updates and accessibility features.
+ */
+const AnalyticsPage: React.FC<AnalyticsPageProps> = memo(({
   refreshInterval = REFRESH_INTERVAL,
   initialDateRange
 }) => {
-  // State management
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Authentication and authorization
+  const { isAuthenticated, hasRole } = useAuth();
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Handle data export
-  const handleExport = useCallback((format: string) => {
+  const handleExport = useCallback(async (format: string) => {
     try {
-      // Analytics tracking for export action
-      window.gtag?.('event', 'analytics_export', {
-        format,
-        timestamp: new Date().toISOString()
-      });
+      // Analytics export logic will be implemented here
+      console.info('Exporting analytics data in format:', format);
     } catch (error) {
-      console.error('Export error:', error);
-      setError('Failed to export analytics data');
+      setError(error instanceof Error ? error.message : 'Failed to export data');
     }
   }, []);
 
-  // Effect for initial loading state
+  // Verify admin access
   useEffect(() => {
-    const timer = setTimeout(() => {
+    if (!isAuthenticated || !hasRole('admin')) {
+      setError(ERROR_MESSAGES.AUTH_ERROR);
       setIsLoading(false);
-    }, 1000);
+    } else {
+      setIsLoading(false);
+    }
+  }, [isAuthenticated, hasRole]);
 
-    return () => clearTimeout(timer);
-  }, []);
+  // Error handling for the entire page
+  if (error) {
+    return (
+      <AdminLayout>
+        <Box
+          sx={{
+            padding: '24px',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center'
+          }}
+        >
+          <Alert 
+            severity="error"
+            sx={{ maxWidth: '800px' }}
+            role="alert"
+          >
+            {error}
+          </Alert>
+        </Box>
+      </AdminLayout>
+    );
+  }
 
-  // Error handling callback
-  const handleError = useCallback((error: Error) => {
-    setError(error.message);
-    // Log error to monitoring service
-    console.error('Analytics Error:', error);
-    window.gtag?.('event', 'analytics_error', {
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }, []);
+  // Loading state
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <Box
+          sx={{
+            padding: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '16px'
+          }}
+        >
+          <CircularProgress size={40} />
+          <Typography variant="body1" color="textSecondary">
+            Loading analytics dashboard...
+          </Typography>
+        </Box>
+      </AdminLayout>
+    );
+  }
 
   return (
     <AdminLayout>
       <Box
-        component="main"
-        role="main"
-        aria-label="Analytics Dashboard"
         sx={{
+          padding: '24px',
           height: '100%',
           overflow: 'auto',
           display: 'flex',
           flexDirection: 'column',
-          gap: '24px',
-          padding: '24px',
-          backgroundColor: 'background.default'
+          gap: '24px'
         }}
       >
-        {/* Header Section */}
         <Box
           sx={{
             marginBottom: '24px',
@@ -93,7 +128,7 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = React.memo(({
             component="h1"
             sx={{
               fontSize: '24px',
-              fontWeight: '500',
+              fontWeight: 500,
               color: 'text.primary',
               lineHeight: 1.2
             }}
@@ -102,50 +137,22 @@ const AnalyticsPage: React.FC<AnalyticsPageProps> = React.memo(({
           </Typography>
           <Typography
             variant="body1"
+            color="textSecondary"
             sx={{
               fontSize: '16px',
-              color: 'text.secondary',
-              marginTop: '8px',
               maxWidth: '800px'
             }}
           >
-            Monitor system performance, usage statistics, and document processing metrics in real-time.
+            Monitor system performance, usage statistics, and document processing metrics
+            in real-time with comprehensive analytics and trend analysis.
           </Typography>
         </Box>
 
-        {/* Error Display */}
-        {error && (
-          <Alert 
-            severity="error" 
-            onClose={() => setError(null)}
-            sx={{ maxWidth: '800px', margin: '24px auto' }}
-          >
-            {error}
-          </Alert>
-        )}
-
-        {/* Loading State */}
-        {isLoading ? (
-          <Box
-            sx={{
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center',
-              minHeight: '200px'
-            }}
-          >
-            <CircularProgress 
-              aria-label="Loading analytics data"
-              size={40}
-            />
-          </Box>
-        ) : (
-          // Analytics Dashboard Component
-          <AnalyticsDashboard
-            refreshInterval={refreshInterval}
-            onExport={handleExport}
-          />
-        )}
+        <AnalyticsDashboard
+          refreshInterval={refreshInterval}
+          onExport={handleExport}
+          initialDateRange={initialDateRange}
+        />
       </Box>
     </AdminLayout>
   );
@@ -159,34 +166,26 @@ const AnalyticsPageWithErrorBoundary = withErrorBoundary(AnalyticsPage, {
         sx={{
           padding: '24px',
           display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '16px'
+          justifyContent: 'center',
+          alignItems: 'center'
         }}
       >
-        <Typography variant="h5" color="error">
-          Error Loading Analytics
-        </Typography>
-        <Typography variant="body1">
-          {error.message || ERROR_MESSAGES.LOAD_ERROR}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          Please refresh the page or contact support if the problem persists.
-        </Typography>
+        <Alert 
+          severity="error"
+          sx={{ maxWidth: '800px' }}
+          role="alert"
+        >
+          {ERROR_MESSAGES.LOAD_ERROR}: {error.message}
+        </Alert>
       </Box>
     </AdminLayout>
   ),
   onError: (error) => {
     console.error('Analytics Page Error:', error);
-    // Log to monitoring service
-    window.gtag?.('event', 'analytics_page_error', {
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
   }
 });
 
-// Display name for debugging
+// Set display name for debugging
 AnalyticsPageWithErrorBoundary.displayName = 'AnalyticsPage';
 
 export default AnalyticsPageWithErrorBoundary;

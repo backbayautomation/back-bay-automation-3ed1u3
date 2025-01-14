@@ -1,16 +1,13 @@
 /**
- * API configuration file that defines endpoints, security settings, and reliability patterns.
- * Implements enterprise-grade security, OAuth2 authentication, and resilient request handling.
+ * API configuration file defining endpoints, security settings, and reliability patterns.
+ * Implements OAuth2 authentication, circuit breaker pattern, and enhanced request handling.
  * @version 1.0.0
  */
 
-// External dependencies
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios'; // v1.5.0
 import circuitBreaker from 'axios-circuit-breaker'; // v1.0.0
 import axiosRetry from 'axios-retry'; // v3.8.0
 import rateLimit from 'axios-rate-limit'; // v1.3.0
-
-// Internal types
 import { ApiResponse } from '../types/common';
 
 /**
@@ -36,7 +33,10 @@ export interface CircuitBreakerConfig {
  */
 export interface RequestConfig extends AxiosRequestConfig {
     encrypt?: boolean;
-    validation?: Record<string, unknown>;
+    validation?: {
+        schema?: object;
+        options?: object;
+    };
 }
 
 /**
@@ -128,7 +128,7 @@ const configureCircuitBreaker = (
  * Creates and configures an Axios instance with enhanced security and reliability features
  */
 export const createApiClient = (): AxiosInstance => {
-    // Create base instance
+    // Create base axios instance
     const instance = axios.create({
         baseURL: API_CONFIG.BASE_URL,
         timeout: API_CONFIG.TIMEOUT,
@@ -148,7 +148,7 @@ export const createApiClient = (): AxiosInstance => {
         return config;
     });
 
-    // Implement request encryption interceptor
+    // Configure request encryption interceptor
     instance.interceptors.request.use((config: RequestConfig) => {
         if (config.encrypt) {
             config.data = encryptPayload(config.data, API_CONFIG.ENCRYPTION);
@@ -156,18 +156,22 @@ export const createApiClient = (): AxiosInstance => {
         return config;
     });
 
-    // Add request validation interceptor
-    instance.interceptors.request.use((config: RequestConfig) => {
-        if (config.validation) {
-            validateRequest(config.data, config.validation);
+    // Configure response handling interceptor
+    instance.interceptors.response.use(
+        (response) => {
+            const apiResponse = response.data as ApiResponse<unknown>;
+            if (!apiResponse.success) {
+                throw new Error(apiResponse.error || 'Unknown error occurred');
+            }
+            return response;
+        },
+        (error) => {
+            console.error('API Error:', error);
+            return Promise.reject(error);
         }
-        return config;
-    });
+    );
 
-    // Configure circuit breaker
-    configureCircuitBreaker(instance, API_CONFIG.CIRCUIT_BREAKER);
-
-    // Set up enhanced retry logic
+    // Configure retry logic
     axiosRetry(instance, {
         retries: API_CONFIG.RETRY_ATTEMPTS,
         retryDelay: (retryCount) => {
@@ -179,66 +183,44 @@ export const createApiClient = (): AxiosInstance => {
         }
     });
 
-    // Implement rate limiting
+    // Configure rate limiting
     const rateLimitedInstance = rateLimit(instance, {
         maxRequests: API_CONFIG.RATE_LIMIT.MAX_REQUESTS,
         perMilliseconds: API_CONFIG.RATE_LIMIT.PER_MILLISECONDS
     });
 
-    // Add response interceptor for standardized error handling
-    rateLimitedInstance.interceptors.response.use(
-        (response) => response,
-        (error) => {
-            const errorResponse: ApiResponse<null> = {
-                success: false,
-                data: null,
-                error: error.message,
-                message: error.response?.data?.message || 'An error occurred',
-                statusCode: error.response?.status || 500,
-                metadata: {
-                    timestamp: new Date().toISOString(),
-                    path: error.config?.url,
-                    method: error.config?.method
-                }
-            };
-            return Promise.reject(errorResponse);
-        }
-    );
+    // Configure circuit breaker
+    configureCircuitBreaker(rateLimitedInstance, API_CONFIG.CIRCUIT_BREAKER);
 
     // Add performance monitoring
-    rateLimitedInstance.interceptors.request.use((config) => {
+    instance.interceptors.request.use((config) => {
         config.metadata = { startTime: new Date() };
         return config;
     });
 
-    rateLimitedInstance.interceptors.response.use((response) => {
-        const duration = new Date().getTime() - 
-            (response.config.metadata?.startTime?.getTime() || 0);
-        console.debug(`Request to ${response.config.url} took ${duration}ms`);
+    instance.interceptors.response.use((response) => {
+        const requestTime = new Date().getTime() - response.config.metadata.startTime.getTime();
+        console.debug(`Request to ${response.config.url} took ${requestTime}ms`);
         return response;
     });
 
     return rateLimitedInstance;
 };
 
-// Utility functions (implementations would be in separate security/utils modules)
+/**
+ * Helper function to get OAuth access token
+ */
 const getAccessToken = async (): Promise<string | null> => {
-    // Implementation for OAuth2 token acquisition
-    return null;
+    // Implementation would integrate with your OAuth provider
+    // This is a placeholder for the actual implementation
+    return localStorage.getItem('access_token');
 };
 
-const encryptPayload = (
-    data: unknown,
-    config: typeof API_CONFIG.ENCRYPTION
-): unknown => {
-    // Implementation for payload encryption
-    return data;
-};
-
-const validateRequest = (
-    data: unknown,
-    rules: Record<string, unknown>
-): void => {
-    // Implementation for request validation
-    return;
+/**
+ * Helper function to encrypt payload
+ */
+const encryptPayload = (data: unknown, config: typeof API_CONFIG.ENCRYPTION): string => {
+    // Implementation would use the specified encryption algorithm
+    // This is a placeholder for the actual implementation
+    return JSON.stringify(data);
 };

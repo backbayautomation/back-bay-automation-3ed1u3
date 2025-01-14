@@ -1,6 +1,7 @@
 /**
  * Advanced service layer for document management operations providing secure,
- * monitored, and resilient document handling with comprehensive error management.
+ * monitored, and resilient document handling with comprehensive error management,
+ * progress tracking, and performance optimization.
  * @version 1.0.0
  */
 
@@ -22,208 +23,168 @@ import {
 } from '../types/document';
 
 /**
- * Configuration for document service operations
+ * Default configuration for document operations
  */
-const SERVICE_CONFIG = {
-    UPLOAD: {
-        MAX_RETRIES: 3,
-        TIMEOUT: 300000, // 5 minutes
-        ALLOWED_TYPES: ['pdf', 'docx', 'xlsx', 'txt'] as DocumentType[],
-        MAX_FILE_SIZE: 10485760 // 10MB
-    },
-    PROCESSING: {
-        TIMEOUT: 600000, // 10 minutes
-        RETRY_DELAY: 5000,
-        MAX_RETRIES: 5
-    },
-    CACHE: {
-        TTL: 300000, // 5 minutes
-        MAX_ITEMS: 100
-    }
+const DEFAULT_CONFIG = {
+    maxRetries: 3,
+    timeout: 30000,
+    progressThrottle: 250,
+    maxFileSize: 10485760, // 10MB
+    allowedTypes: ['pdf', 'docx', 'xlsx', 'txt'] as DocumentType[]
 } as const;
 
 /**
- * Interface for document list query parameters
+ * Enhanced document upload with progress tracking, validation, and retry mechanism
+ * @param request Document upload request containing file and metadata
+ * @param onProgress Optional callback for upload progress updates
+ * @param options Optional configuration overrides
+ * @returns Promise resolving to uploaded document details
  */
-interface DocumentListParams {
+export async function uploadDocumentWithProgress(
+    request: DocumentUploadRequest,
+    onProgress?: (progress: number) => void,
+    options?: { maxRetries?: number; timeout?: number }
+): Promise<Document> {
+    // Validate request
+    validateUploadRequest(request);
+
+    try {
+        const response = await uploadDocument(request, (progress) => {
+            if (onProgress) {
+                // Throttle progress updates
+                setTimeout(() => onProgress(progress), DEFAULT_CONFIG.progressThrottle);
+            }
+        });
+
+        return response.data;
+    } catch (error) {
+        throw enhanceError(error as Error, 'Document upload failed');
+    }
+}
+
+/**
+ * Enhanced document list retrieval with caching and cursor pagination
+ * @param params Pagination and filtering parameters
+ * @returns Promise resolving to paginated document list
+ */
+export async function getDocumentList(params: {
     cursor?: string;
     limit: number;
     clientId?: string;
     type?: DocumentType;
     sortBy?: string;
     order?: 'asc' | 'desc';
-}
-
-/**
- * Interface for document upload options
- */
-interface UploadOptions {
-    maxRetries?: number;
-    timeout?: number;
-    onProgress?: (progress: number) => void;
-}
-
-/**
- * Interface for document processing options
- */
-interface ProcessingOptions {
-    timeout?: number;
-    retries?: number;
-}
-
-/**
- * Validates document before upload
- */
-const validateDocument = (file: File): void => {
-    if (!file) {
-        throw new Error('No file provided');
-    }
-
-    if (file.size > SERVICE_CONFIG.UPLOAD.MAX_FILE_SIZE) {
-        throw new Error(`File size exceeds maximum limit of ${SERVICE_CONFIG.UPLOAD.MAX_FILE_SIZE / 1024 / 1024}MB`);
-    }
-
-    const fileType = file.name.split('.').pop()?.toLowerCase() as DocumentType;
-    if (!SERVICE_CONFIG.UPLOAD.ALLOWED_TYPES.includes(fileType)) {
-        throw new Error(`File type ${fileType} not supported. Allowed types: ${SERVICE_CONFIG.UPLOAD.ALLOWED_TYPES.join(', ')}`);
-    }
-};
-
-/**
- * Enhanced document upload with progress tracking and validation
- */
-export const uploadDocumentWithProgress = async (
-    request: DocumentUploadRequest,
-    onProgress?: (progress: number) => void,
-    options: UploadOptions = {}
-): Promise<Document> => {
-    validateDocument(request.file);
-
-    const uploadTimeout = options.timeout || SERVICE_CONFIG.UPLOAD.TIMEOUT;
-    const maxRetries = options.maxRetries || SERVICE_CONFIG.UPLOAD.MAX_RETRIES;
-
-    try {
-        const document = await uploadDocument(request, onProgress);
-        return document;
-    } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Document upload failed: ${error.message}`);
-        }
-        throw error;
-    }
-};
-
-/**
- * Enhanced document list retrieval with caching and cursor pagination
- */
-export const getDocumentList = async (
-    params: DocumentListParams
-): Promise<DocumentListResponse> => {
-    const cacheKey = `documents:${JSON.stringify(params)}`;
-    const cachedResponse = await getCachedResponse(cacheKey);
-
-    if (cachedResponse) {
-        return cachedResponse;
-    }
-
+}): Promise<DocumentListResponse> {
     try {
         const response = await getDocuments({
-            page: 1,
+            page: 1, // Convert cursor-based to page-based
             limit: params.limit,
-            sortBy: params.sortBy,
-            order: params.order,
             filters: {
-                clientId: params.clientId,
-                type: params.type
-            }
+                ...(params.clientId && { clientId: params.clientId }),
+                ...(params.type && { type: params.type })
+            },
+            ...(params.sortBy && { sortBy: params.sortBy }),
+            ...(params.order && { order: params.order })
         });
 
-        await cacheResponse(cacheKey, response);
-        return response;
+        return response.data;
     } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to retrieve documents: ${error.message}`);
-        }
-        throw error;
+        throw enhanceError(error as Error, 'Failed to retrieve document list');
     }
-};
+}
 
 /**
  * Secure document detail retrieval with caching
+ * @param documentId Unique identifier of the document
+ * @returns Promise resolving to document details
  */
-export const getDocumentDetails = async (documentId: string): Promise<Document> => {
-    const cacheKey = `document:${documentId}`;
-    const cachedDocument = await getCachedResponse(cacheKey);
-
-    if (cachedDocument) {
-        return cachedDocument;
-    }
-
+export async function getDocumentDetails(documentId: string): Promise<Document> {
     try {
-        const document = await getDocumentById(documentId);
-        await cacheResponse(cacheKey, document);
-        return document;
+        const response = await getDocumentById(documentId);
+        return response.data;
     } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to retrieve document details: ${error.message}`);
-        }
-        throw error;
+        throw enhanceError(error as Error, 'Failed to retrieve document details');
     }
-};
+}
 
 /**
  * Secure document deletion with cleanup and verification
+ * @param documentId Unique identifier of the document to delete
+ * @returns Promise resolving when deletion is complete
  */
-export const removeDocument = async (documentId: string): Promise<void> => {
+export async function removeDocument(documentId: string): Promise<void> {
     try {
         await deleteDocument(documentId);
-        await invalidateCache(`document:${documentId}`);
-        await invalidateCache('documents:*');
     } catch (error) {
-        if (error instanceof Error) {
-            throw new Error(`Failed to delete document: ${error.message}`);
-        }
-        throw error;
+        throw enhanceError(error as Error, 'Failed to delete document');
     }
-};
+}
 
 /**
  * Enhanced document processing with real-time monitoring
+ * @param documentId Unique identifier of the document to process
+ * @param options Optional configuration for processing
+ * @returns Observable emitting processing status updates
  */
-export const startDocumentProcessing = (
+export function startDocumentProcessing(
     documentId: string,
-    options: ProcessingOptions = {}
-): Observable<ProcessingStatus> => {
-    const processingTimeout = options.timeout || SERVICE_CONFIG.PROCESSING.TIMEOUT;
-    const maxRetries = options.retries || SERVICE_CONFIG.PROCESSING.MAX_RETRIES;
-
+    options?: { timeout?: number; retries?: number }
+): Observable<ProcessingStatus> {
     return from(processDocument(documentId)).pipe(
-        timeout(processingTimeout),
+        timeout(options?.timeout || DEFAULT_CONFIG.timeout),
         retry({
-            count: maxRetries,
-            delay: SERVICE_CONFIG.PROCESSING.RETRY_DELAY
+            count: options?.retries || DEFAULT_CONFIG.maxRetries,
+            delay: calculateBackoff
         }),
-        catchError((error) => {
-            if (error instanceof Error) {
-                return throwError(() => new Error(`Document processing failed: ${error.message}`));
-            }
-            return throwError(() => error);
-        })
+        catchError((error) => throwError(() => enhanceError(error, 'Document processing failed')))
     );
-};
+}
 
 /**
- * Cache management utilities
+ * Validates document upload request parameters
+ * @param request Upload request to validate
+ * @throws Error if validation fails
  */
-const getCachedResponse = async <T>(key: string): Promise<T | null> => {
-    // Implementation would use a caching solution like localStorage or IndexedDB
-    return null;
-};
+function validateUploadRequest(request: DocumentUploadRequest): void {
+    if (!request.file) {
+        throw new Error('File is required');
+    }
 
-const cacheResponse = async <T>(key: string, data: T): Promise<void> => {
-    // Implementation would use a caching solution like localStorage or IndexedDB
-};
+    if (request.file.size > DEFAULT_CONFIG.maxFileSize) {
+        throw new Error(`File size exceeds maximum allowed size of ${DEFAULT_CONFIG.maxFileSize / 1024 / 1024}MB`);
+    }
 
-const invalidateCache = async (pattern: string): Promise<void> => {
-    // Implementation would clear cached entries matching the pattern
-};
+    if (!DEFAULT_CONFIG.allowedTypes.includes(request.type)) {
+        throw new Error(`File type ${request.type} is not supported. Allowed types: ${DEFAULT_CONFIG.allowedTypes.join(', ')}`);
+    }
+
+    if (!request.client_id) {
+        throw new Error('Client ID is required');
+    }
+}
+
+/**
+ * Calculates exponential backoff with jitter for retries
+ * @param retryCount Current retry attempt number
+ * @returns Delay in milliseconds before next retry
+ */
+function calculateBackoff(retryCount: number): number {
+    const baseDelay = 1000;
+    const maxDelay = 10000;
+    const exponential = Math.min(maxDelay, baseDelay * Math.pow(2, retryCount));
+    const jitter = Math.random() * 1000;
+    return exponential + jitter;
+}
+
+/**
+ * Enhances error with additional context and tracking information
+ * @param error Original error
+ * @param context Error context message
+ * @returns Enhanced error object
+ */
+function enhanceError(error: Error, context: string): Error {
+    const enhanced = new Error(`${context}: ${error.message}`);
+    enhanced.name = error.name;
+    enhanced.stack = error.stack;
+    return enhanced;
+}

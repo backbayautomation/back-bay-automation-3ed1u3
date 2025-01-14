@@ -1,7 +1,108 @@
-# Prometheus Kubernetes Configuration
-# Version: v2.45.0
-# Purpose: Core monitoring system deployment with high availability and security
+---
+# ConfigMap for Prometheus configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: monitoring
+    part-of: catalog-search-system
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: catalog-search-system
+        environment: production
 
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Kubernetes API server monitoring
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Service monitoring based on ServiceMonitor CRDs
+      - job_name: 'kubernetes-services'
+        kubernetes_sd_configs:
+          - role: service
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+
+---
+# ConfigMap for Prometheus alerting rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: monitoring
+    part-of: catalog-search-system
+data:
+  system-alerts.yml: |
+    groups:
+      - name: system
+        rules:
+          - alert: HighCPUUsage
+            expr: container_cpu_usage_seconds_total > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: High CPU usage detected
+              description: Container CPU usage is above 85% for 5 minutes
+
+          - alert: HighMemoryUsage
+            expr: container_memory_usage_bytes / container_memory_max_usage_bytes > 0.85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: High memory usage detected
+              description: Container memory usage is above 85% for 5 minutes
+
+          - alert: APIHighLatency
+            expr: http_request_duration_seconds > 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: High API latency detected
+              description: API requests are taking longer than 1 second to complete
+
+---
+# StatefulSet for Prometheus deployment
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -12,7 +113,7 @@ metadata:
     component: monitoring
     part-of: catalog-search-system
 spec:
-  replicas: 2  # High availability configuration
+  replicas: 2
   podManagementPolicy: Parallel
   updateStrategy:
     type: RollingUpdate
@@ -28,65 +129,53 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9090"
     spec:
-      # Security context for non-root execution
       securityContext:
-        fsGroup: 65534  # nobody group
-        runAsUser: 65534  # nobody user
+        fsGroup: 65534
+        runAsUser: 65534
         runAsNonRoot: true
-      
       serviceAccountName: prometheus
-      
       containers:
-      - name: prometheus
-        image: prom/prometheus:v2.45.0
-        args:
-          - --config.file=/etc/prometheus/prometheus.yml
-          - --storage.tsdb.path=/prometheus
-          - --storage.tsdb.retention.time=15d  # Retention period for metrics
-          - --web.enable-lifecycle  # Enable runtime configuration reloading
-          - --web.enable-admin-api  # Enable admin API for management
-          - --web.console.libraries=/usr/share/prometheus/console_libraries
-          - --web.console.templates=/usr/share/prometheus/consoles
-        
-        ports:
-          - containerPort: 9090
-            name: web
-            protocol: TCP
-        
-        # Resource limits and requests
-        resources:
-          requests:
-            cpu: 500m
-            memory: 2Gi
-          limits:
-            cpu: 1000m
-            memory: 4Gi
-        
-        # Volume mounts for configuration and storage
-        volumeMounts:
-          - name: prometheus-config
-            mountPath: /etc/prometheus
-          - name: prometheus-storage
-            mountPath: /prometheus
-          - name: rules
-            mountPath: /etc/prometheus/rules
-        
-        # Health checks
-        livenessProbe:
-          httpGet:
-            path: /-/healthy
-            port: web
-          initialDelaySeconds: 30
-          timeoutSeconds: 30
-        
-        readinessProbe:
-          httpGet:
-            path: /-/ready
-            port: web
-          initialDelaySeconds: 30
-          timeoutSeconds: 30
-      
-      # Configuration volumes
+        - name: prometheus
+          # prom/prometheus:v2.45.0
+          image: prom/prometheus:v2.45.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=15d
+            - --web.enable-lifecycle
+            - --web.enable-admin-api
+            - --web.console.libraries=/usr/share/prometheus/console_libraries
+            - --web.console.templates=/usr/share/prometheus/consoles
+          ports:
+            - containerPort: 9090
+              name: web
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "2Gi"
+            limits:
+              cpu: "1000m"
+              memory: "4Gi"
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+            - name: prometheus-storage
+              mountPath: /prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: web
+            initialDelaySeconds: 30
+            timeoutSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: web
+            initialDelaySeconds: 30
+            timeoutSeconds: 30
       volumes:
         - name: prometheus-config
           configMap:
@@ -94,11 +183,7 @@ spec:
         - name: rules
           configMap:
             name: prometheus-rules
-      
-      # Grace period for proper shutdown
       terminationGracePeriodSeconds: 300
-  
-  # Persistent storage configuration
   volumeClaimTemplates:
     - metadata:
         name: prometheus-storage
@@ -108,4 +193,25 @@ spec:
         storageClassName: managed-premium
         resources:
           requests:
-            storage: 50Gi  # Storage size for metrics retention
+            storage: 50Gi
+
+---
+# Service for Prometheus
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: monitoring
+    part-of: catalog-search-system
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9090
+      targetPort: web
+      protocol: TCP
+      name: web
+  selector:
+    app: prometheus

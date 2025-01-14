@@ -1,14 +1,14 @@
 import React from 'react'; // ^18.2.0
-import { Box, CircularProgress, Typography, useTheme } from '@mui/material'; // ^5.14.0
-import { styled } from '@mui/material/styles'; // ^5.14.0
+import { Box, CircularProgress, Typography, useTheme } from '@mui/material'; // 5.14.0
+import { styled } from '@mui/material/styles'; // 5.14.0
 
 interface PageLoaderProps {
   /**
-   * Optional message to display below the loading indicator
+   * Optional loading message to display below the spinner
    */
   message?: string;
   /**
-   * Size variant for the loading indicator
+   * Optional size variant for the loading indicator
    * @default 'medium'
    */
   size?: 'small' | 'medium' | 'large';
@@ -26,18 +26,23 @@ const LoaderContainer = styled(Box)(({ theme }) => ({
   transition: 'all 300ms ease-in-out',
   // Ensure container takes full width on all screen sizes
   width: '100%',
-  // Prevent any unwanted scrolling
-  overflow: 'hidden',
-  // Improve text rendering
-  WebkitFontSmoothing: 'antialiased',
-  MozOsxFontSmoothing: 'grayscale',
+  // Add responsive padding based on screen size
+  [theme.breakpoints.down('sm')]: {
+    padding: theme.spacing(1),
+  },
+  [theme.breakpoints.up('lg')]: {
+    padding: theme.spacing(3),
+  },
 }));
 
 /**
  * A full-page loading component that displays a centered loading indicator
- * with optional message. Compliant with WCAG Level AA 2.1 standards.
+ * with optional message while maintaining accessibility standards.
+ * 
+ * @param {PageLoaderProps} props - Component props
+ * @returns {JSX.Element} Rendered loading component
  */
-const PageLoader = React.memo<PageLoaderProps>(({ 
+const PageLoader: React.FC<PageLoaderProps> = React.memo(({ 
   message,
   size = 'medium'
 }) => {
@@ -66,11 +71,11 @@ const PageLoader = React.memo<PageLoaderProps>(({
         // Ensure proper color contrast for accessibility
         sx={{
           color: theme.palette.primary.main,
-          // Improve visibility on different backgrounds
-          filter: 'drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.1))'
+          '& .MuiCircularProgress-circle': {
+            strokeLinecap: 'round',
+          },
         }}
       />
-      
       {message && (
         <Typography
           variant="body1"
@@ -78,18 +83,18 @@ const PageLoader = React.memo<PageLoaderProps>(({
           sx={{
             marginTop: theme.spacing(2),
             textAlign: 'center',
-            // Ensure text remains readable at all sizes
-            maxWidth: '80%',
             // Responsive font size
             fontSize: {
               xs: '0.875rem',
-              sm: '1rem'
+              sm: '1rem',
+              md: '1.125rem',
             },
-            // Improve readability
+            // Ensure proper line height for readability
             lineHeight: 1.5,
-            letterSpacing: '0.00938em',
-            // Prevent text selection during loading
-            userSelect: 'none'
+            // Prevent text from being too wide
+            maxWidth: '80%',
+            // Proper text wrapping
+            wordBreak: 'break-word',
           }}
           aria-hidden="true" // Screen readers already announce the status from container
         >
@@ -100,7 +105,7 @@ const PageLoader = React.memo<PageLoaderProps>(({
   );
 });
 
-// Display name for debugging
+// Display name for debugging purposes
 PageLoader.displayName = 'PageLoader';
 
 export default PageLoader;

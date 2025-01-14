@@ -9,108 +9,142 @@ Version: 1.0.0
 from datetime import datetime
 from uuid import uuid4
 import numpy as np  # version: ^1.24.0
-from sqlalchemy import Column, ForeignKey, UUID, ARRAY, Float, DateTime, JSON, String, Index
+from sqlalchemy import Column, ForeignKey, UUID, ARRAY, Float, DateTime, JSON, Index, String
 from sqlalchemy.orm import relationship, validates
+from sqlalchemy.exc import ValidationError
+
 from app.db.base import Base
 from app.models.chunk import Chunk
 
-# Constants for vector configuration
+# Global constants based on technical specifications
 EMBEDDING_VERSION = '1.0'
-VECTOR_DIMENSION = 1536  # As per technical spec A.1.1
+VECTOR_DIMENSION = 1536  # From technical spec A.1.1
 
 class Embedding(Base):
     """
     SQLAlchemy model for vector embeddings with enhanced security and performance features.
-    Implements comprehensive vector storage with tenant isolation and validation.
+    Implements comprehensive vector storage with tenant isolation and metadata tracking.
     """
     __tablename__ = 'embeddings'
 
-    # Primary and Foreign Key Fields
-    id = Column(UUID, primary_key=True, default=uuid4,
-               doc="Unique identifier for the embedding")
-    chunk_id = Column(UUID, ForeignKey('chunks.id', ondelete='CASCADE'),
-                     nullable=False, unique=True, index=True,
-                     doc="Reference to parent chunk")
-
-    # Vector and Similarity Fields
-    embedding = Column(ARRAY(Float), nullable=False,
-                      doc="Vector embedding array")
-    similarity_score = Column(Float, nullable=False, default=0.0,
-                            doc="Similarity score for ranking")
-
-    # Metadata and Version Fields
-    metadata = Column(JSON, nullable=False,
-                     doc="Embedding metadata including processing parameters")
-    version = Column(String(10), nullable=False, default=EMBEDDING_VERSION,
-                    doc="Embedding model version")
-
-    # Audit Fields
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow,
-                       doc="Timestamp of embedding creation")
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow,
-                       onupdate=datetime.utcnow,
-                       doc="Timestamp of last update")
-
-    # Relationships
-    chunk = relationship('Chunk', back_populates='embedding', lazy='joined',
-                        doc="Parent chunk relationship")
-
-    # Indexes for query optimization
+    # Define composite indexes for efficient vector similarity search
     __table_args__ = (
-        Index('ix_embeddings_similarity', 'similarity_score'),
-        {'extend_existing': True}
+        Index('ix_embeddings_chunk_id', 'chunk_id'),
+        Index('ix_embeddings_similarity', 'similarity_score')
     )
 
-    def __init__(self, chunk_id: UUID, embedding_vector: np.ndarray,
-                 similarity_score: float = 0.0, metadata: dict = None):
-        """
-        Initialize embedding with required fields and validation.
+    # Primary key with UUID for security and global uniqueness
+    id = Column(UUID, primary_key=True, default=uuid4)
 
-        Args:
-            chunk_id: UUID of parent chunk
-            embedding_vector: Numpy array of embedding values
-            similarity_score: Initial similarity score
-            metadata: Additional metadata for the embedding
+    # Foreign key to chunk with index for efficient joins
+    chunk_id = Column(
+        UUID,
+        ForeignKey('chunks.id', ondelete='CASCADE'),
+        nullable=False,
+        unique=True,
+        index=True
+    )
 
-        Raises:
-            ValueError: If validation fails for any field
-        """
-        # Validate embedding dimensions
-        if embedding_vector.shape[0] != VECTOR_DIMENSION:
-            raise ValueError(f"Embedding vector must have dimension {VECTOR_DIMENSION}")
+    # Vector embedding array with fixed dimensions
+    embedding = Column(
+        ARRAY(Float, dimensions=VECTOR_DIMENSION),
+        nullable=False
+    )
 
-        # Validate similarity score
-        if not 0.0 <= similarity_score <= 1.0:
-            raise ValueError("Similarity score must be between 0 and 1")
+    # Similarity score for ranking and filtering
+    similarity_score = Column(
+        Float,
+        nullable=False,
+        default=0.0,
+        index=True
+    )
 
-        # Initialize base metadata
-        base_metadata = {
-            'model_version': EMBEDDING_VERSION,
+    # Metadata JSON for vector parameters and processing info
+    metadata = Column(
+        JSON,
+        nullable=False,
+        default={
             'vector_params': {
                 'dimension': VECTOR_DIMENSION,
                 'algorithm': 'cosine',
                 'batch_size': 32
             },
-            'processing_stats': {
-                'processing_time': 0,
-                'confidence_score': similarity_score
+            'processing': {
+                'model_version': None,
+                'processing_time': None,
+                'quality_score': None
             }
         }
-        if metadata:
-            base_metadata.update(metadata)
+    )
+
+    # Version tracking for embedding model compatibility
+    version = Column(String, nullable=False, default=EMBEDDING_VERSION)
+
+    # Audit timestamps
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+    # Relationship to parent chunk with tenant isolation
+    chunk = relationship('Chunk', back_populates='embedding', lazy='joined')
+
+    def __init__(self, chunk_id: UUID, embedding_vector: np.ndarray,
+                 similarity_score: float = 0.0, metadata: dict = None):
+        """
+        Initialize embedding with validation and security checks.
+
+        Args:
+            chunk_id: UUID of parent chunk
+            embedding_vector: Numpy array of embedding values
+            similarity_score: Initial similarity score
+            metadata: Optional metadata dictionary
+
+        Raises:
+            ValidationError: If validation fails
+        """
+        # Validate embedding dimensions
+        if embedding_vector.shape[0] != VECTOR_DIMENSION:
+            raise ValidationError(f"Embedding must have dimension {VECTOR_DIMENSION}")
+
+        # Validate similarity score range
+        if not 0.0 <= similarity_score <= 1.0:
+            raise ValidationError("Similarity score must be between 0 and 1")
 
         self.id = uuid4()
         self.chunk_id = chunk_id
         self.embedding = embedding_vector.tolist()
         self.similarity_score = similarity_score
-        self.metadata = base_metadata
+        
+        # Initialize metadata with defaults
+        default_metadata = {
+            'vector_params': {
+                'dimension': VECTOR_DIMENSION,
+                'algorithm': 'cosine',
+                'batch_size': 32
+            },
+            'processing': {
+                'model_version': None,
+                'processing_time': None,
+                'quality_score': None
+            }
+        }
+        
+        if metadata:
+            self.validate_metadata(metadata)
+            default_metadata.update(metadata)
+            
+        self.metadata = default_metadata
         self.version = EMBEDDING_VERSION
         self.created_at = datetime.utcnow()
         self.updated_at = self.created_at
 
     def to_dict(self) -> dict:
         """
-        Convert embedding model to dictionary representation with security filtering.
+        Convert embedding to dictionary with security filtering.
 
         Returns:
             dict: Filtered embedding data dictionary
@@ -118,11 +152,14 @@ class Embedding(Base):
         return {
             'id': str(self.id),
             'chunk_id': str(self.chunk_id),
+            'embedding': self.embedding,
             'similarity_score': self.similarity_score,
             'metadata': {
-                'model_version': self.metadata.get('model_version'),
                 'vector_params': self.metadata.get('vector_params'),
-                'processing_stats': self.metadata.get('processing_stats')
+                'processing': {
+                    'model_version': self.metadata.get('processing', {}).get('model_version'),
+                    'quality_score': self.metadata.get('processing', {}).get('quality_score')
+                }
             },
             'version': self.version,
             'created_at': self.created_at.isoformat(),
@@ -131,64 +168,66 @@ class Embedding(Base):
 
     def update_similarity(self, new_score: float) -> None:
         """
-        Update embedding similarity score with validation.
+        Update similarity score with validation.
 
         Args:
             new_score: New similarity score value
 
         Raises:
-            ValueError: If score is invalid
+            ValidationError: If score is invalid
         """
         if not 0.0 <= new_score <= 1.0:
-            raise ValueError("Similarity score must be between 0 and 1")
-
+            raise ValidationError("Similarity score must be between 0 and 1")
+        
         self.similarity_score = new_score
         self.updated_at = datetime.utcnow()
-        self.metadata['processing_stats']['confidence_score'] = new_score
 
     def get_vector(self) -> np.ndarray:
         """
         Get embedding as numpy array with caching.
 
         Returns:
-            numpy.ndarray: Embedding vector as numpy array
+            numpy.ndarray: Embedding vector
         """
+        # Convert embedding list to numpy array
         return np.array(self.embedding, dtype=np.float32)
 
     @validates('metadata')
-    def validate_metadata(self, key: str, metadata: dict) -> dict:
+    def validate_metadata(self, metadata: dict) -> bool:
         """
         Validate metadata schema and content.
 
         Args:
-            key: Field name being validated
             metadata: Metadata dictionary to validate
 
         Returns:
-            dict: Validated metadata dictionary
+            bool: True if validation succeeds
 
         Raises:
-            ValueError: If metadata validation fails
+            ValidationError: If validation fails
         """
         if not isinstance(metadata, dict):
-            raise ValueError("Metadata must be a dictionary")
+            raise ValidationError("Metadata must be a dictionary")
 
-        required_keys = {'model_version', 'vector_params', 'processing_stats'}
-        if not all(key in metadata for key in required_keys):
-            raise ValueError(f"Missing required metadata keys: {required_keys}")
-
+        # Validate vector parameters
         vector_params = metadata.get('vector_params', {})
-        required_vector_params = {'dimension', 'algorithm', 'batch_size'}
-        if not all(param in vector_params for param in required_vector_params):
-            raise ValueError(f"Missing required vector parameters: {required_vector_params}")
+        if vector_params:
+            if not isinstance(vector_params.get('dimension'), int):
+                raise ValidationError("Vector dimension must be an integer")
+            if vector_params.get('algorithm') not in ['cosine', 'euclidean', 'dot_product']:
+                raise ValidationError("Invalid vector similarity algorithm")
+            if not isinstance(vector_params.get('batch_size'), int):
+                raise ValidationError("Batch size must be an integer")
 
-        processing_stats = metadata.get('processing_stats', {})
-        required_stats = {'processing_time', 'confidence_score'}
-        if not all(stat in processing_stats for stat in required_stats):
-            raise ValueError(f"Missing required processing stats: {required_stats}")
+        # Validate processing information
+        processing = metadata.get('processing', {})
+        if processing:
+            if processing.get('quality_score') is not None:
+                if not 0.0 <= float(processing['quality_score']) <= 1.0:
+                    raise ValidationError("Quality score must be between 0 and 1")
 
-        return metadata
+        return True
 
     def __repr__(self) -> str:
         """String representation of the Embedding instance."""
-        return f"<Embedding(id='{self.id}', chunk_id='{self.chunk_id}', similarity={self.similarity_score})>"
+        return f"Embedding(id='{self.id}', chunk_id='{self.chunk_id}', version='{self.version}')"

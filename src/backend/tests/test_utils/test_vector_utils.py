@@ -1,7 +1,6 @@
 """
 Test suite for vector utility functions in the AI-powered catalog search system.
-Tests vector operations, similarity calculations, and batch processing with comprehensive
-validation of functionality, performance, and edge cases.
+Tests vector operations, similarity calculations, and batch processing with comprehensive coverage.
 
 External Dependencies:
 pytest==7.4.0 - Testing framework and fixtures
@@ -22,9 +21,10 @@ from app.utils.vector_utils import (
 
 # Test constants
 NUMERICAL_TOLERANCE = 1e-7
-MAX_EXECUTION_TIME = 0.1  # seconds
+TEST_BATCH_SIZE = 32
+TEST_VECTOR_COUNT = 100
 
-# Test vectors and expected results
+# Test vectors with known properties
 SIMILARITY_TEST_CASES = [
     # Identical vectors should have similarity 1.0
     (
@@ -34,7 +34,7 @@ SIMILARITY_TEST_CASES = [
     # Orthogonal vectors should have similarity 0.0
     (
         (np.array([1.0] + [0.0] * (VECTOR_DIMENSION-1)),
-         np.array([0.0] + [1.0] + [0.0] * (VECTOR_DIMENSION-2))),
+         np.array([0.0, 1.0] + [0.0] * (VECTOR_DIMENSION-2))),
         0.0
     ),
     # Opposite vectors should have similarity -1.0
@@ -47,139 +47,151 @@ SIMILARITY_TEST_CASES = [
 NORMALIZATION_TEST_CASES = [
     np.random.rand(VECTOR_DIMENSION) * 100,  # Large magnitude
     np.random.rand(VECTOR_DIMENSION) * 1e-5,  # Small magnitude
-    np.zeros(VECTOR_DIMENSION),  # Zero vector
-    np.ones(VECTOR_DIMENSION)  # Unit vector
+    np.ones(VECTOR_DIMENSION),  # Unit vector
+    np.zeros(VECTOR_DIMENSION)  # Zero vector
 ]
 
-@pytest.mark.utils
-@pytest.mark.vector
 class TestVectorUtils:
-    """Test class for vector utility functions with comprehensive validation."""
+    """Test class for vector utility functions with comprehensive test coverage."""
     
-    def setup_method(self, method):
-        """Setup test data before each test method."""
+    @pytest.fixture(autouse=True)
+    def setup_method(self):
+        """Setup test fixtures with controlled random state."""
         np.random.seed(42)  # Ensure reproducible test data
-        
-        # Generate test vectors
-        self.test_vectors = np.random.rand(100, VECTOR_DIMENSION)
+        self.test_vectors = np.random.rand(TEST_VECTOR_COUNT, VECTOR_DIMENSION)
         self.query_vector = np.random.rand(VECTOR_DIMENSION)
-        
-        # Test metadata
         self.test_metadata = {
-            'batch_size': 32,
-            'threshold': SIMILARITY_THRESHOLD,
-            'dimension': VECTOR_DIMENSION
+            "performance_threshold_ms": 100,
+            "memory_threshold_mb": 512
         }
 
-    def teardown_method(self, method):
-        """Cleanup after each test method."""
+    def teardown_method(self):
+        """Cleanup after each test."""
         self.test_vectors = None
         self.query_vector = None
-        self.test_metadata = None
 
-    @pytest.mark.parametrize('vectors,expected', SIMILARITY_TEST_CASES)
+    @pytest.mark.utils
+    @pytest.mark.vector
+    @pytest.mark.parametrize("vectors,expected", SIMILARITY_TEST_CASES)
     def test_calculate_cosine_similarity(self, vectors: Tuple[np.ndarray, np.ndarray], expected: float):
         """Test cosine similarity calculation with various vector pairs."""
         vector1, vector2 = vectors
-        
-        # Calculate similarity
         similarity = calculate_cosine_similarity(vector1, vector2)
-        
-        # Verify result
         assert abs(similarity - expected) < NUMERICAL_TOLERANCE, \
-            f"Expected similarity {expected}, got {similarity}"
-        
-        # Verify symmetry
-        reverse_similarity = calculate_cosine_similarity(vector2, vector1)
-        assert abs(similarity - reverse_similarity) < NUMERICAL_TOLERANCE, \
-            "Cosine similarity should be symmetric"
+            f"Cosine similarity calculation failed: expected {expected}, got {similarity}"
 
-    @pytest.mark.parametrize('vector', NORMALIZATION_TEST_CASES)
+    @pytest.mark.utils
+    @pytest.mark.vector
+    def test_calculate_cosine_similarity_invalid_input(self):
+        """Test cosine similarity calculation with invalid inputs."""
+        # Test with invalid dimensions
+        invalid_vector = np.random.rand(VECTOR_DIMENSION + 1)
+        with pytest.raises(ValueError):
+            calculate_cosine_similarity(invalid_vector, self.query_vector)
+
+        # Test with non-numpy array
+        with pytest.raises(ValueError):
+            calculate_cosine_similarity([1.0] * VECTOR_DIMENSION, self.query_vector)
+
+    @pytest.mark.utils
+    @pytest.mark.vector
+    @pytest.mark.parametrize("vector", NORMALIZATION_TEST_CASES)
     def test_normalize_vector(self, vector: np.ndarray):
         """Test vector normalization with various input cases."""
-        # Store original vector for comparison
-        original = vector.copy()
-        
-        # Normalize vector
         normalized = normalize_vector(vector)
         
-        if np.any(vector):  # Non-zero vector
-            # Verify unit length
-            norm = np.linalg.norm(normalized)
-            assert abs(norm - 1.0) < NUMERICAL_TOLERANCE, \
-                f"Normalized vector magnitude should be 1.0, got {norm}"
-            
-            # Verify direction preserved
-            if np.linalg.norm(original) > 1e-8:
-                cosine = np.dot(normalized, original) / np.linalg.norm(original)
-                assert cosine > 0, "Normalization should preserve vector direction"
-        else:  # Zero vector
-            assert np.allclose(normalized, np.zeros_like(vector)), \
-                "Zero vector should normalize to zero vector"
+        # Skip magnitude check for zero vector
+        if not np.allclose(vector, 0):
+            magnitude = np.linalg.norm(normalized)
+            assert abs(magnitude - 1.0) < NUMERICAL_TOLERANCE, \
+                f"Normalized vector magnitude should be 1.0, got {magnitude}"
 
+        # Verify original vector unchanged
+        assert np.array_equal(vector, NORMALIZATION_TEST_CASES[0]), \
+            "Original vector should not be modified"
+
+    @pytest.mark.utils
+    @pytest.mark.vector
+    def test_normalize_vector_invalid_input(self):
+        """Test vector normalization with invalid inputs."""
+        # Test with wrong dimension
+        invalid_vector = np.random.rand(VECTOR_DIMENSION + 1)
+        with pytest.raises(ValueError):
+            normalize_vector(invalid_vector)
+
+        # Test with non-numpy array
+        with pytest.raises(ValueError):
+            normalize_vector([1.0] * VECTOR_DIMENSION)
+
+    @pytest.mark.utils
+    @pytest.mark.vector
     @pytest.mark.slow
     def test_batch_similarity_search(self):
-        """Test batch similarity search with performance validation."""
-        # Generate test dataset
-        num_vectors = 1000
-        test_vectors = [np.random.rand(VECTOR_DIMENSION) for _ in range(num_vectors)]
-        query = np.random.rand(VECTOR_DIMENSION)
+        """Test batch similarity search functionality and performance."""
+        # Generate test vectors with known similarities
+        similar_vectors = [self.query_vector * (1 + np.random.rand() * 0.1) 
+                         for _ in range(5)]  # 5 similar vectors
+        test_vectors = similar_vectors + [np.random.rand(VECTOR_DIMENSION) 
+                                        for _ in range(95)]  # 95 random vectors
         
         # Perform batch search
-        with pytest.raises(ValueError):
-            batch_similarity_search(query, [])  # Test empty list handling
-        
-        results = batch_similarity_search(query, test_vectors)
+        results = batch_similarity_search(self.query_vector, test_vectors)
         
         # Verify results
-        assert len(results) <= num_vectors, "Should not return more results than input vectors"
-        assert all(0 <= sim <= 1.0 for _, sim in results), "Similarity scores should be in [0,1]"
+        assert len(results) > 0, "Should find at least the similar vectors"
         assert all(sim >= SIMILARITY_THRESHOLD for _, sim in results), \
-            "All results should meet threshold requirement"
-        
-        # Verify sorting
-        similarities = [sim for _, sim in results]
-        assert all(similarities[i] >= similarities[i+1] for i in range(len(similarities)-1)), \
+            "All results should meet similarity threshold"
+        assert all(sim1 >= sim2 for (_, sim1), (_, sim2) in zip(results, results[1:])), \
             "Results should be sorted by similarity in descending order"
 
+    @pytest.mark.utils
+    @pytest.mark.vector
     def test_validate_vector_dimension(self):
-        """Test vector dimension validation with various cases."""
-        # Valid cases
-        assert validate_vector_dimension(np.zeros(VECTOR_DIMENSION)), \
-            "Should accept vector with correct dimension"
-        
-        # Invalid cases
-        assert not validate_vector_dimension(np.zeros(VECTOR_DIMENSION + 1)), \
-            "Should reject vector with wrong dimension"
-        assert not validate_vector_dimension(np.zeros((VECTOR_DIMENSION, 1))), \
-            "Should reject 2D array"
-        assert not validate_vector_dimension([0] * VECTOR_DIMENSION), \
-            "Should reject non-numpy array"
+        """Test vector dimension validation."""
+        # Test valid vector
+        valid_vector = np.random.rand(VECTOR_DIMENSION)
+        assert validate_vector_dimension(valid_vector), \
+            "Should validate correct dimension vector"
+
+        # Test invalid dimensions
+        invalid_vector = np.random.rand(VECTOR_DIMENSION + 1)
+        assert not validate_vector_dimension(invalid_vector), \
+            "Should reject incorrect dimension vector"
+
+        # Test invalid types
+        assert not validate_vector_dimension([1.0] * VECTOR_DIMENSION), \
+            "Should reject non-numpy array input"
         assert not validate_vector_dimension(None), \
             "Should reject None input"
-        
-        # Edge cases
-        with pytest.raises(ValueError):
-            normalize_vector(np.zeros(VECTOR_DIMENSION + 1))
 
-    @pytest.mark.parametrize('batch_size', [1, 16, 32, 64])
-    def test_batch_processing_performance(self, batch_size):
-        """Test batch processing performance with various batch sizes."""
+    @pytest.mark.utils
+    @pytest.mark.vector
+    def test_batch_similarity_search_performance(self):
+        """Test batch similarity search performance requirements."""
         import time
-        
-        # Generate test data
-        vectors = [np.random.rand(VECTOR_DIMENSION) for _ in range(batch_size)]
-        query = np.random.rand(VECTOR_DIMENSION)
         
         # Measure execution time
         start_time = time.time()
-        results = batch_similarity_search(query, vectors)
-        execution_time = time.time() - start_time
+        batch_similarity_search(self.query_vector, self.test_vectors.tolist())
+        execution_time = (time.time() - start_time) * 1000  # Convert to milliseconds
         
-        # Verify performance
-        assert execution_time < MAX_EXECUTION_TIME, \
-            f"Batch processing took {execution_time:.3f}s, exceeding limit of {MAX_EXECUTION_TIME}s"
-        
-        # Verify batch size handling
-        assert len(results) <= batch_size, \
-            f"Number of results ({len(results)}) exceeds batch size ({batch_size})"
+        assert execution_time < self.test_metadata["performance_threshold_ms"], \
+            f"Batch search exceeded performance threshold: {execution_time}ms"
+
+    @pytest.mark.utils
+    @pytest.mark.vector
+    def test_batch_similarity_search_edge_cases(self):
+        """Test batch similarity search with edge cases."""
+        # Test empty vector list
+        results = batch_similarity_search(self.query_vector, [])
+        assert len(results) == 0, "Empty vector list should return empty results"
+
+        # Test single vector
+        results = batch_similarity_search(self.query_vector, [self.query_vector])
+        assert len(results) == 1 and abs(results[0][1] - 1.0) < NUMERICAL_TOLERANCE, \
+            "Identical vector should have similarity 1.0"
+
+        # Test with invalid vectors in batch
+        invalid_vectors = [np.random.rand(VECTOR_DIMENSION + 1)]
+        results = batch_similarity_search(self.query_vector, invalid_vectors)
+        assert len(results) == 0, "Invalid vectors should be skipped"

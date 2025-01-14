@@ -1,19 +1,17 @@
 import React, { useCallback, useState } from 'react';
-import { useForm } from 'react-hook-form'; // v7.45.0
-import { 
-  Box, 
-  Card, 
-  CardContent, 
-  Typography, 
-  Button, 
-  CircularProgress, 
-  Skeleton, 
+import { useForm } from 'react-hook-form';
+import {
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Button,
+  CircularProgress,
+  Skeleton,
   Alert,
   Switch
-} from '@mui/material'; // v5.14.0
+} from '@mui/material';
 import { styled } from '@mui/material/styles';
-import * as yup from 'yup'; // v1.2.0
-import { yupResolver } from '@hookform/resolvers/yup'; // v3.1.0
 
 import ClientLayout from '../../layouts/ClientLayout';
 import FormField from '../../components/common/Forms/FormField';
@@ -21,42 +19,24 @@ import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../contexts/ThemeContext';
 
 // Styled components for enhanced theme integration
-const StyledCard = styled(Card)(({ theme }) => ({
+const SettingsCard = styled(Card)(({ theme }) => ({
   marginBottom: theme.spacing(3),
-  borderRadius: theme.shape.borderRadius,
-  boxShadow: theme.shadows[2],
-  transition: theme.transitions.create(['box-shadow']),
-  '&:hover': {
-    boxShadow: theme.shadows[4],
+  '& .MuiCardContent-root': {
+    padding: theme.spacing(3),
+  },
+  [theme.breakpoints.down('sm')]: {
+    marginBottom: theme.spacing(2),
   },
 }));
 
-// Form validation schema
-const settingsSchema = yup.object().shape({
-  name: yup.string()
-    .required('Name is required')
-    .min(2, 'Name must be at least 2 characters')
-    .max(100, 'Name must not exceed 100 characters'),
-  email: yup.string()
-    .required('Email is required')
-    .email('Please enter a valid email address'),
-  currentPassword: yup.string()
-    .when('newPassword', {
-      is: (val: string) => val && val.length > 0,
-      then: yup.string().required('Current password is required to set new password'),
-    }),
-  newPassword: yup.string()
-    .min(8, 'Password must be at least 8 characters')
-    .matches(
-      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
-      'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character'
-    )
-    .nullable(),
-  emailNotifications: yup.boolean(),
-  darkMode: yup.boolean(),
-});
+const SettingSection = styled(Box)(({ theme }) => ({
+  marginBottom: theme.spacing(4),
+  '&:last-child': {
+    marginBottom: 0,
+  },
+}));
 
-// Interface for form data
+// Interface for form data with validation rules
 interface SettingsFormData {
   name: string;
   email: string;
@@ -66,71 +46,75 @@ interface SettingsFormData {
   darkMode: boolean;
 }
 
-// Main Settings component
-const Settings: React.FC = React.memo(() => {
+// Settings component with memoization
+const Settings = React.memo(() => {
   const { user, isLoading, updateUserProfile } = useAuth();
   const { isDarkMode, toggleTheme } = useTheme();
-  const [submitLoading, setSubmitLoading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Initialize form with react-hook-form
-  const { 
-    register, 
-    handleSubmit: handleFormSubmit, 
-    formState: { errors }, 
-    reset,
+  const {
+    handleSubmit,
+    register,
+    formState: { errors },
     watch,
-    setValue 
+    setValue
   } = useForm<SettingsFormData>({
-    resolver: yupResolver(settingsSchema),
     defaultValues: {
       name: user?.fullName || '',
       email: user?.email || '',
       emailNotifications: true,
-      darkMode: isDarkMode,
-    },
+      darkMode: isDarkMode
+    }
   });
 
-  // Handle form submission
+  // Form submission handler
   const onSubmit = useCallback(async (data: SettingsFormData) => {
     try {
-      setSubmitLoading(true);
-      setSuccessMessage(null);
+      setIsSaving(true);
+      setSaveError(null);
+      setSaveSuccess(false);
 
-      // Update user profile
+      // Track settings update attempt
+      window.gtag?.('event', 'settings_update_attempt', {
+        user_id: user?.id,
+        client_id: user?.clientId
+      });
+
       await updateUserProfile({
         fullName: data.name,
         email: data.email,
-        ...(data.newPassword && {
-          currentPassword: data.currentPassword,
-          newPassword: data.newPassword,
-        }),
+        ...(data.newPassword && { password: data.newPassword }),
         preferences: {
           emailNotifications: data.emailNotifications,
-          darkMode: data.darkMode,
-        },
+          darkMode: data.darkMode
+        }
       });
 
-      // Clear sensitive form fields
-      setValue('currentPassword', '');
-      setValue('newPassword', '');
-
-      setSuccessMessage('Settings updated successfully');
-
+      setSaveSuccess(true);
+      
       // Track successful settings update
-      if (window.analytics) {
-        window.analytics.track('Settings Updated', {
-          userId: user?.id,
-          updatedFields: Object.keys(data).filter(key => data[key] !== watch(key)),
-        });
-      }
+      window.gtag?.('event', 'settings_update_success', {
+        user_id: user?.id,
+        client_id: user?.clientId
+      });
+
     } catch (error) {
-      console.error('Settings update failed:', error);
-      throw new Error('Failed to update settings. Please try again.');
+      setSaveError(error instanceof Error ? error.message : 'Failed to update settings');
+      
+      // Track settings update failure
+      window.gtag?.('event', 'settings_update_error', {
+        user_id: user?.id,
+        client_id: user?.clientId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+
     } finally {
-      setSubmitLoading(false);
+      setIsSaving(false);
     }
-  }, [updateUserProfile, setValue, user?.id, watch]);
+  }, [user, updateUserProfile]);
 
   // Handle theme toggle
   const handleThemeToggle = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,39 +136,36 @@ const Settings: React.FC = React.memo(() => {
   return (
     <ClientLayout>
       <Box
-        component="main"
+        component="form"
+        onSubmit={handleSubmit(onSubmit)}
         sx={{
           p: { xs: 2, sm: 3 },
-          maxWidth: 'md',
-          mx: 'auto',
+          maxWidth: 800,
+          margin: '0 auto'
         }}
       >
-        <Typography
-          variant="h4"
-          component="h1"
-          gutterBottom
-          sx={{ mb: 4 }}
-        >
-          Account Settings
+        <Typography variant="h4" component="h1" gutterBottom>
+          Settings
         </Typography>
 
-        {successMessage && (
-          <Alert 
-            severity="success" 
-            sx={{ mb: 3 }}
-            onClose={() => setSuccessMessage(null)}
-          >
-            {successMessage}
+        {saveError && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {saveError}
           </Alert>
         )}
 
-        <form onSubmit={handleFormSubmit(onSubmit)} noValidate>
-          <StyledCard>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Profile Information
-              </Typography>
-              
+        {saveSuccess && (
+          <Alert severity="success" sx={{ mb: 3 }}>
+            Settings updated successfully
+          </Alert>
+        )}
+
+        <SettingsCard>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Profile Information
+            </Typography>
+            <SettingSection>
               <FormField
                 name="name"
                 label="Full Name"
@@ -192,93 +173,85 @@ const Settings: React.FC = React.memo(() => {
                 error={errors.name?.message}
                 required
                 onChange={(e) => setValue('name', e.target.value)}
+                maxLength={100}
               />
-
               <FormField
                 name="email"
                 label="Email Address"
-                type="email"
                 value={watch('email')}
                 error={errors.email?.message}
+                type="email"
                 required
                 onChange={(e) => setValue('email', e.target.value)}
               />
-            </CardContent>
-          </StyledCard>
+            </SettingSection>
+          </CardContent>
+        </SettingsCard>
 
-          <StyledCard>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Password
-              </Typography>
-
+        <SettingsCard>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Password
+            </Typography>
+            <SettingSection>
               <FormField
                 name="currentPassword"
                 label="Current Password"
-                type="password"
                 value={watch('currentPassword') || ''}
                 error={errors.currentPassword?.message}
+                type="password"
                 onChange={(e) => setValue('currentPassword', e.target.value)}
               />
-
               <FormField
                 name="newPassword"
                 label="New Password"
-                type="password"
                 value={watch('newPassword') || ''}
                 error={errors.newPassword?.message}
-                helperText="Leave blank to keep current password"
+                type="password"
                 onChange={(e) => setValue('newPassword', e.target.value)}
+                helperText="Minimum 8 characters"
               />
-            </CardContent>
-          </StyledCard>
+            </SettingSection>
+          </CardContent>
+        </SettingsCard>
 
-          <StyledCard>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                Preferences
-              </Typography>
-
+        <SettingsCard>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Preferences
+            </Typography>
+            <SettingSection>
               <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                <Typography>Email Notifications</Typography>
                 <Switch
                   checked={watch('emailNotifications')}
                   onChange={(e) => setValue('emailNotifications', e.target.checked)}
-                  inputProps={{ 'aria-label': 'Email notifications' }}
+                  inputProps={{ 'aria-label': 'Email notifications toggle' }}
                 />
-                <Typography>
-                  Receive email notifications
-                </Typography>
               </Box>
-
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Typography>Dark Mode</Typography>
                 <Switch
                   checked={watch('darkMode')}
                   onChange={handleThemeToggle}
-                  inputProps={{ 'aria-label': 'Dark mode' }}
+                  inputProps={{ 'aria-label': 'Dark mode toggle' }}
                 />
-                <Typography>
-                  Dark mode
-                </Typography>
               </Box>
-            </CardContent>
-          </StyledCard>
+            </SettingSection>
+          </CardContent>
+        </SettingsCard>
 
-          <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
-            <Button
-              type="submit"
-              variant="contained"
-              color="primary"
-              disabled={submitLoading}
-              sx={{ minWidth: 120 }}
-            >
-              {submitLoading ? (
-                <CircularProgress size={24} color="inherit" />
-              ) : (
-                'Save Changes'
-              )}
-            </Button>
-          </Box>
-        </form>
+        <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            type="submit"
+            variant="contained"
+            color="primary"
+            disabled={isSaving}
+            sx={{ minWidth: 120 }}
+          >
+            {isSaving ? <CircularProgress size={24} /> : 'Save Changes'}
+          </Button>
+        </Box>
       </Box>
     </ClientLayout>
   );

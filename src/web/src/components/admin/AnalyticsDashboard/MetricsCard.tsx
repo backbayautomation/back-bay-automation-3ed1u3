@@ -1,12 +1,9 @@
-import React from 'react';
-import { Card, CardContent, Typography, Box, Tooltip } from '@mui/material';
-import { TrendingUp, TrendingDown, TrendingFlat } from '@mui/icons-material';
+import React from 'react'; // react@18.2.0
+import { Card, CardContent, Typography, Box, Tooltip } from '@mui/material'; // @mui/material@5.14.0
+import { TrendingUp, TrendingDown, TrendingFlat } from '@mui/icons-material'; // @mui/icons-material@5.14.0
 import { MetricTrend, TrendDirection } from '../../../types/analytics';
 import ContentLoader from '../../common/Loaders/ContentLoader';
 
-/**
- * Props interface for MetricsCard component with enhanced accessibility
- */
 interface MetricsCardProps {
   title: string;
   value: number;
@@ -17,36 +14,53 @@ interface MetricsCardProps {
   ariaLabel?: string;
 }
 
-/**
- * Formats numeric values with appropriate units and accessibility considerations
- */
 const formatValue = (value: number): string => {
   if (value >= 1000000) {
     return `${(value / 1000000).toFixed(1)}M`;
   } else if (value >= 1000) {
     return `${(value / 1000).toFixed(1)}K`;
   }
-  return value.toLocaleString();
+  return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
 };
 
-/**
- * Returns appropriate accessible trend icon based on trend direction
- */
 const getTrendIcon = (direction: TrendDirection): JSX.Element => {
   switch (direction) {
     case TrendDirection.INCREASING:
-      return <TrendingUp fontSize="small" sx={{ color: 'success.main' }} aria-label="Increasing trend" />;
+      return (
+        <TrendingUp
+          sx={(theme) => ({
+            color: theme.palette.success.main,
+            fontSize: '1.25rem'
+          })}
+          aria-label="Increasing trend"
+          role="img"
+        />
+      );
     case TrendDirection.DECREASING:
-      return <TrendingDown fontSize="small" sx={{ color: 'error.main' }} aria-label="Decreasing trend" />;
+      return (
+        <TrendingDown
+          sx={(theme) => ({
+            color: theme.palette.error.main,
+            fontSize: '1.25rem'
+          })}
+          aria-label="Decreasing trend"
+          role="img"
+        />
+      );
     default:
-      return <TrendingFlat fontSize="small" sx={{ color: 'text.secondary' }} aria-label="Stable trend" />;
+      return (
+        <TrendingFlat
+          sx={(theme) => ({
+            color: theme.palette.text.secondary,
+            fontSize: '1.25rem'
+          })}
+          aria-label="Stable trend"
+          role="img"
+        />
+      );
   }
 };
 
-/**
- * MetricsCard component for displaying individual metrics with trend indicators
- * Enhanced with accessibility features and performance optimizations
- */
 const MetricsCard = React.memo<MetricsCardProps>(({
   title,
   value,
@@ -54,7 +68,7 @@ const MetricsCard = React.memo<MetricsCardProps>(({
   loading = false,
   icon,
   tooltipText,
-  ariaLabel = `${title} metric card`
+  ariaLabel = title
 }) => {
   if (loading) {
     return (
@@ -64,13 +78,13 @@ const MetricsCard = React.memo<MetricsCardProps>(({
           minWidth: '200px',
           position: 'relative'
         }}
-        role="progressbar"
-        aria-label={`Loading ${title} metric`}
       >
-        <ContentLoader
-          height={140}
-          ariaLabel={`Loading ${title} metric data`}
-        />
+        <CardContent>
+          <ContentLoader
+            height={120}
+            ariaLabel={`Loading ${title} metric`}
+          />
+        </CardContent>
       </Card>
     );
   }
@@ -81,9 +95,11 @@ const MetricsCard = React.memo<MetricsCardProps>(({
 
   return (
     <Tooltip
-      title={tooltipText || `${title}: ${formattedValue}`}
-      arrow
+      title={tooltipText || ''}
       placement="top"
+      arrow
+      enterDelay={300}
+      leaveDelay={200}
     >
       <Card
         sx={{
@@ -96,12 +112,13 @@ const MetricsCard = React.memo<MetricsCardProps>(({
             boxShadow: (theme) => theme.shadows[4]
           },
           '&:focus-visible': {
-            outline: (theme) => `2px solid ${theme.palette.primary.main}`
+            outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+            outlineOffset: '2px'
           }
         }}
+        tabIndex={0}
         role="article"
         aria-label={ariaLabel}
-        tabIndex={0}
       >
         <CardContent
           sx={{
@@ -122,11 +139,10 @@ const MetricsCard = React.memo<MetricsCardProps>(({
             {icon && (
               <Box
                 sx={{
-                  color: 'text.secondary',
                   display: 'flex',
-                  alignItems: 'center'
+                  alignItems: 'center',
+                  color: 'text.secondary'
                 }}
-                aria-hidden="true"
               >
                 {icon}
               </Box>
@@ -154,7 +170,6 @@ const MetricsCard = React.memo<MetricsCardProps>(({
               fontWeight: 600,
               lineHeight: 1.4
             }}
-            aria-label={`${title} value: ${formattedValue}`}
           >
             {formattedValue}
           </Typography>
@@ -166,17 +181,18 @@ const MetricsCard = React.memo<MetricsCardProps>(({
               gap: '4px',
               marginTop: 'auto'
             }}
-            aria-label={`Trend: ${trend.direction.toLowerCase()}, ${trendText} change`}
+            aria-label={`Trend: ${trend.direction.toLowerCase()}, ${trendText}`}
           >
             {trendIcon}
             <Typography
               variant="body2"
               sx={{
-                color: trend.direction === TrendDirection.INCREASING
-                  ? 'success.main'
-                  : trend.direction === TrendDirection.DECREASING
-                    ? 'error.main'
-                    : 'text.secondary'
+                color: (theme) => 
+                  trend.direction === TrendDirection.INCREASING
+                    ? theme.palette.success.main
+                    : trend.direction === TrendDirection.DECREASING
+                    ? theme.palette.error.main
+                    : theme.palette.text.secondary
               }}
             >
               {trendText}

@@ -21,10 +21,7 @@ export const formatDate = (date: Date | string | null, formatString: string): st
     if (!date) return '';
 
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
-    
-    if (!isValid(dateObj)) {
-      return '';
-    }
+    if (!isValid(dateObj)) return '';
 
     return format(dateObj, formatString);
   } catch (error) {
@@ -43,10 +40,7 @@ export const formatRelativeTime = (date: Date | string | null): string => {
     if (!date) return '';
 
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
-    
-    if (!isValid(dateObj)) {
-      return '';
-    }
+    if (!isValid(dateObj)) return '';
 
     return formatDistance(dateObj, new Date(), { addSuffix: true });
   } catch (error) {
@@ -71,9 +65,7 @@ export const isDateBefore = (
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
     const compareDateObj = typeof compareDate === 'string' ? parseISO(compareDate) : compareDate;
 
-    if (!isValid(dateObj) || !isValid(compareDateObj)) {
-      return false;
-    }
+    if (!isValid(dateObj) || !isValid(compareDateObj)) return false;
 
     return isBefore(dateObj, compareDateObj);
   } catch (error) {
@@ -98,9 +90,7 @@ export const isDateAfter = (
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
     const compareDateObj = typeof compareDate === 'string' ? parseISO(compareDate) : compareDate;
 
-    if (!isValid(dateObj) || !isValid(compareDateObj)) {
-      return false;
-    }
+    if (!isValid(dateObj) || !isValid(compareDateObj)) return false;
 
     return isAfter(dateObj, compareDateObj);
   } catch (error) {
@@ -125,11 +115,9 @@ export const getDaysDifference = (
     const startDateObj = typeof startDate === 'string' ? parseISO(startDate) : startDate;
     const endDateObj = typeof endDate === 'string' ? parseISO(endDate) : endDate;
 
-    if (!isValid(startDateObj) || !isValid(endDateObj)) {
-      return 0;
-    }
+    if (!isValid(startDateObj) || !isValid(endDateObj)) return 0;
 
-    return Math.abs(differenceInDays(startDateObj, endDateObj));
+    return Math.abs(differenceInDays(endDateObj, startDateObj));
   } catch (error) {
     console.error('Error calculating days difference:', error);
     return 0;
@@ -146,10 +134,7 @@ export const formatChartDate = (date: Date | string | null): string => {
     if (!date) return '';
 
     const dateObj = typeof date === 'string' ? parseISO(date) : date;
-    
-    if (!isValid(dateObj)) {
-      return '';
-    }
+    if (!isValid(dateObj)) return '';
 
     const dateKey = dateObj.toISOString();
     
@@ -160,7 +145,7 @@ export const formatChartDate = (date: Date | string | null): string => {
     const formattedDate = format(dateObj, 'MMM d, yyyy');
     chartDateCache.set(dateKey, formattedDate);
 
-    // Prevent cache from growing too large
+    // Limit cache size to prevent memory leaks
     if (chartDateCache.size > 1000) {
       const firstKey = chartDateCache.keys().next().value;
       chartDateCache.delete(firstKey);

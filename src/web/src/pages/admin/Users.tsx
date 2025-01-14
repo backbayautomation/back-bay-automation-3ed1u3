@@ -1,37 +1,41 @@
-import React, { useCallback, useEffect } from 'react';
-import { Box, Typography } from '@mui/material'; // v5.14.0
+import React, { useCallback, useEffect, useState } from 'react';
+import { Typography, Box, Alert } from '@mui/material'; // v5.14.0
 import { withErrorBoundary } from 'react-error-boundary'; // v4.0.0
 import { ApplicationInsights } from '@azure/application-insights-web'; // v2.8.3
 
 import AdminLayout from '../../layouts/AdminLayout';
 import UserList from '../../components/admin/UserManagement/UserList';
-import { useAuth } from '../../hooks/useAuth';
 import { User, UserRole } from '../../types/user';
+import { useAuth } from '../../hooks/useAuth';
+import { LAYOUT_CONSTANTS } from '../../config/constants';
 
-// Initialize Application Insights
-const appInsights = new ApplicationInsights({
-  config: {
-    connectionString: process.env.VITE_APPINSIGHTS_CONNECTION_STRING,
-    enableAutoRouteTracking: true,
-  },
-});
-appInsights.loadAppInsights();
-
+// Props interface with enhanced type safety
 interface UsersPageProps {
   testId?: string;
   onError?: (error: Error) => void;
 }
 
+// Initialize Application Insights for analytics
+const appInsights = new ApplicationInsights({
+  config: {
+    instrumentationKey: process.env.VITE_APPINSIGHTS_KEY || '',
+    enableAutoRouteTracking: true,
+  },
+});
+
+// Main Users page component with error boundary protection
 const UsersPage: React.FC<UsersPageProps> = React.memo(({ 
-  testId = 'admin-users-page',
+  testId = 'users-page',
   onError 
 }) => {
+  // Authentication and state management
   const { user, isAuthenticated } = useAuth();
+  const [error, setError] = useState<string | null>(null);
 
-  // Track page view
+  // Track page view on mount
   useEffect(() => {
     appInsights.trackPageView({
-      name: 'Admin - Users Page',
+      name: 'Admin Users Page',
       properties: {
         userRole: user?.role,
         clientId: user?.clientId,
@@ -42,90 +46,86 @@ const UsersPage: React.FC<UsersPageProps> = React.memo(({
   // Handle user updates with analytics tracking
   const handleUserUpdate = useCallback(async (updatedUser: User) => {
     try {
+      // API call would go here
       appInsights.trackEvent({
-        name: 'User Update',
+        name: 'UserUpdate',
         properties: {
           adminId: user?.id,
           userId: updatedUser.id,
           action: updatedUser.id ? 'update' : 'create',
         },
       });
-
-      // API call would go here
-      // await updateUser(updatedUser);
-
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to update user';
+      setError(errorMessage);
+      onError?.(error instanceof Error ? error : new Error(errorMessage));
+      
       appInsights.trackException({
-        error: error as Error,
+        error: error instanceof Error ? error : new Error(errorMessage),
         properties: {
-          adminId: user?.id,
-          userId: updatedUser.id,
-          action: 'user_update_failed',
+          component: 'UsersPage',
+          action: 'handleUserUpdate',
         },
       });
-      throw error;
     }
-  }, [user]);
+  }, [user, onError]);
 
-  // Get allowed roles based on current user's role
-  const getAllowedRoles = useCallback(() => {
+  // Define allowed roles based on current user's role
+  const getAllowedRoles = useCallback((): UserRole[] => {
     if (user?.role === UserRole.SYSTEM_ADMIN) {
-      return [
-        UserRole.SYSTEM_ADMIN,
-        UserRole.CLIENT_ADMIN,
-        UserRole.REGULAR_USER,
-      ];
+      return [UserRole.SYSTEM_ADMIN, UserRole.CLIENT_ADMIN, UserRole.REGULAR_USER];
     }
     if (user?.role === UserRole.CLIENT_ADMIN) {
-      return [
-        UserRole.CLIENT_ADMIN,
-        UserRole.REGULAR_USER,
-      ];
+      return [UserRole.CLIENT_ADMIN, UserRole.REGULAR_USER];
     }
     return [UserRole.REGULAR_USER];
   }, [user]);
+
+  // Render error state if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <Box 
+        sx={{ 
+          padding: LAYOUT_CONSTANTS.SPACING_UNIT * 2,
+          textAlign: 'center' 
+        }}
+        role="alert"
+      >
+        <Typography variant="h5" color="error">
+          Authentication Required
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <AdminLayout>
       <Box
         component="main"
-        role="main"
-        aria-label="User Management"
-        data-testid={testId}
         sx={{
-          p: 3,
+          padding: LAYOUT_CONSTANTS.SPACING_UNIT * 2,
           width: '100%',
-          maxWidth: '1200px',
-          margin: '0 auto',
         }}
+        data-testid={testId}
+        role="main"
+        aria-label="User Management Page"
       >
-        <Typography
-          variant="h4"
-          component="h1"
-          gutterBottom
-          sx={{
-            mb: 3,
-            fontWeight: 500,
-            color: 'text.primary',
-          }}
-        >
-          User Management
-        </Typography>
+        {error && (
+          <Alert 
+            severity="error" 
+            onClose={() => setError(null)}
+            sx={{ marginBottom: 2 }}
+            role="alert"
+          >
+            {error}
+          </Alert>
+        )}
 
-        <Box
-          sx={{
-            backgroundColor: 'background.paper',
-            borderRadius: 1,
-            boxShadow: 1,
-            overflow: 'hidden',
-          }}
-        >
-          <UserList
-            clientId={user?.clientId || undefined}
-            onUserUpdate={handleUserUpdate}
-            roles={getAllowedRoles()}
-          />
-        </Box>
+        <UserList
+          clientId={user?.clientId || undefined}
+          onUserUpdate={handleUserUpdate}
+          roles={getAllowedRoles()}
+        />
       </Box>
     </AdminLayout>
   );
@@ -134,33 +134,30 @@ const UsersPage: React.FC<UsersPageProps> = React.memo(({
 // Error boundary wrapper
 const UsersPageWithErrorBoundary = withErrorBoundary(UsersPage, {
   fallback: (
-    <Box
-      role="alert"
-      aria-label="Error Message"
-      sx={{
-        p: 3,
-        color: 'error.main',
-        textAlign: 'center',
+    <Box 
+      sx={{ 
+        padding: LAYOUT_CONSTANTS.SPACING_UNIT * 2,
+        textAlign: 'center' 
       }}
+      role="alert"
     >
-      <Typography variant="h6">
-        An error occurred while loading the user management page.
-        Please try refreshing the page.
+      <Typography variant="h5" color="error">
+        Error loading user management page. Please refresh the page or contact support.
       </Typography>
     </Box>
   ),
-  onError: (error, componentStack) => {
+  onError: (error) => {
     appInsights.trackException({
       error,
       properties: {
-        componentStack,
-        location: 'UsersPage',
+        component: 'UsersPage',
+        severity: 'Critical',
       },
     });
   },
 });
 
-// Display name for debugging
+// Set display name for debugging
 UsersPageWithErrorBoundary.displayName = 'UsersPage';
 
 export default UsersPageWithErrorBoundary;

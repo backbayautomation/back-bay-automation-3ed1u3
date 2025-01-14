@@ -1,83 +1,88 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Box, Button, Typography, Alert, useTheme } from '@mui/material'; // v5.14.0
+import { Box, Button, Typography, Alert, Snackbar } from '@mui/material'; // v5.14.0
 import { Add as AddIcon } from '@mui/icons-material'; // v5.14.0
+import { useDebounce } from 'use-debounce'; // v9.0.0
 import { ErrorBoundary } from 'react-error-boundary'; // v4.0.11
+
 import ClientTable from './ClientTable';
 import ClientForm from './ClientForm';
 import SearchField from '../../common/Forms/SearchField';
 import { useAuth } from '../../../hooks/useAuth';
-import { Client, ClientStatus } from '../../../types/client';
-import { UserRole } from '../../../types/auth';
+import type { Client, ClientStatus } from '../../../types/client';
+import type { PaginationParams } from '../../../types/common';
 
-// Enhanced state interface with comprehensive error handling
+// Enhanced state interface with loading and error states
 interface ClientListState {
+  loading: boolean;
+  deleting: boolean;
   clients: Client[];
   total: number;
   page: number;
   pageSize: number;
   searchQuery: string;
-  loading: boolean;
-  deleting: boolean;
   formOpen: boolean;
   selectedClient: Client | undefined;
   error: Error | null;
   abortController: AbortController | null;
 }
 
-// Error fallback component with accessibility support
+// Error fallback component for error boundary
 const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> = ({
   error,
   resetErrorBoundary
 }) => (
-  <Alert 
-    severity="error" 
-    onClose={resetErrorBoundary}
-    sx={{ margin: 2 }}
-  >
-    <Typography variant="h6">Error loading clients</Typography>
-    <Typography>{error.message}</Typography>
-    <Button onClick={resetErrorBoundary} sx={{ mt: 1 }}>
+  <Box role="alert" sx={styles.errorContainer}>
+    <Typography variant="h6" color="error">Error Loading Clients</Typography>
+    <Typography color="error">{error.message}</Typography>
+    <Button onClick={resetErrorBoundary} variant="contained" sx={{ mt: 2 }}>
       Try Again
     </Button>
-  </Alert>
+  </Box>
 );
 
 const ClientList: React.FC = React.memo(() => {
-  const theme = useTheme();
-  const { user } = useAuth();
-  
   // Initialize state with proper type safety
   const [state, setState] = useState<ClientListState>({
+    loading: true,
+    deleting: false,
     clients: [],
     total: 0,
     page: 1,
     pageSize: 10,
     searchQuery: '',
-    loading: true,
-    deleting: false,
     formOpen: false,
     selectedClient: undefined,
     error: null,
     abortController: null
   });
 
-  // Fetch clients with proper error handling and cleanup
+  const { user } = useAuth();
+
+  // Debounced search query for performance
+  const [debouncedQuery] = useDebounce(state.searchQuery, 300);
+
+  // Fetch clients with abort controller for cleanup
   const fetchClients = useCallback(async (
     page: number,
     pageSize: number,
-    searchQuery: string,
-    signal?: AbortSignal
+    search?: string
   ) => {
-    try {
-      setState(prev => ({ ...prev, loading: true, error: null }));
+    // Cancel previous request if exists
+    if (state.abortController) {
+      state.abortController.abort();
+    }
 
+    const controller = new AbortController();
+    setState(prev => ({ ...prev, loading: true, abortController: controller }));
+
+    try {
       const response = await fetch(
-        `/api/clients?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(searchQuery)}`,
+        `/api/clients?page=${page}&pageSize=${pageSize}${search ? `&search=${search}` : ''}`,
         {
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
           },
-          signal
+          signal: controller.signal
         }
       );
 
@@ -90,42 +95,40 @@ const ClientList: React.FC = React.memo(() => {
         ...prev,
         clients: data.items,
         total: data.total,
-        loading: false
+        loading: false,
+        error: null
       }));
     } catch (error) {
-      if (error.name === 'AbortError') return;
-      setState(prev => ({
-        ...prev,
-        loading: false,
-        error: error instanceof Error ? error : new Error('Failed to fetch clients')
-      }));
+      if (error instanceof Error && error.name !== 'AbortError') {
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          error: error as Error
+        }));
+      }
     }
   }, []);
 
-  // Handle pagination with optimistic updates
-  const handlePageChange = useCallback(({ page, pageSize }) => {
+  // Handle pagination changes with optimistic updates
+  const handlePageChange = useCallback(({ page, pageSize }: PaginationParams) => {
     setState(prev => ({ ...prev, page, pageSize }));
     fetchClients(page, pageSize, state.searchQuery);
   }, [fetchClients, state.searchQuery]);
 
-  // Handle search with debouncing
-  const handleSearch = useCallback((query: string) => {
-    setState(prev => ({ ...prev, searchQuery: query, page: 1 }));
-    fetchClients(1, state.pageSize, query);
-  }, [fetchClients, state.pageSize]);
+  // Handle search with debounce
+  const handleSearch = useCallback((value: string) => {
+    setState(prev => ({ ...prev, searchQuery: value, page: 1 }));
+  }, []);
 
   // Handle client deletion with optimistic updates
   const handleDelete = useCallback(async (client: Client) => {
-    if (!window.confirm(`Are you sure you want to delete ${client.name}?`)) {
-      return;
-    }
-
     setState(prev => ({ ...prev, deleting: true }));
+
     try {
       const response = await fetch(`/api/clients/${client.id}`, {
         method: 'DELETE',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
         }
       });
 
@@ -133,6 +136,7 @@ const ClientList: React.FC = React.memo(() => {
         throw new Error('Failed to delete client');
       }
 
+      // Optimistic update
       setState(prev => ({
         ...prev,
         clients: prev.clients.filter(c => c.id !== client.id),
@@ -142,19 +146,18 @@ const ClientList: React.FC = React.memo(() => {
     } catch (error) {
       setState(prev => ({
         ...prev,
-        deleting: false,
-        error: error instanceof Error ? error : new Error('Failed to delete client')
+        error: error as Error,
+        deleting: false
       }));
     }
   }, []);
 
-  // Handle form open/close with proper state cleanup
+  // Handle form open/close
   const handleFormOpen = useCallback((client?: Client) => {
     setState(prev => ({
       ...prev,
       formOpen: true,
-      selectedClient: client,
-      error: null
+      selectedClient: client
     }));
   }, []);
 
@@ -162,72 +165,52 @@ const ClientList: React.FC = React.memo(() => {
     setState(prev => ({
       ...prev,
       formOpen: false,
-      selectedClient: undefined,
-      error: null
+      selectedClient: undefined
     }));
   }, []);
 
-  // Handle form submission success
-  const handleFormSuccess = useCallback(() => {
-    handleFormClose();
-    fetchClients(state.page, state.pageSize, state.searchQuery);
-  }, [fetchClients, handleFormClose, state.page, state.pageSize, state.searchQuery]);
-
-  // Set up initial data fetch with cleanup
+  // Effect for initial load and search updates
   useEffect(() => {
-    const controller = new AbortController();
-    setState(prev => ({ ...prev, abortController: controller }));
-    
-    fetchClients(state.page, state.pageSize, state.searchQuery, controller.signal);
+    fetchClients(state.page, state.pageSize, debouncedQuery);
 
     return () => {
-      controller.abort();
+      if (state.abortController) {
+        state.abortController.abort();
+      }
     };
-  }, [fetchClients, state.page, state.pageSize, state.searchQuery]);
-
-  // Check user permissions
-  if (!user || user.role !== UserRole.SYSTEM_ADMIN) {
-    return (
-      <Alert severity="error" sx={{ margin: 2 }}>
-        You do not have permission to access this page.
-      </Alert>
-    );
-  }
+  }, [fetchClients, state.page, state.pageSize, debouncedQuery]);
 
   return (
     <ErrorBoundary FallbackComponent={ErrorFallback}>
-      <Box sx={{ padding: theme.spacing(3) }}>
-        <Box sx={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: theme.spacing(3)
-        }}>
+      <Box sx={styles.container}>
+        {/* Header section */}
+        <Box sx={styles.header}>
           <Typography variant="h5" component="h1">
             Client Management
           </Typography>
-          
           <Button
             variant="contained"
-            color="primary"
             startIcon={<AddIcon />}
             onClick={() => handleFormOpen()}
-            disabled={state.loading || state.deleting}
+            disabled={state.loading}
+            aria-label="Add new client"
           >
-            Add New Client
+            Add Client
           </Button>
         </Box>
 
-        <Box sx={{ marginBottom: theme.spacing(3) }}>
+        {/* Search section */}
+        <Box sx={styles.searchContainer}>
           <SearchField
             value={state.searchQuery}
             onSearch={handleSearch}
             placeholder="Search clients..."
             isLoading={state.loading}
-            debounceMs={300}
+            fullWidth
           />
         </Box>
 
+        {/* Client table */}
         <ClientTable
           clients={state.clients}
           page={state.page}
@@ -238,23 +221,73 @@ const ClientList: React.FC = React.memo(() => {
           onPageChange={handlePageChange}
           onEdit={handleFormOpen}
           onDelete={handleDelete}
-          onSettings={(client) => console.log('Settings:', client.id)}
+          onSettings={(client: Client) => {
+            // Handle settings navigation
+            console.log('Navigate to settings for client:', client.id);
+          }}
         />
 
+        {/* Client form modal */}
         {state.formOpen && (
           <ClientForm
             initialData={state.selectedClient}
-            onSuccess={handleFormSuccess}
+            onSuccess={() => {
+              handleFormClose();
+              fetchClients(state.page, state.pageSize, state.searchQuery);
+            }}
             onCancel={handleFormClose}
             isSubmitting={state.loading}
-            csrfToken="your-csrf-token-here"
+            csrfToken="your-csrf-token" // Should be provided by your auth system
           />
         )}
+
+        {/* Error snackbar */}
+        <Snackbar
+          open={!!state.error}
+          autoHideDuration={6000}
+          onClose={() => setState(prev => ({ ...prev, error: null }))}
+        >
+          <Alert severity="error" variant="filled">
+            {state.error?.message}
+          </Alert>
+        </Snackbar>
       </Box>
     </ErrorBoundary>
   );
 });
 
+// Styles following design system specifications
+const styles = {
+  container: {
+    padding: 3,
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 3
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    mb: 2
+  },
+  searchContainer: {
+    width: '100%',
+    maxWidth: 600,
+    mb: 3
+  },
+  errorContainer: {
+    p: 3,
+    textAlign: 'center',
+    border: '1px solid',
+    borderColor: 'error.main',
+    borderRadius: 1,
+    bgcolor: 'error.light',
+    color: 'error.dark'
+  }
+} as const;
+
+// Display name for debugging
 ClientList.displayName = 'ClientList';
 
 export default ClientList;

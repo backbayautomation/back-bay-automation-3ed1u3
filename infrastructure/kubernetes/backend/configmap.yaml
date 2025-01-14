@@ -7,7 +7,6 @@ metadata:
     app: catalog-search
     component: backend
     environment: production
-
 data:
   # Application Settings
   PROJECT_NAME: "AI-Powered Product Catalog Search"
@@ -43,3 +42,6 @@ data:
   # Document Handling
   MAX_DOCUMENT_SIZE: "10485760"
   ALLOWED_DOCUMENT_TYPES: "application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+  # Security Settings
+  ACCESS_TOKEN_EXPIRE_MINUTES: "30"

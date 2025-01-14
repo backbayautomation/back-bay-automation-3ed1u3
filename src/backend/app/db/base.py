@@ -11,7 +11,7 @@ import logging  # version: 3.11+
 # Import base class and metadata from session module
 from .session import Base, metadata
 
-# Import models in dependency order to ensure proper foreign key relationships
+# Import models in dependency order for proper relationship initialization
 from ..models.organization import Organization
 from ..models.client import Client
 from ..models.document import Document
@@ -27,62 +27,68 @@ __all__ = [
     "Document"
 ]
 
-# Log model initialization
-logger.info(
-    "Database models initialized",
-    extra={
-        'model_count': len(__all__) - 1,  # Subtract 1 to exclude Base
-        'tables': list(metadata.tables.keys())
-    }
-)
-
-def validate_model_relationships():
+def verify_model_relationships():
     """
-    Validate model relationships and foreign key constraints.
-    Ensures proper model initialization order and relationship configuration.
+    Verify model relationships and foreign key constraints are properly configured.
+    Ensures proper initialization order and relationship integrity.
     
     Returns:
-        bool: True if validation successful, False otherwise
+        bool: True if verification succeeds, False otherwise
     """
     try:
-        # Validate Organization -> Client relationship
+        # Verify Organization -> Client relationship
         assert hasattr(Organization, 'clients'), "Organization missing clients relationship"
-        assert Organization.clients.property.target is Client, "Invalid Organization.clients target"
+        assert Organization.clients.property.mapper.class_ == Client
         
-        # Validate Client -> Organization relationship
+        # Verify Client -> Organization relationship
         assert hasattr(Client, 'organization'), "Client missing organization relationship"
-        assert Client.organization.property.target is Organization, "Invalid Client.organization target"
+        assert Client.organization.property.mapper.class_ == Organization
         
-        # Validate Client -> Document relationship
+        # Verify Client -> Document relationship
         assert hasattr(Client, 'documents'), "Client missing documents relationship"
-        assert Client.documents.property.target is Document, "Invalid Client.documents target"
+        assert Client.documents.property.mapper.class_ == Document
         
-        # Validate Document -> Client relationship
+        # Verify Document -> Client relationship
         assert hasattr(Document, 'client'), "Document missing client relationship"
-        assert Document.client.property.target is Client, "Invalid Document.client target"
+        assert Document.client.property.mapper.class_ == Client
         
-        logger.info(
-            "Model relationships validated successfully",
-            extra={
-                'relationships': {
-                    'Organization': ['clients'],
-                    'Client': ['organization', 'documents'],
-                    'Document': ['client']
-                }
-            }
-        )
+        logger.info("Model relationships verified successfully")
         return True
         
-    except AssertionError as e:
-        logger.error(
-            "Model relationship validation failed",
-            extra={
-                'error': str(e),
-                'error_type': 'RelationshipValidationError'
-            }
-        )
+    except Exception as e:
+        logger.error(f"Model relationship verification failed: {str(e)}", exc_info=True)
         return False
 
-# Validate relationships on module import
-if not validate_model_relationships():
-    raise RuntimeError("Database model relationships validation failed")
+def initialize_models():
+    """
+    Initialize all database models in the correct order.
+    Ensures proper foreign key relationship creation and constraint validation.
+    
+    Returns:
+        bool: True if initialization succeeds, False otherwise
+    """
+    try:
+        # Create tables in dependency order
+        metadata.create_all(bind=Base.metadata.bind, tables=[
+            Organization.__table__,
+            Client.__table__,
+            Document.__table__
+        ])
+        
+        # Verify model relationships
+        if not verify_model_relationships():
+            raise Exception("Model relationship verification failed")
+            
+        logger.info("Database models initialized successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Model initialization failed: {str(e)}", exc_info=True)
+        return False
+
+# Verify model relationships on module import
+if not verify_model_relationships():
+    logger.error("Critical error: Model relationships failed verification")
+    raise RuntimeError("Database model initialization failed - invalid relationships")
+
+logger.info("Database base module loaded successfully")

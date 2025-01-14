@@ -8,21 +8,14 @@ An enterprise-grade AI-powered search and retrieval system for technical product
 
 ## Project Overview
 
-The AI-powered Product Catalog Search System is a transformative solution that automates the extraction, processing, and retrieval of product information from complex technical documentation. Built on a multi-tenant Azure cloud infrastructure, the system features:
+The AI-powered Product Catalog Search System is a transformative solution that automates the extraction, processing, and retrieval of product information from complex technical documentation. Built on a multi-tenant Azure cloud infrastructure, the system offers:
 
-- Advanced AI processing pipeline with GPT-4 and NVidia OCR
-- Vector-based semantic search powered by LLamaindex
-- Dual-portal architecture with React-based admin and client interfaces
-- Enterprise-grade security with multi-tenant isolation
-- Comprehensive audit logging and analytics
-
-### Performance Benchmarks
-
-- Search time reduction: 80% compared to manual searching
-- Information accuracy: >95% in returned results
-- System availability: 99.9% uptime
-- Query response time: <1 minute
-- User satisfaction rate: 90% within 3 months
+- Advanced document processing with NVidia OCR and GPT-4
+- Intelligent vector-based search powered by LLamaindex
+- Dual-portal system with dedicated admin and client interfaces
+- Enterprise-grade security and compliance standards
+- High-performance architecture with 99.9% uptime SLA
+- Multi-region deployment support for global availability
 
 ### System Architecture
 
@@ -53,15 +46,8 @@ graph TD
 
 - Minimum 32GB RAM
 - 100GB available storage
-- NVIDIA GPU for OCR processing
-- High-speed internet connection
-
-### Cloud Requirements
-
+- NVIDIA GPU for optimal OCR processing
 - Azure subscription with required permissions
-- Sufficient quota for required services
-- Access to Azure Kubernetes Service (AKS)
-- Azure AD B2C tenant for authentication
 
 ## Quick Start
 
@@ -89,7 +75,7 @@ graph TD
    # Edit .env with your configuration
    ```
 
-4. **Start Development Servers**
+4. **Launch Development Server**
    ```bash
    # Start backend
    python src/backend/main.py
@@ -105,101 +91,92 @@ graph TD
    pytest
    npm test
 
-   # Verify services
-   curl http://localhost:8000/health
+   # Process sample data
+   python scripts/ingest_sample_data.py
    ```
 
 ## Development
 
 ### Backend Development
 
-- Follow PEP 8 style guide
-- Implement type hints
-- Write unit tests for new features
-- Document API endpoints using OpenAPI
-- Use async/await for I/O operations
+- FastAPI-based REST API
+- Async processing pipeline
+- Vector search implementation
+- Document processing services
+- Authentication and authorization
 
 ### Frontend Development
 
-- Follow React best practices
-- Use TypeScript for type safety
-- Implement component tests
-- Follow Material-UI guidelines
-- Optimize for performance
+- React-based portals (Admin/Client)
+- Material-UI components
+- Redux state management
+- Real-time updates
+- Responsive design
 
-### Infrastructure Development
+### Infrastructure
 
-- Use Infrastructure as Code (Terraform)
-- Follow GitOps principles
-- Implement monitoring and logging
-- Configure auto-scaling
-- Set up disaster recovery
+- Terraform configurations
+- Kubernetes manifests
+- Azure resource templates
+- Monitoring setup
+- Security configurations
 
 ## Deployment
 
-### Development Environment
+### Environment Setup
+
+1. **Development**
+   - Local development environment
+   - Docker-based services
+   - Mock external services
+   - Debug configurations
+
+2. **Staging**
+   - AKS cluster deployment
+   - Integration testing
+   - Performance testing
+   - Security scanning
+
+3. **Production**
+   - Multi-region deployment
+   - High availability setup
+   - Disaster recovery
+   - Monitoring and alerts
+
+### Deployment Process
 
 ```bash
+# Deploy infrastructure
+cd infrastructure/terraform
 terraform init
-terraform plan -var-file=dev.tfvars
-terraform apply -var-file=dev.tfvars
+terraform apply
+
+# Deploy application
+kubectl apply -f infrastructure/kubernetes/
 ```
-
-### Production Environment
-
-```bash
-# Deploy to production
-./deploy.sh production
-
-# Verify deployment
-kubectl get pods -n production
-```
-
-### Multi-region Setup
-
-- Primary region: East US
-- Secondary region: West Europe
-- Data replication configuration
-- Traffic manager setup
-- Failover procedures
 
 ## Documentation
 
-### API Documentation
-
-- OpenAPI specification: `/docs/api/openapi.yaml`
-- Swagger UI: `http://localhost:8000/docs`
-- API versioning guidelines
-- Authentication flows
-- Rate limiting policies
-
-### User Guides
-
-- Admin Portal Guide: `/docs/admin-guide.md`
-- Client Portal Guide: `/docs/client-guide.md`
-- Integration Guide: `/docs/integration-guide.md`
-- Security Guide: `/docs/security-guide.md`
-
-### Architecture
-
-- System design documents
-- Data flow diagrams
-- Security architecture
-- Scaling strategies
-- Disaster recovery plans
+- [API Documentation](docs/api/README.md)
+- [Architecture Guide](docs/architecture/README.md)
+- [User Guide](docs/user/README.md)
+- [Development Guide](docs/development/README.md)
+- [Security Guide](docs/security/README.md)
+- [Operations Guide](docs/operations/README.md)
 
 ## Repository Structure
 
 ```
+.
 ├── src/
-│   ├── backend/          # Python FastAPI application
-│   ├── web/             # React frontend applications
-│   └── ai/              # AI processing modules
+│   ├── backend/          # Python backend services
+│   └── web/             # React frontend applications
 ├── infrastructure/
-│   ├── terraform/       # IaC configurations
-│   └── kubernetes/      # K8s manifests
-├── docs/                # Documentation
-└── .github/             # GitHub workflows
+│   ├── terraform/       # Infrastructure as Code
+│   └── kubernetes/      # K8s configurations
+├── .github/
+│   └── workflows/       # CI/CD pipelines
+└── docs/               # Documentation
 ```
 
 ## Contributing

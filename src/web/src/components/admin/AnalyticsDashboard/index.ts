@@ -22,9 +22,10 @@ export type {
   PerformanceMetrics,
   TimeSeriesData,
   MetricTrend,
-  AnalyticsDashboard as DashboardData
+  AnalyticsDashboard as AnalyticsDashboardData
 } from '../../../types/analytics';
 
+// Re-export enums from analytics
 export {
   MetricPeriod,
   TrendDirection

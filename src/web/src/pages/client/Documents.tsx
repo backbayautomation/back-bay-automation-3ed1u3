@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
     Box, 
     Grid, 
@@ -13,19 +13,12 @@ import {
     IconButton 
 } from '@mui/material';
 import { useDebounce } from 'use-debounce'; // v9.0.0
-import { 
-    Document, 
-    DocumentType, 
-    ProcessingStatus 
-} from '../../types/document';
-import { 
-    DocumentContextProvider, 
-    useDocumentContext 
-} from '../../components/client/DocumentViewer/DocumentContext';
+import { Document, DocumentType, ProcessingStatus } from '../../types/document';
+import { DocumentContextProvider, useDocumentContext } from '../../components/client/DocumentViewer/DocumentContext';
 import DocumentPreview from '../../components/client/DocumentViewer/DocumentPreview';
 import { getDocumentList, getDocumentDetails } from '../../services/documents';
 
-// Enhanced interfaces for document filtering and pagination
+// Enhanced interfaces for document management
 interface DocumentFilterState {
     searchQuery: string;
     type: DocumentType | '';
@@ -42,49 +35,28 @@ interface DocumentPaginationState {
     prevCursor: string | null;
 }
 
-// Styled component configurations
-const styles = {
-    container: {
-        p: 3,
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2
-    },
-    filters: {
-        display: 'flex',
-        gap: 2,
-        mb: 2,
-        alignItems: 'center'
-    },
-    searchField: {
-        flex: 1,
-        minWidth: 200
-    },
-    documentList: {
-        flex: 1,
-        overflow: 'auto',
-        minHeight: 200
-    },
-    documentPreview: {
-        height: '100%',
-        minHeight: 400
-    }
-} as const;
+// Constants for configuration
+const INITIAL_PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 300;
+const DOCUMENT_TYPES: DocumentType[] = ['pdf', 'docx', 'xlsx', 'txt'];
+const PROCESSING_STATUSES: ProcessingStatus[] = [
+    'pending',
+    'queued',
+    'processing',
+    'completed',
+    'failed',
+    'cancelled'
+];
 
 /**
  * Documents page component implementing an advanced document browsing interface
  * with real-time status updates and accessibility features.
- * @version 1.0.0
  */
 const Documents: React.FC = () => {
     // State management
     const [documents, setDocuments] = useState<Document[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
-
-    // Filter and pagination state
     const [filters, setFilters] = useState<DocumentFilterState>({
         searchQuery: '',
         type: '',
@@ -92,24 +64,23 @@ const Documents: React.FC = () => {
         cursor: null,
         hasNextPage: false
     });
-
     const [pagination, setPagination] = useState<DocumentPaginationState>({
         page: 1,
-        pageSize: 20,
+        pageSize: INITIAL_PAGE_SIZE,
         totalCount: 0,
         nextCursor: null,
         prevCursor: null
     });
 
-    // Debounced search query to prevent excessive API calls
-    const [debouncedSearch] = useDebounce(filters.searchQuery, 300);
+    // Debounced search query
+    const [debouncedSearch] = useDebounce(filters.searchQuery, SEARCH_DEBOUNCE_MS);
 
-    // Refs for intersection observer
-    const loadMoreRef = useRef<HTMLDivElement>(null);
-    const observerRef = useRef<IntersectionObserver | null>(null);
+    // Refs for tracking mounted state and abort controller
+    const mountedRef = useRef(true);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
     /**
-     * Enhanced search handler with input validation
+     * Enhanced search handler with debounce and validation
      */
     const handleSearchChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
         const query = event.target.value.trim();
@@ -118,7 +89,10 @@ const Documents: React.FC = () => {
             searchQuery: query,
             cursor: null
         }));
-        setPagination(prev => ({ ...prev, page: 1 }));
+        setPagination(prev => ({
+            ...prev,
+            page: 1
+        }));
     }, []);
 
     /**
@@ -130,180 +104,207 @@ const Documents: React.FC = () => {
             [filterName]: value,
             cursor: null
         }));
-        setPagination(prev => ({ ...prev, page: 1 }));
+        setPagination(prev => ({
+            ...prev,
+            page: 1
+        }));
     }, []);
 
     /**
-     * Enhanced document loading with error handling and retry logic
+     * Enhanced document loading with error handling and retry
      */
     const loadDocuments = useCallback(async () => {
-        try {
-            setLoading(true);
-            setError(null);
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
 
+        setLoading(true);
+        setError(null);
+
+        try {
             const response = await getDocumentList({
                 cursor: filters.cursor,
                 limit: pagination.pageSize,
-                clientId: undefined, // Will be handled by API auth
                 type: filters.type || undefined,
                 sortBy: 'created_at',
                 order: 'desc'
             });
 
-            setDocuments(prev => 
-                filters.cursor ? [...prev, ...response.items] : response.items
-            );
-            
-            setPagination(prev => ({
-                ...prev,
-                totalCount: response.total_count,
-                nextCursor: response.metadata?.nextCursor || null
-            }));
-
-            setFilters(prev => ({
-                ...prev,
-                hasNextPage: !!response.metadata?.nextCursor
-            }));
+            if (mountedRef.current) {
+                setDocuments(response.items);
+                setPagination(prev => ({
+                    ...prev,
+                    totalCount: response.total_count,
+                    nextCursor: response.metadata?.next_cursor || null,
+                    prevCursor: response.metadata?.prev_cursor || null
+                }));
+                setFilters(prev => ({
+                    ...prev,
+                    hasNextPage: !!response.metadata?.next_cursor
+                }));
+            }
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to load documents');
-            console.error('Error loading documents:', err);
+            if (mountedRef.current) {
+                setError(err instanceof Error ? err.message : 'Failed to load documents');
+            }
         } finally {
-            setLoading(false);
+            if (mountedRef.current) {
+                setLoading(false);
+            }
         }
-    }, [filters.cursor, pagination.pageSize, filters.type]);
+    }, [filters.cursor, filters.type, pagination.pageSize]);
 
-    // Effect for initial load and filter changes
+    // Effect for document loading
     useEffect(() => {
         loadDocuments();
+        return () => {
+            mountedRef.current = false;
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
     }, [loadDocuments, debouncedSearch]);
 
-    // Intersection observer for infinite scroll
-    useEffect(() => {
-        if (loading || !filters.hasNextPage) return;
-
-        observerRef.current = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting) {
-                    setFilters(prev => ({
-                        ...prev,
-                        cursor: pagination.nextCursor
-                    }));
-                }
-            },
-            { threshold: 0.5 }
-        );
-
-        if (loadMoreRef.current) {
-            observerRef.current.observe(loadMoreRef.current);
-        }
-
-        return () => observerRef.current?.disconnect();
-    }, [loading, filters.hasNextPage, pagination.nextCursor]);
-
-    // Memoized document type options
-    const documentTypeOptions = useMemo(() => [
-        { value: '', label: 'All Types' },
-        { value: 'pdf', label: 'PDF' },
-        { value: 'docx', label: 'Word' },
-        { value: 'xlsx', label: 'Excel' },
-        { value: 'txt', label: 'Text' }
-    ], []);
-
-    return (
-        <DocumentContextProvider>
-            <Box sx={styles.container}>
-                {/* Filters Section */}
-                <Paper sx={styles.filters} elevation={1}>
+    // Memoized filter controls
+    const filterControls = useMemo(() => (
+        <Box component={Paper} p={2} mb={2}>
+            <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={4}>
                     <TextField
-                        sx={styles.searchField}
+                        fullWidth
                         label="Search Documents"
                         value={filters.searchQuery}
                         onChange={handleSearchChange}
-                        variant="outlined"
-                        size="small"
+                        placeholder="Enter keywords..."
                         InputProps={{
                             'aria-label': 'Search documents',
-                            'aria-describedby': 'search-description'
                         }}
                     />
+                </Grid>
+                <Grid item xs={12} md={4}>
                     <Select
+                        fullWidth
                         value={filters.type}
                         onChange={(e) => handleFilterChange('type', e.target.value)}
-                        size="small"
                         displayEmpty
-                        aria-label="Filter by document type"
+                        inputProps={{
+                            'aria-label': 'Filter by document type',
+                        }}
                     >
-                        {documentTypeOptions.map(option => (
-                            <MenuItem key={option.value} value={option.value}>
-                                {option.label}
+                        <MenuItem value="">All Types</MenuItem>
+                        {DOCUMENT_TYPES.map(type => (
+                            <MenuItem key={type} value={type}>
+                                {type.toUpperCase()}
                             </MenuItem>
                         ))}
                     </Select>
-                </Paper>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                    <Select
+                        fullWidth
+                        value={filters.status}
+                        onChange={(e) => handleFilterChange('status', e.target.value)}
+                        displayEmpty
+                        inputProps={{
+                            'aria-label': 'Filter by processing status',
+                        }}
+                    >
+                        <MenuItem value="">All Statuses</MenuItem>
+                        {PROCESSING_STATUSES.map(status => (
+                            <MenuItem key={status} value={status}>
+                                {status.charAt(0).toUpperCase() + status.slice(1)}
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </Grid>
+            </Grid>
+        </Box>
+    ), [filters.searchQuery, filters.type, filters.status, handleSearchChange, handleFilterChange]);
 
-                {/* Error Display */}
+    return (
+        <DocumentContextProvider>
+            <Box 
+                component="main" 
+                role="main" 
+                aria-label="Document Management"
+                sx={{ p: 3 }}
+            >
+                <Typography variant="h4" component="h1" gutterBottom>
+                    Documents
+                </Typography>
+
+                {filterControls}
+
                 {error && (
                     <Alert 
                         severity="error" 
+                        sx={{ mb: 2 }}
                         onClose={() => setError(null)}
-                        aria-live="polite"
                     >
                         {error}
                     </Alert>
                 )}
 
-                {/* Document List and Preview */}
-                <Grid container spacing={2} sx={{ flex: 1 }}>
+                <Grid container spacing={3}>
                     <Grid item xs={12} md={4}>
-                        <Paper sx={styles.documentList}>
-                            {loading && !documents.length ? (
+                        <Paper 
+                            sx={{ 
+                                height: 'calc(100vh - 250px)', 
+                                overflow: 'auto' 
+                            }}
+                            role="region"
+                            aria-label="Document List"
+                        >
+                            {loading ? (
                                 Array.from({ length: 5 }).map((_, index) => (
-                                    <Skeleton 
-                                        key={index}
-                                        height={60}
-                                        animation="wave"
-                                        sx={{ m: 1 }}
-                                    />
+                                    <Box key={index} p={2}>
+                                        <Skeleton variant="rectangular" height={60} />
+                                    </Box>
                                 ))
+                            ) : documents.length === 0 ? (
+                                <Box p={3} textAlign="center">
+                                    <Typography color="textSecondary">
+                                        No documents found
+                                    </Typography>
+                                </Box>
                             ) : (
-                                documents.map((doc) => (
+                                documents.map(document => (
                                     <Box
-                                        key={doc.id}
-                                        onClick={() => setSelectedDocument(doc)}
-                                        sx={{
-                                            p: 2,
-                                            cursor: 'pointer',
-                                            '&:hover': { bgcolor: 'action.hover' },
-                                            bgcolor: selectedDocument?.id === doc.id ? 
-                                                'action.selected' : 'background.paper'
-                                        }}
+                                        key={document.id}
+                                        p={2}
                                         role="button"
                                         tabIndex={0}
-                                        aria-selected={selectedDocument?.id === doc.id}
+                                        onClick={() => getDocumentDetails(document.id)}
+                                        onKeyPress={(e) => {
+                                            if (e.key === 'Enter') {
+                                                getDocumentDetails(document.id);
+                                            }
+                                        }}
+                                        sx={{
+                                            cursor: 'pointer',
+                                            '&:hover': {
+                                                bgcolor: 'action.hover'
+                                            }
+                                        }}
                                     >
                                         <Typography variant="subtitle1">
-                                            {doc.filename}
+                                            {document.filename}
                                         </Typography>
-                                        <Typography variant="caption" color="text.secondary">
-                                            {new Date(doc.created_at).toLocaleDateString()}
+                                        <Typography variant="body2" color="textSecondary">
+                                            {new Date(document.created_at).toLocaleDateString()}
                                         </Typography>
                                     </Box>
                                 ))
                             )}
-                            {filters.hasNextPage && (
-                                <div ref={loadMoreRef}>
-                                    <CircularProgress size={24} sx={{ m: 2 }} />
-                                </div>
-                            )}
                         </Paper>
                     </Grid>
                     <Grid item xs={12} md={8}>
-                        <DocumentPreview
-                            className={styles.documentPreview}
+                        <DocumentPreview 
                             enableVirtualization
                             renderOptions={{
-                                fontSize: 14,
-                                lineHeight: 1.6
+                                highlightTerms: true,
+                                syntaxHighlighting: true
                             }}
                         />
                     </Grid>

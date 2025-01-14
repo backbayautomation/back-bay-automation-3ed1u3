@@ -5,18 +5,19 @@ comprehensive logging, transaction management, and rollback capabilities.
 Version: 1.0.0
 """
 
-import logging  # version: latest
-import json  # version: latest
-import time  # version: latest
+import logging
+import json
+import time
 from logging.handlers import RotatingFileHandler
-from contextlib import contextmanager
+from typing import Dict, Any
 
 from alembic import context  # version: 1.12.0
-from sqlalchemy import engine_from_config, pool, create_engine  # version: 2.0.0
+from sqlalchemy import engine_from_config, pool, MetaData  # version: 2.0.0
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.db.base import Base  # Import SQLAlchemy models metadata
-from app.core.config import settings  # Import application settings
+from app.db.base import Base
+from app.core.config import settings
 
 # Initialize logging with JSON formatting
 logger = logging.getLogger('alembic.env')
@@ -26,211 +27,190 @@ log_handler = RotatingFileHandler(
     backupCount=5
 )
 log_handler.setFormatter(logging.Formatter(
-    '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s"}'
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 ))
 logger.addHandler(log_handler)
-logger.setLevel(logging.INFO)
 
 # Migration configuration
 config = context.config
 target_metadata = Base.metadata
 
-# Constants for retry logic
+# Retry configuration for resilient migrations
 RETRY_COUNT = 3
 RETRY_DELAY = 5
 
-def configure_logging():
+def configure_migration_context() -> Dict[str, Any]:
     """
-    Configure comprehensive logging with structured output and multiple handlers.
+    Configure migration context with tenant isolation and security settings.
+    
+    Returns:
+        Dict[str, Any]: Migration context configuration
     """
-    logging_config = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'json': {
-                'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "message": "%(message)s"}'
-            }
-        },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'formatter': 'json',
-                'level': 'INFO'
-            },
-            'file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': 'logs/migrations.log',
-                'formatter': 'json',
-                'maxBytes': 10485760,
-                'backupCount': 5,
-                'level': 'DEBUG'
-            }
-        },
-        'loggers': {
-            'alembic': {
-                'handlers': ['console', 'file'],
-                'level': 'INFO',
-                'propagate': False
-            }
-        }
-    }
-    logging.config.dictConfig(logging_config)
+    db_settings = settings.get_database_settings()
+    
+    # Configure SQLAlchemy URL
+    config_section = config.get_section(config.config_ini_section)
+    config_section['sqlalchemy.url'] = (
+        f"postgresql://{db_settings['username']}:{db_settings['password']}@"
+        f"{db_settings['host']}:{db_settings['port']}/{db_settings['database']}"
+    )
+    
+    # Configure connection pooling
+    config_section.update({
+        'pool_size': str(db_settings['pool_size']),
+        'max_overflow': str(db_settings['max_overflow']),
+        'pool_timeout': '30',
+        'pool_recycle': '3600'
+    })
+    
+    return config_section
 
-@contextmanager
-def transaction_scope(connection):
+def include_object(object: Any, name: str, type_: str, reflected: bool, compare_to: Any) -> bool:
     """
-    Transaction context manager with retry logic and savepoints.
+    Filter objects to be included in migration based on tenant context.
+    
+    Args:
+        object: Database object being considered
+        name: Object name
+        type_: Object type
+        reflected: Whether object is reflected
+        compare_to: Object being compared to
+        
+    Returns:
+        bool: Whether to include object in migration
     """
-    start_time = time.time()
-    trans = connection.begin()
-    try:
-        # Create savepoint for potential rollback
-        savepoint = connection.begin_nested()
-        
-        yield  # Execute migration operations
-        
-        # Commit savepoint if successful
-        savepoint.commit()
-        trans.commit()
-        
-        duration = time.time() - start_time
-        logger.info(
-            "Transaction completed successfully",
-            extra={
-                'duration': duration,
-                'migration_id': context.get_context().get_current_revision()
-            }
-        )
-    except Exception as e:
-        # Rollback to savepoint on error
-        if savepoint.is_active:
-            savepoint.rollback()
-        trans.rollback()
-        
-        logger.error(
-            "Transaction failed",
-            extra={
-                'error': str(e),
-                'duration': time.time() - start_time,
-                'migration_id': context.get_context().get_current_revision()
-            }
-        )
-        raise
+    # Skip system tables and specific schemas
+    if type_ == "table":
+        if name.startswith("alembic_"):
+            return False
+        if hasattr(object, 'schema') and object.schema in ['pg_catalog', 'information_schema']:
+            return False
+    return True
 
-def run_migrations_offline():
+def run_migrations_offline() -> None:
     """
     Enhanced offline migration runner that generates SQL scripts with tenant context
     and detailed logging.
     """
-    logger.info("Starting offline migrations")
-    
-    # Get database URL from settings
-    db_settings = settings.get_database_settings()
-    url = (f"postgresql://{db_settings['username']}:{db_settings['password']}@"
-           f"{db_settings['host']}:{db_settings['port']}/{db_settings['database']}")
-
-    # Configure connection with tenant isolation
-    context.configure(
-        url=url,
-        target_metadata=target_metadata,
-        literal_binds=True,
-        dialect_opts={"paramstyle": "named"},
-        include_schemas=True,
-        version_table_schema='public',
-        include_object=lambda obj, name, type_, reflected, compare_to: True
-    )
-
     try:
+        start_time = time.time()
+        logger.info("Starting offline migration generation")
+        
+        # Configure migration context
+        context_config = configure_migration_context()
+        url = context_config['sqlalchemy.url']
+        
+        # Configure migration context
+        context.configure(
+            url=url,
+            target_metadata=target_metadata,
+            literal_binds=True,
+            dialect_opts={"paramstyle": "named"},
+            include_object=include_object,
+            include_schemas=True,
+            version_table_schema='public',
+            compare_type=True
+        )
+        
+        # Generate migration script
         with context.begin_transaction():
-            # Log migration plan
-            logger.info(
-                "Generating migration script",
-                extra={
-                    'target_revision': context.get_context().get_current_revision(),
-                    'schemas': list(target_metadata.schemas)
-                }
-            )
-            
             context.run_migrations()
             
-            logger.info("Offline migration script generation completed")
-            
+        duration = time.time() - start_time
+        logger.info(f"Offline migration completed successfully in {duration:.2f} seconds")
+        
     except Exception as e:
-        logger.error(
-            "Offline migration failed",
-            extra={'error': str(e), 'error_type': type(e).__name__}
-        )
+        logger.error(f"Offline migration failed: {str(e)}", exc_info=True)
         raise
 
-def run_migrations_online():
+def run_migrations_online() -> None:
     """
     Advanced online migration runner with transaction management, retry logic,
     and progress tracking.
     """
-    logger.info("Starting online migrations")
+    retry_count = 0
+    start_time = time.time()
     
-    # Get database settings with tenant context
-    db_settings = settings.get_database_settings()
+    # Configure migration engine
+    context_config = configure_migration_context()
+    connectable = engine_from_config(
+        context_config,
+        prefix='sqlalchemy.',
+        poolclass=pool.QueuePool
+    )
     
-    # Configure connection pool
-    config_section = config.get_section(config.config_ini_section)
-    config_section.update({
-        'sqlalchemy.url': (f"postgresql://{db_settings['username']}:{db_settings['password']}@"
-                          f"{db_settings['host']}:{db_settings['port']}/{db_settings['database']}"),
-        'sqlalchemy.pool_size': db_settings['pool_size'],
-        'sqlalchemy.max_overflow': db_settings['max_overflow'],
-        'sqlalchemy.pool_timeout': 30,
-        'sqlalchemy.pool_recycle': 3600
-    })
-
-    # Create engine with retry logic
-    for attempt in range(RETRY_COUNT):
+    # Set up migration context
+    with connectable.connect() as connection:
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+            include_schemas=True,
+            version_table_schema='public',
+            compare_type=True,
+            transaction_per_migration=True,
+            render_as_batch=True
+        )
+        
         try:
-            connectable = engine_from_config(
-                config_section,
-                prefix='sqlalchemy.',
-                poolclass=pool.QueuePool
-            )
-
-            with connectable.connect() as connection:
-                # Configure migration context
-                context.configure(
-                    connection=connection,
-                    target_metadata=target_metadata,
-                    include_schemas=True,
-                    version_table_schema='public',
-                    compare_type=True,
-                    compare_server_default=True
-                )
-
-                # Execute migrations within transaction
-                with transaction_scope(connection):
-                    logger.info(
-                        "Starting migration execution",
-                        extra={
-                            'target_revision': context.get_context().get_current_revision(),
-                            'schemas': list(target_metadata.schemas)
-                        }
-                    )
+            logger.info("Starting online migration execution")
+            
+            # Execute migrations with retry logic
+            while retry_count < RETRY_COUNT:
+                try:
+                    with context.begin_transaction():
+                        # Set session configuration
+                        connection.execute("SET statement_timeout = '3600s'")
+                        connection.execute("SET lock_timeout = '60s'")
+                        
+                        # Run migrations
+                        context.run_migrations()
+                        
+                        duration = time.time() - start_time
+                        logger.info(f"Online migration completed successfully in {duration:.2f} seconds")
+                        break
+                        
+                except SQLAlchemyError as e:
+                    retry_count += 1
+                    if retry_count >= RETRY_COUNT:
+                        logger.error(f"Migration failed after {RETRY_COUNT} retries: {str(e)}", exc_info=True)
+                        raise
                     
-                    context.run_migrations()
+                    logger.warning(f"Migration attempt {retry_count} failed, retrying in {RETRY_DELAY} seconds")
+                    time.sleep(RETRY_DELAY)
                     
-                    logger.info("Migration completed successfully")
-                break
-                
-        except SQLAlchemyError as e:
-            if attempt < RETRY_COUNT - 1:
-                logger.warning(
-                    f"Migration attempt {attempt + 1} failed, retrying...",
-                    extra={'error': str(e), 'retry_count': attempt + 1}
-                )
-                time.sleep(RETRY_DELAY)
-            else:
-                logger.error(
-                    "Migration failed after all retry attempts",
-                    extra={'error': str(e), 'total_attempts': RETRY_COUNT}
-                )
-                raise
+        except Exception as e:
+            logger.error(f"Migration failed: {str(e)}", exc_info=True)
+            raise
+            
+        finally:
+            connection.close()
+
+def verify_migration_integrity(connection: Connection) -> bool:
+    """
+    Verify migration integrity and tenant isolation.
+    
+    Args:
+        connection: Database connection
+        
+    Returns:
+        bool: Whether verification passed
+    """
+    try:
+        # Verify alembic version table
+        connection.execute("SELECT version_num FROM alembic_version")
+        
+        # Verify tenant schemas
+        connection.execute("SELECT schema_name FROM information_schema.schemata")
+        
+        # Verify table permissions
+        connection.execute("SELECT grantee, privilege_type FROM information_schema.table_privileges")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Migration integrity verification failed: {str(e)}", exc_info=True)
+        return False
 
 if context.is_offline_mode():
     run_migrations_offline()

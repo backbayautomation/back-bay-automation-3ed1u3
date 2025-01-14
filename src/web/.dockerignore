@@ -2,11 +2,14 @@ node_modules
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
+yarn.lock
 
 # Build outputs
 dist
 build
 coverage
+.cache
 
 # Version control
 .git
@@ -16,56 +19,56 @@ coverage
 .env*
 *.key
 *.pem
+.env.local
+.env.development
+.env.test
+.env.production
 
-# Development and testing
-tests
-__tests__
-**/*.test.ts
-**/*.test.tsx
-jest.config.*
-coverage
-
-# Configuration files
+# Development configs
 .eslintrc*
 .prettierrc*
 .editorconfig
-tsconfig.json
-.dockerignore
-Dockerfile
+.vscode
+.idea
+*.code-workspace
+
+# Test files
+tests
+__tests__
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+jest.config.*
 
 # Documentation
 README.md
 CHANGELOG.md
+LICENSE
 docs
 *.md
 
-# IDE and editor files
-.idea
-.vscode
-*.swp
-*.swo
-.DS_Store
+# Docker files
+Dockerfile
+.dockerignore
 
 # Temporary files
 *.log
 *.tmp
-.cache
-.temp
+.DS_Store
+Thumbs.db
 
-# Debug files
-debug.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Development tools
+.husky
+.storybook
+cypress
+e2e
+*.stories.tsx
+*.stories.ts
 
-# Development assets
-src/**/*.map
-public/mockdata
-
-# Misc
-.git*
+# Miscellaneous
 .npmrc
 .yarnrc
 .travis.yml
-.circleci
-.github
+.gitlab-ci.yml
+sonar-project.properties

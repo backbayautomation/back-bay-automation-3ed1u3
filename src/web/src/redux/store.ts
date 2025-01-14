@@ -1,11 +1,26 @@
 /**
- * Enhanced Redux store configuration with secure persistence, type-safe state management,
- * and optimized performance configurations.
+ * Redux store configuration with enhanced security, type safety, and performance optimizations.
+ * Implements secure state persistence, middleware integration, and development tools.
  * @version 1.0.0
  */
 
-import { configureStore, createListenerMiddleware } from '@reduxjs/toolkit'; // v1.9.5
-import { persistStore, persistReducer, createTransform } from 'redux-persist'; // v6.0.0
+import { 
+    configureStore, 
+    createListenerMiddleware,
+    TypedStartListening,
+    TypedAddListener
+} from '@reduxjs/toolkit'; // v1.9.5
+import { 
+    persistStore, 
+    persistReducer,
+    createTransform,
+    FLUSH,
+    REHYDRATE,
+    PAUSE,
+    PERSIST,
+    PURGE,
+    REGISTER
+} from 'redux-persist'; // v6.0.0
 import storage from 'redux-persist/lib/storage'; // v6.0.0
 import encryptTransform from 'redux-persist-transform-encrypt'; // v3.0.0
 
@@ -15,102 +30,92 @@ import chatReducer from './slices/chatSlice';
 import documentReducer from './slices/documentSlice';
 import uiReducer from './slices/uiSlice';
 
-// Configure encryption transform for secure persistence
+// Configure encryption transform for sensitive data
 const encryptConfig = {
-  secretKey: process.env.REACT_APP_PERSIST_KEY || crypto.randomUUID(),
-  onError: (error: Error) => {
-    console.error('Persistence encryption error:', error);
-    // Clear persisted state on encryption error
-    storage.removeItem('persist:root');
-  }
+    secretKey: process.env.REACT_APP_PERSIST_KEY || 'default-key-do-not-use-in-production',
+    onError: (error: Error) => {
+        console.error('Encryption Error:', error);
+        // Clear persisted state on encryption error
+        storage.removeItem('persist:root');
+    }
 };
 
-// Create secure transform for state encryption
-const secureTransform = encryptTransform(encryptConfig);
-
-// Configure persistence with security options
+// Configure persistence with encryption
 const persistConfig = {
-  key: 'root',
-  version: 1,
-  storage,
-  whitelist: ['auth'], // Only persist authentication state
-  blacklist: ['chat', 'document', 'ui'], // Don't persist these states
-  transforms: [secureTransform],
-  timeout: 10000, // 10 second timeout
-  debug: process.env.NODE_ENV === 'development',
-  migrate: (state: any, version: number) => {
-    // Handle state migrations
-    if (version === 0) {
-      // Migration logic for version 0 to 1
-      return {
-        ...state,
-        // Add migration transformations here
-      };
-    }
-    return state;
-  }
+    key: 'root',
+    version: 1,
+    storage,
+    whitelist: ['auth'], // Only persist authentication state
+    blacklist: ['chat', 'document', 'ui'], // Don't persist these states
+    transforms: [
+        encryptTransform(encryptConfig)
+    ],
+    timeout: 10000, // 10 second timeout
+    debug: process.env.NODE_ENV === 'development'
 };
 
 // Create listener middleware for side effects
-const listenerMiddleware = createListenerMiddleware();
+const listenerMiddleware = createListenerMiddleware({
+    onError: (error, { raisedBy }) => {
+        console.error(`Listener middleware error in ${raisedBy}:`, error);
+    }
+});
 
 // Configure root reducer with persistence
 const rootReducer = {
-  auth: persistReducer(persistConfig, authReducer),
-  chat: chatReducer,
-  document: documentReducer,
-  ui: uiReducer
+    auth: persistReducer(persistConfig, authReducer),
+    chat: chatReducer,
+    document: documentReducer,
+    ui: uiReducer
 };
 
-/**
- * Configure and create Redux store with enhanced security and performance
- */
+// Configure and create store with middleware
 export const store = configureStore({
-  reducer: rootReducer,
-  middleware: (getDefaultMiddleware) => 
-    getDefaultMiddleware({
-      serializableCheck: {
-        // Ignore these action types in serialization checks
-        ignoredActions: ['persist/PERSIST', 'persist/REHYDRATE'],
-        // Ignore these paths in serialization checks
-        ignoredPaths: ['ui.notifications']
-      },
-      // Enable immutability checks in development
-      immutableCheck: process.env.NODE_ENV === 'development',
-      // Enable thunk middleware
-      thunk: true
-    }).prepend(listenerMiddleware.middleware),
-  devTools: process.env.NODE_ENV === 'development' && {
-    // Configure Redux DevTools with security options
-    maxAge: 50, // Limit stored actions
-    trace: true,
-    traceLimit: 25,
-    actionsBlacklist: ['SOME_SENSITIVE_ACTION']
-  }
+    reducer: rootReducer,
+    middleware: (getDefaultMiddleware) => 
+        getDefaultMiddleware({
+            serializableCheck: {
+                ignoredActions: [
+                    FLUSH, REHYDRATE, PAUSE, 
+                    PERSIST, PURGE, REGISTER
+                ]
+            },
+            thunk: {
+                extraArgument: undefined
+            }
+        }).prepend(listenerMiddleware.middleware),
+    devTools: process.env.NODE_ENV === 'development' && {
+        name: 'AI Catalog Search',
+        maxAge: 50,
+        trace: true,
+        traceLimit: 25,
+        serialize: {
+            options: {
+                undefined: true,
+                function: false
+            }
+        }
+    }
 });
 
 // Create persistor
 export const persistor = persistStore(store, null, () => {
-  // After rehydration callback
-  console.debug('Store rehydration complete');
+    console.debug('Redux state rehydration complete');
 });
 
 // Export types
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
+export type AppStartListening = TypedStartListening<RootState, AppDispatch>;
+export type AppAddListener = TypedAddListener<RootState, AppDispatch>;
 
-// Add hot module replacement for reducers in development
+// Export listener middleware
+export const startAppListening = listenerMiddleware.startListening as AppStartListening;
+export const addAppListener = listenerMiddleware.addListener as AppAddListener;
+
+// Handle hot module replacement for reducers
 if (process.env.NODE_ENV === 'development' && module.hot) {
-  module.hot.accept('./slices/authSlice', () => {
-    store.replaceReducer(persistReducer(persistConfig, authReducer));
-  });
-  module.hot.accept('./slices/chatSlice', () => {
-    store.replaceReducer(chatReducer);
-  });
-  module.hot.accept('./slices/documentSlice', () => {
-    store.replaceReducer(documentReducer);
-  });
-  module.hot.accept('./slices/uiSlice', () => {
-    store.replaceReducer(uiReducer);
-  });
+    module.hot.accept('./slices/authSlice', () => {
+        store.replaceReducer(persistReducer(persistConfig, authReducer));
+    });
 }

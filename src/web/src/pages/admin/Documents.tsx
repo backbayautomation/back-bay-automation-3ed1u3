@@ -1,14 +1,23 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Box, Container, Grid, Paper, Typography, Tabs, Tab, CircularProgress } from '@mui/material';
+import {
+  Box,
+  Container,
+  Grid,
+  Paper,
+  Typography,
+  Tabs,
+  Tab,
+  CircularProgress
+} from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { ErrorBoundary } from 'react-error-boundary';
-import { Analytics } from '@segment/analytics-next';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import Analytics from '@segment/analytics-next';
 
 import AdminLayout from '../../layouts/AdminLayout';
 import DocumentList from '../../components/admin/DocumentProcessing/DocumentList';
 import UploadForm from '../../components/admin/DocumentProcessing/UploadForm';
 import ProcessingQueue from '../../components/admin/DocumentProcessing/ProcessingQueue';
-import { useWebSocket } from '../../hooks/useWebSocket';
 
 // Interface for tab panel props
 interface TabPanelProps {
@@ -37,42 +46,41 @@ const TabPanel = React.memo<TabPanelProps>(({
     role="tabpanel"
     hidden={value !== index}
     {...props}
-    style={{ width: '100%' }}
+    style={{ padding: '24px 0' }}
   >
-    {value === index && (
-      <Box sx={{ p: 3 }}>
-        {children}
-      </Box>
-    )}
+    {value === index && children}
   </div>
 ));
 
 TabPanel.displayName = 'TabPanel';
 
 // Main Documents component
-const Documents = React.memo<DocumentsProps>(({
-  className,
-  analyticsEnabled = true
-}) => {
+const Documents = React.memo<DocumentsProps>(({ className, analyticsEnabled = true }) => {
   // State management
   const [activeTab, setActiveTab] = useState(0);
   const [refreshTrigger, setRefreshTrigger] = useState(false);
   const { enqueueSnackbar } = useSnackbar();
 
   // WebSocket connection for real-time updates
-  const { addListener, removeListener } = useWebSocket({
+  const { isConnected, addListener, removeListener } = useWebSocket({
     baseUrl: `${process.env.VITE_WS_URL}/documents`,
     autoConnect: true,
     monitoringEnabled: true
   });
 
-  // Track component mount for analytics
-  useEffect(() => {
+  // Analytics initialization
+  const analytics = useMemo(() => {
     if (analyticsEnabled) {
-      Analytics.track('admin_documents_view', {
-        timestamp: new Date().toISOString()
+      return new Analytics({
+        writeKey: process.env.VITE_SEGMENT_WRITE_KEY || '',
+        defaultSettings: {
+          integrations: {
+            'Segment.io': true
+          }
+        }
       });
     }
+    return null;
   }, [analyticsEnabled]);
 
   // Handle document upload success
@@ -81,69 +89,61 @@ const Documents = React.memo<DocumentsProps>(({
       variant: 'success'
     });
     setRefreshTrigger(prev => !prev);
-
-    if (analyticsEnabled) {
-      Analytics.track('document_upload_success', {
+    
+    if (analytics) {
+      analytics.track('Document Uploaded', {
         documentId: document.id,
-        filename: document.filename,
-        type: document.type
+        documentType: document.type,
+        timestamp: new Date().toISOString()
       });
     }
-  }, [enqueueSnackbar, analyticsEnabled]);
+  }, [enqueueSnackbar, analytics]);
 
   // Handle document upload error
-  const handleUploadError = useCallback((error) => {
+  const handleUploadError = useCallback((error: Error) => {
     enqueueSnackbar(`Upload failed: ${error.message}`, {
       variant: 'error'
     });
 
-    if (analyticsEnabled) {
-      Analytics.track('document_upload_error', {
+    if (analytics) {
+      analytics.track('Document Upload Failed', {
         error: error.message,
         timestamp: new Date().toISOString()
       });
     }
-  }, [enqueueSnackbar, analyticsEnabled]);
+  }, [enqueueSnackbar, analytics]);
 
-  // Handle document processing completion
+  // Handle tab change
+  const handleTabChange = useCallback((event: React.SyntheticEvent, newValue: number) => {
+    setActiveTab(newValue);
+    
+    if (analytics) {
+      analytics.track('Document Tab Changed', {
+        tabIndex: newValue,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [analytics]);
+
+  // Handle processing completion
   const handleProcessingComplete = useCallback((document) => {
     enqueueSnackbar(`Document "${document.filename}" processing completed`, {
       variant: 'success'
     });
     setRefreshTrigger(prev => !prev);
+  }, [enqueueSnackbar]);
 
-    if (analyticsEnabled) {
-      Analytics.track('document_processing_complete', {
-        documentId: document.id,
-        filename: document.filename,
-        processingTime: document.processed_at
-      });
-    }
-  }, [enqueueSnackbar, analyticsEnabled]);
-
-  // Handle tab change
-  const handleTabChange = useCallback((event: React.SyntheticEvent, newValue: number) => {
-    setActiveTab(newValue);
-
-    if (analyticsEnabled) {
-      Analytics.track('documents_tab_change', {
-        tabIndex: newValue,
-        tabName: ['upload', 'documents', 'queue'][newValue]
-      });
-    }
-  }, [analyticsEnabled]);
-
-  // Clean up WebSocket listeners
-  useEffect(() => {
-    return () => {
-      removeListener('document.processing', handleProcessingComplete);
-    };
-  }, [removeListener, handleProcessingComplete]);
+  // Handle processing error
+  const handleProcessingError = useCallback((error: Error) => {
+    enqueueSnackbar(`Processing error: ${error.message}`, {
+      variant: 'error'
+    });
+  }, [enqueueSnackbar]);
 
   return (
     <AdminLayout>
-      <Container maxWidth={false} className={className}>
-        <Box sx={{ width: '100%', mb: 4 }}>
+      <Container maxWidth={false}>
+        <Box sx={{ py: 3 }}>
           <Typography variant="h4" component="h1" gutterBottom>
             Document Management
           </Typography>
@@ -157,32 +157,32 @@ const Documents = React.memo<DocumentsProps>(({
             >
               <Tab 
                 label="Upload" 
-                id="documents-tab-0"
-                aria-controls="documents-tabpanel-0"
+                id="doc-tab-0"
+                aria-controls="doc-tabpanel-0"
               />
               <Tab 
                 label="Documents" 
-                id="documents-tab-1"
-                aria-controls="documents-tabpanel-1"
+                id="doc-tab-1"
+                aria-controls="doc-tabpanel-1"
               />
               <Tab 
                 label="Processing Queue" 
-                id="documents-tab-2"
-                aria-controls="documents-tabpanel-2"
+                id="doc-tab-2"
+                aria-controls="doc-tabpanel-2"
               />
             </Tabs>
 
             <ErrorBoundary
               fallback={
-                <Box sx={{ p: 3, textAlign: 'center' }}>
+                <Box p={3}>
                   <Typography color="error">
                     An error occurred while loading the content.
                   </Typography>
                 </Box>
               }
               onError={(error) => {
-                if (analyticsEnabled) {
-                  Analytics.track('documents_error', {
+                if (analytics) {
+                  analytics.track('Document Error', {
                     error: error.message,
                     timestamp: new Date().toISOString()
                   });
@@ -193,15 +193,13 @@ const Documents = React.memo<DocumentsProps>(({
                 value={activeTab} 
                 index={0}
                 role="tabpanel"
-                id="documents-tabpanel-0"
-                aria-labelledby="documents-tab-0"
+                id="doc-tabpanel-0"
+                aria-labelledby="doc-tab-0"
               >
                 <UploadForm
                   onUploadSuccess={handleUploadSuccess}
                   onUploadError={handleUploadError}
-                  allowMultiple={false}
-                  maxFileSize={10 * 1024 * 1024} // 10MB
-                  allowedTypes={['pdf', 'docx', 'xlsx', 'txt']}
+                  clientId={process.env.VITE_CLIENT_ID || ''}
                 />
               </TabPanel>
 
@@ -209,18 +207,14 @@ const Documents = React.memo<DocumentsProps>(({
                 value={activeTab} 
                 index={1}
                 role="tabpanel"
-                id="documents-tabpanel-1"
-                aria-labelledby="documents-tab-1"
+                id="doc-tabpanel-1"
+                aria-labelledby="doc-tab-1"
               >
                 <DocumentList
                   autoRefresh={true}
                   refreshInterval={30000}
                   onDocumentDeleted={() => setRefreshTrigger(prev => !prev)}
-                  onError={handleUploadError}
-                  paginationConfig={{
-                    initialPage: 1,
-                    pageSize: 10
-                  }}
+                  onError={handleProcessingError}
                 />
               </TabPanel>
 
@@ -228,14 +222,13 @@ const Documents = React.memo<DocumentsProps>(({
                 value={activeTab} 
                 index={2}
                 role="tabpanel"
-                id="documents-tabpanel-2"
-                aria-labelledby="documents-tab-2"
+                id="doc-tabpanel-2"
+                aria-labelledby="doc-tab-2"
               >
                 <ProcessingQueue
                   autoRefresh={true}
-                  refreshInterval={30000}
                   onProcessingComplete={handleProcessingComplete}
-                  onError={handleUploadError}
+                  onError={handleProcessingError}
                 />
               </TabPanel>
             </ErrorBoundary>

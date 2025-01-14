@@ -1,13 +1,12 @@
 // =============================================================================
-// Client Portal Stylesheet
-// Implements enhanced client portal styles with accessibility, RTL support,
-// and responsive design optimizations
+// Client Portal Styles
+// Enhanced stylesheet for client-facing interface with accessibility and RTL support
 // Version: 1.0.0
 // =============================================================================
 
-@import './variables';
-@import './theme';
-@import './common';
+@use './variables' as *;
+@use './theme' as theme;
+@use './common' as common;
 
 // =============================================================================
 // Chat Interface
@@ -20,32 +19,35 @@
   height: 100vh;
   padding: $spacing-md;
   container-type: inline-size;
+  container-name: chat-interface;
   touch-action: manipulation;
-  background-color: var(--background-color);
 
-  @container (max-width: #{$breakpoint-tablet}) {
+  @container chat-interface (max-width: #{$breakpoint-tablet}) {
     grid-template-columns: 1fr;
-    height: calc(100vh - var(--header-height, 60px));
+    height: calc(100vh - var(--safe-area-inset-bottom, 0px));
   }
 
   @media (max-width: $breakpoint-mobile) {
     padding: $spacing-sm;
-    gap: $spacing-sm;
+  }
+
+  @media (hover: none) {
+    --touch-target-size: 44px;
   }
 }
 
 .chat-sidebar {
+  background-color: var(--background-secondary);
+  border-radius: $border-radius-md;
+  padding: $spacing-md;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: $spacing-md;
-  background-color: var(--background-secondary);
-  border-radius: $border-radius-lg;
-  padding: $spacing-md;
-  overflow-y: auto;
-  
-  @container (max-width: #{$breakpoint-tablet}) {
+
+  @container chat-interface (max-width: #{$breakpoint-tablet}) {
     display: none;
-    
+
     &.active {
       display: flex;
       position: fixed;
@@ -72,26 +74,29 @@
 .message {
   --message-max-width: min(80%, 600px);
   
-  &-user, &-system {
-    display: flex;
-    gap: $spacing-sm;
-    max-width: var(--message-max-width);
-    padding: $spacing-md;
-    border-radius: $border-radius-lg;
-    animation: messageAppear $animation-duration-base $animation-timing-entrance;
-  }
-
   &-user {
     align-self: flex-end;
-    background-color: $primary;
+    background-color: var(--primary);
     color: white;
-    margin-left: auto;
+    border-radius: $border-radius-lg 0 $border-radius-lg $border-radius-lg;
+    padding: $spacing-md;
+    max-width: var(--message-max-width);
+
+    [dir="rtl"] & {
+      border-radius: 0 $border-radius-lg $border-radius-lg $border-radius-lg;
+    }
   }
 
   &-system {
     align-self: flex-start;
     background-color: var(--background-secondary);
-    margin-right: auto;
+    border-radius: 0 $border-radius-lg $border-radius-lg $border-radius-lg;
+    padding: $spacing-md;
+    max-width: var(--message-max-width);
+
+    [dir="rtl"] & {
+      border-radius: $border-radius-lg $border-radius-lg $border-radius-lg 0;
+    }
   }
 }
 
@@ -101,54 +106,39 @@
 
 .document-context {
   background-color: var(--background-secondary);
-  border-radius: $border-radius-lg;
+  border-radius: $border-radius-md;
   padding: $spacing-md;
-  
-  &__header {
+  container-type: inline-size;
+  container-name: doc-context;
+
+  &-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: $spacing-md;
   }
 
-  &__list {
+  &-list {
     display: grid;
     gap: $spacing-md;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   }
 
-  &__item {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: $spacing-sm;
-    padding: $spacing-md;
+  &-item {
     background-color: var(--background-color);
-    border-radius: $border-radius-md;
-    transition: transform $animation-duration-base $animation-timing-base;
+    border-radius: $border-radius-sm;
+    padding: $spacing-md;
+    transition: transform var(--transition-speed) var(--transition-timing);
 
     &:hover {
       transform: translateY(-2px);
     }
-  }
 
-  &__relevance {
-    display: flex;
-    align-items: center;
-    gap: $spacing-xs;
-    color: var(--text-secondary);
-    
-    &-bar {
-      width: 100px;
+    .relevance-indicator {
       height: 4px;
-      background-color: var(--background-secondary);
+      background: linear-gradient(to right, var(--primary) var(--relevance), transparent var(--relevance));
       border-radius: $border-radius-pill;
-      overflow: hidden;
-      
-      &-fill {
-        height: 100%;
-        background-color: $primary;
-        transform-origin: left;
-        transition: transform $animation-duration-base $animation-timing-base;
-      }
+      margin-top: $spacing-sm;
     }
   }
 }
@@ -166,32 +156,56 @@
 
   .chat-sidebar,
   .message-input {
-    display: none;
+    display: none !important;
   }
 
   .chat-messages {
     padding: 0;
-    overflow: visible;
+    gap: $spacing-lg;
   }
 
   .message {
-    page-break-inside: avoid;
+    break-inside: avoid;
     border: 1px solid #000;
-    margin-bottom: $spacing-md;
     
-    &-user, &-system {
+    &-user,
+    &-system {
+      background: none;
+      color: #000;
       max-width: none;
-      animation: none;
     }
   }
 
   .document-context {
-    page-break-inside: avoid;
+    break-inside: avoid;
     border: 1px solid #000;
-    
-    &__item {
+    padding: $spacing-lg;
+
+    &-item {
       break-inside: avoid;
+      border: 1px solid #000;
     }
+  }
+}
+
+// =============================================================================
+// High Contrast & Accessibility
+// =============================================================================
+
+@media (forced-colors: active) {
+  .message {
+    &-user,
+    &-system {
+      border: 1px solid CanvasText;
+    }
+  }
+
+  .document-context-item {
+    border: 1px solid CanvasText;
+  }
+
+  .relevance-indicator {
+    border: 1px solid CanvasText;
   }
 }
 
@@ -200,75 +214,26 @@
 // =============================================================================
 
 [dir="rtl"] {
-  .message {
-    &-user {
-      margin-left: 0;
-      margin-right: auto;
-    }
-
-    &-system {
-      margin-right: 0;
-      margin-left: auto;
-    }
+  .chat-messages {
+    direction: rtl;
   }
 
-  .document-context__relevance-bar-fill {
-    transform-origin: right;
+  .document-context-header {
+    flex-direction: row-reverse;
   }
 }
 
 // =============================================================================
-// Animations
+// Dark Mode Enhancements
 // =============================================================================
 
-@keyframes messageAppear {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-// =============================================================================
-// High Contrast Mode
-// =============================================================================
-
-@media (forced-colors: active) {
-  .message {
-    &-user, &-system {
-      border: 1px solid CanvasText;
-    }
+@media (prefers-color-scheme: dark) {
+  .document-context-item {
+    background-color: var(--background-color);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   }
 
-  .document-context__relevance-bar {
-    border: 1px solid CanvasText;
-    
-    &-fill {
-      background-color: CanvasText;
-    }
-  }
-}
-
-// =============================================================================
-// Touch Optimizations
-// =============================================================================
-
-@media (hover: none) {
-  .document-context__item {
-    &:hover {
-      transform: none;
-    }
-  }
-
-  .message-input {
-    --touch-target-size: 44px;
-    
-    button {
-      min-height: var(--touch-target-size);
-      min-width: var(--touch-target-size);
-    }
+  .message-system {
+    background-color: rgba(255, 255, 255, 0.05);
   }
 }

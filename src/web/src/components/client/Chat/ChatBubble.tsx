@@ -1,15 +1,12 @@
-import React from 'react';
-import { styled, useTheme } from '@mui/material/styles';
-import { Paper, Typography } from '@mui/material';
-import ReactMarkdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import React from 'react'; // react@18.2.0
+import { styled } from '@mui/material/styles'; // @mui/material/styles@5.14.0
+import { Paper, Typography } from '@mui/material'; // @mui/material@5.14.0
+import ReactMarkdown from 'react-markdown'; // react-markdown@8.0.0
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'; // react-syntax-highlighter@15.5.0
+import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism'; // react-syntax-highlighter@15.5.0
+
 import { Message, MessageRole } from '../../../types/chat';
 import ContentLoader from '../../common/Loaders/ContentLoader';
-
-// Version comments for external dependencies
-// @mui/material: v5.14.0
-// react-markdown: v8.0.0
-// react-syntax-highlighter: v15.5.0
 
 interface ChatBubbleProps {
   message: Message;
@@ -31,25 +28,26 @@ const BubbleContainer = styled(Paper, {
   marginBottom: theme.spacing(1),
   marginLeft: role === MessageRole.USER ? 'auto' : theme.spacing(1),
   marginRight: role === MessageRole.USER ? theme.spacing(1) : 'auto',
-  borderRadius: theme.shape.borderRadius,
-  borderTopRightRadius: role === MessageRole.USER ? 4 : theme.shape.borderRadius,
-  borderTopLeftRadius: role === MessageRole.USER ? theme.shape.borderRadius : 4,
+  borderRadius: theme.spacing(1.5),
+  borderTopRightRadius: role === MessageRole.USER ? theme.spacing(0.5) : theme.spacing(1.5),
+  borderTopLeftRadius: role === MessageRole.ASSISTANT ? theme.spacing(0.5) : theme.spacing(1.5),
   backgroundColor: role === MessageRole.USER 
-    ? theme.palette.primary.main 
+    ? theme.palette.primary.main
     : role === MessageRole.SYSTEM 
-      ? theme.palette.grey[theme.palette.mode === 'light' ? 200 : 800]
+      ? theme.palette.grey[700]
       : theme.palette.background.paper,
   color: role === MessageRole.USER 
-    ? theme.palette.primary.contrastText 
-    : theme.palette.text.primary,
-  transition: theme.transitions.create(['box-shadow', 'transform']),
+    ? theme.palette.primary.contrastText
+    : role === MessageRole.SYSTEM 
+      ? theme.palette.common.white
+      : theme.palette.text.primary,
+  transition: theme.transitions.create(['box-shadow'], {
+    duration: theme.transitions.duration.short
+  }),
   '&:hover': {
-    boxShadow: theme.shadows[2],
+    boxShadow: theme.shadows[2]
   },
-  '[dir="rtl"] &': {
-    marginLeft: role === MessageRole.USER ? theme.spacing(1) : 'auto',
-    marginRight: role === MessageRole.USER ? 'auto' : theme.spacing(1),
-  }
+  direction: 'ltr', // Ensure proper display in RTL layouts
 }));
 
 const MessageContent = styled(Typography)(({ theme }) => ({
@@ -60,44 +58,43 @@ const MessageContent = styled(Typography)(({ theme }) => ({
   },
   lineHeight: 1.6,
   '& code': {
+    fontFamily: '"Fira Mono", monospace',
+    padding: theme.spacing(0.25, 0.5),
+    borderRadius: theme.shape.borderRadius,
     backgroundColor: theme.palette.mode === 'light' 
-      ? 'rgba(0, 0, 0, 0.04)' 
+      ? 'rgba(0, 0, 0, 0.04)'
       : 'rgba(255, 255, 255, 0.04)',
-    padding: '2px 4px',
-    borderRadius: 4,
-    fontFamily: 'Fira Mono, monospace',
   },
   '& pre': {
-    margin: theme.spacing(2, 0),
-    borderRadius: theme.shape.borderRadius,
-    overflow: 'auto',
+    margin: theme.spacing(1, 0),
+    padding: 0,
+    backgroundColor: 'transparent',
   },
   '& a': {
-    color: theme.palette.primary.main,
+    color: 'inherit',
     textDecoration: 'underline',
     '&:hover': {
       textDecoration: 'none',
     },
-  },
-  '& img': {
-    maxWidth: '100%',
-    height: 'auto',
-    borderRadius: theme.shape.borderRadius,
-  },
-  '& table': {
-    borderCollapse: 'collapse',
-    width: '100%',
-    margin: theme.spacing(2, 0),
-    '& th, & td': {
-      border: `1px solid ${theme.palette.divider}`,
-      padding: theme.spacing(1),
+    '&:focus': {
+      outline: `2px solid ${theme.palette.primary.main}`,
+      outlineOffset: 2,
     },
   },
-  '& blockquote': {
-    borderLeft: `4px solid ${theme.palette.divider}`,
-    margin: theme.spacing(2, 0),
-    padding: theme.spacing(0, 2),
-  }
+  '& p': {
+    margin: theme.spacing(0.5, 0),
+    '&:first-of-type': {
+      marginTop: 0,
+    },
+    '&:last-of-type': {
+      marginBottom: 0,
+    },
+  },
+  '& ul, & ol': {
+    marginTop: theme.spacing(0.5),
+    marginBottom: theme.spacing(0.5),
+    paddingLeft: theme.spacing(2.5),
+  },
 }));
 
 const formatTimestamp = (timestamp: Date): string => {
@@ -106,10 +103,10 @@ const formatTimestamp = (timestamp: Date): string => {
   const formatter = new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
     minute: 'numeric',
-    hour12: true
+    hour12: true,
   });
 
-  if (diff < 24 * 60 * 60 * 1000) {
+  if (diff < 24 * 60 * 60 * 1000) { // Less than 24 hours
     return formatter.format(timestamp);
   }
 
@@ -119,7 +116,7 @@ const formatTimestamp = (timestamp: Date): string => {
     day: 'numeric',
     hour: 'numeric',
     minute: 'numeric',
-    hour12: true
+    hour12: true,
   }).format(timestamp);
 };
 
@@ -128,18 +125,37 @@ const ChatBubble = React.memo<ChatBubbleProps>(({
   isLoading = false,
   className
 }) => {
-  const theme = useTheme();
+  const renderCode = React.useCallback(({ node, inline, className, children, ...props }: any) => {
+    const match = /language-(\w+)/.exec(className || '');
+    const language = match ? match[1] : '';
+
+    return !inline && language ? (
+      <SyntaxHighlighter
+        language={language}
+        style={atomDark}
+        PreTag="div"
+        {...props}
+      >
+        {String(children).replace(/\n$/, '')}
+      </SyntaxHighlighter>
+    ) : (
+      <code className={className} {...props}>
+        {children}
+      </code>
+    );
+  }, []);
 
   if (isLoading) {
     return (
       <BubbleContainer 
-        role={message.role} 
-        className={className}
+        role={message.role}
         elevation={1}
+        className={className}
+        component="article"
         aria-busy="true"
       >
         <ContentLoader 
-          height={40}
+          height={60}
           width="100%"
           ariaLabel="Loading message content..."
         />
@@ -150,53 +166,30 @@ const ChatBubble = React.memo<ChatBubbleProps>(({
   return (
     <BubbleContainer
       role={message.role}
-      className={className}
       elevation={1}
-      aria-label={`${message.role} message`}
+      className={className}
       component="article"
+      aria-label={`${message.role} message from ${formatTimestamp(message.timestamp)}`}
     >
-      <MessageContent
-        component="div"
-        role="textbox"
-        aria-readonly="true"
-        tabIndex={0}
-      >
+      <MessageContent component="div">
         <ReactMarkdown
           components={{
-            code({ node, inline, className, children, ...props }) {
-              const match = /language-(\w+)/.exec(className || '');
-              return !inline && match ? (
-                <SyntaxHighlighter
-                  language={match[1]}
-                  PreTag="div"
-                  {...props}
-                  style={theme.palette.mode === 'dark' ? 'vsDark' : 'vsLight'}
-                >
-                  {String(children).replace(/\n$/, '')}
-                </SyntaxHighlighter>
-              ) : (
-                <code className={className} {...props}>
-                  {children}
-                </code>
-              );
-            }
+            code: renderCode,
+            a: ({ node, children, href, ...props }) => (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                {...props}
+              >
+                {children}
+              </a>
+            ),
           }}
+          remarkPlugins={[]}
         >
           {message.content}
         </ReactMarkdown>
-        <Typography
-          variant="caption"
-          component="time"
-          sx={{
-            display: 'block',
-            marginTop: 1,
-            opacity: 0.7,
-            textAlign: message.role === MessageRole.USER ? 'right' : 'left',
-          }}
-          dateTime={message.timestamp.toISOString()}
-        >
-          {formatTimestamp(message.timestamp)}
-        </Typography>
       </MessageContent>
     </BubbleContainer>
   );

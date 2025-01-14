@@ -17,7 +17,7 @@
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), interest-cohort=()">
 
-    <!-- Favicons -->
+    <!-- Favicons and App Icons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 
@@ -41,81 +41,54 @@
         >
     </noscript>
 
-    <title>Product Catalog Search</title>
+    <title>AI-Powered Product Catalog Search</title>
 
     <!-- Critical CSS Inline Styles -->
     <style>
-        /* Prevent FOUC and ensure proper font loading */
+        /* Prevent FOUC and ensure smooth theme transitions */
         html {
             visibility: hidden;
+            background-color: #FFFFFF;
         }
-        .fonts-loaded html {
+        html[data-theme] {
             visibility: visible;
         }
-        /* Ensure proper touch targets on mobile */
+        @media (prefers-color-scheme: dark) {
+            html {
+                background-color: #121212;
+            }
+        }
+        /* Ensure minimum touch target size */
         @media (max-width: 768px) {
-            button, [role="button"] {
+            input, button, select, textarea {
                 min-height: 44px;
                 min-width: 44px;
             }
         }
-        /* Improve text rendering */
-        body {
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            text-rendering: optimizeLegibility;
-        }
-        /* Prevent content shift during loading */
-        #root {
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-        /* Loading state styles */
-        .initial-loader {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            background-color: #ffffff;
-        }
-        @media (prefers-color-scheme: dark) {
-            .initial-loader {
-                background-color: #121212;
+        /* Reduced motion preferences */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+                scroll-behavior: auto !important;
             }
         }
     </style>
 </head>
 <body>
-    <!-- Application Root with ARIA role -->
-    <div id="root" role="application" aria-label="Product Catalog Search Application">
-        <!-- Initial loading state -->
-        <div class="initial-loader" role="status" aria-label="Loading application">
-            <noscript>
-                <div role="alert">
-                    JavaScript is required to run this application.
-                    Please enable JavaScript in your browser settings.
-                </div>
-            </noscript>
+    <!-- Application Root with ARIA Role -->
+    <div id="root" role="application" aria-label="Product Catalog Search Application"></div>
+
+    <!-- Error Message for No JavaScript -->
+    <noscript>
+        <div style="padding: 20px; text-align: center; font-family: system-ui, -apple-system, sans-serif;">
+            <h1>JavaScript Required</h1>
+            <p>Please enable JavaScript to use the AI-Powered Product Catalog Search System.</p>
         </div>
-    </div>
+    </noscript>
 
-    <!-- Font loading detection script -->
-    <script>
-        if ("fonts" in document) {
-            Promise.all([
-                document.fonts.load("1em Roboto"),
-                document.fonts.load("1em Open Sans"),
-                document.fonts.load("1em Fira Mono")
-            ]).then(() => {
-                document.documentElement.classList.add("fonts-loaded");
-            });
-        } else {
-            document.documentElement.classList.add("fonts-loaded");
-        }
-    </script>
-
-    <!-- Application entry point -->
-    <script type="module" src="/src/index.tsx"></script>
+    <!-- Application Entry Point -->
+    <script type="module" src="./src/index.tsx"></script>
 </body>
 </html>

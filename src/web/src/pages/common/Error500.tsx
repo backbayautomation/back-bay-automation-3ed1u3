@@ -1,17 +1,18 @@
 import React from 'react';
-import { Box, Typography, Container, useTheme } from '@mui/material'; // v5.14.0
-import { ErrorOutline } from '@mui/icons-material'; // v5.14.0
-import { useNavigate } from 'react-router-dom'; // v6.0.0
-import MainLayout from '../../components/common/Layout/MainLayout';
-import PrimaryButton from '../../components/common/Buttons/PrimaryButton';
+import { Box, Typography, Container, useTheme } from '@mui/material';
+import { ErrorOutline } from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
 import { styled } from '@mui/material/styles';
 
-// Constants for component configuration
+import MainLayout from '../../components/common/Layout/MainLayout';
+import PrimaryButton from '../../components/common/Buttons/PrimaryButton';
+
+// Constants for error page configuration
 const ERROR_ICON_SIZE = 64;
 const ERROR_MESSAGE = 'Internal Server Error';
 const ERROR_DESCRIPTION = 'We apologize for the inconvenience. Please try again later or contact support if the problem persists.';
 
-// Styled components with theme integration
+// Styled components with responsive design and accessibility
 const ErrorContainer = styled(Container)(({ theme }) => ({
   display: 'flex',
   flexDirection: 'column',
@@ -22,8 +23,8 @@ const ErrorContainer = styled(Container)(({ theme }) => ({
   padding: theme.spacing(4),
   gap: theme.spacing(3),
   '@media (max-width: 600px)': {
-    padding: theme.spacing(2),
-  },
+    padding: theme.spacing(2)
+  }
 }));
 
 const ActionContainer = styled(Box)(({ theme }) => ({
@@ -31,24 +32,23 @@ const ActionContainer = styled(Box)(({ theme }) => ({
   gap: theme.spacing(2),
   marginTop: theme.spacing(4),
   '@media (max-width: 600px)': {
-    flexDirection: 'column',
-  },
+    flexDirection: 'column'
+  }
 }));
 
 /**
- * Server error page component with retry and home navigation options,
- * implementing full accessibility support and responsive design.
+ * Server error page component implementing WCAG 2.1 AA compliance and responsive design
  */
-const Error500: React.FC = React.memo(() => {
+const Error500 = React.memo(() => {
   const theme = useTheme();
   const navigate = useNavigate();
 
-  // Handler for retry action
+  // Handle retry action
   const handleRetry = React.useCallback(() => {
     window.location.reload();
   }, []);
 
-  // Handler for home navigation
+  // Handle navigation to home
   const handleGoHome = React.useCallback(() => {
     navigate('/');
   }, [navigate]);
@@ -60,12 +60,12 @@ const Error500: React.FC = React.memo(() => {
           sx={{
             fontSize: ERROR_ICON_SIZE,
             color: theme.palette.error.main,
-            mb: 2,
+            mb: 2
           }}
           role="img"
           aria-label="Error icon"
         />
-
+        
         <Typography
           variant="h4"
           component="h1"
@@ -74,8 +74,8 @@ const Error500: React.FC = React.memo(() => {
           sx={{
             fontWeight: 500,
             '@media (max-width: 600px)': {
-              fontSize: '1.5rem',
-            },
+              fontSize: '1.5rem'
+            }
           }}
         >
           {ERROR_MESSAGE}
@@ -88,8 +88,8 @@ const Error500: React.FC = React.memo(() => {
             maxWidth: '600px',
             lineHeight: 1.6,
             '@media (max-width: 600px)': {
-              fontSize: '0.875rem',
-            },
+              fontSize: '0.875rem'
+            }
           }}
         >
           {ERROR_DESCRIPTION}
@@ -98,19 +98,18 @@ const Error500: React.FC = React.memo(() => {
         <ActionContainer>
           <PrimaryButton
             onClick={handleRetry}
-            size="large"
-            aria-label="Retry current page"
-            data-testid="retry-button"
+            variant="primary"
+            size="medium"
+            aria-label="Retry loading the page"
           >
             Try Again
           </PrimaryButton>
-
+          
           <PrimaryButton
             onClick={handleGoHome}
             variant="secondary"
-            size="large"
+            size="medium"
             aria-label="Return to home page"
-            data-testid="home-button"
           >
             Return Home
           </PrimaryButton>
@@ -120,7 +119,6 @@ const Error500: React.FC = React.memo(() => {
   );
 });
 
-// Display name for debugging
 Error500.displayName = 'Error500';
 
 export default Error500;

@@ -5,13 +5,12 @@
  */
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react'; // v18.2.0
-import { AuthState, LoginCredentials } from '../types/auth';
-import AuthService from '../services/auth';
+import { AuthState, LoginCredentials, AuthService } from '../services/auth';
 
-// Constants for token refresh and retry logic
+// Constants for authentication management
 const TOKEN_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
 const MAX_RETRY_ATTEMPTS = 3;
-const RETRY_DELAY = 1000; // Base delay in milliseconds
+const RETRY_DELAY = 1000; // 1 second in milliseconds
 
 /**
  * Enhanced type definition for authentication context with comprehensive error handling
@@ -24,7 +23,9 @@ interface AuthContextType {
   clearError: () => void;
 }
 
-// Create context with strict null checking
+/**
+ * Create authentication context with strict null checking
+ */
 const AuthContext = createContext<AuthContextType | null>(null);
 
 /**
@@ -37,11 +38,11 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     isLoading: true,
     user: null,
     tokens: null,
-    error: null,
+    error: null
   });
 
   // Create memoized instance of AuthService
-  const authService = useMemo(() => AuthService, []);
+  const authService = useMemo(() => new AuthService(), []);
 
   /**
    * Secure login implementation with retry mechanism
@@ -49,8 +50,8 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const login = useCallback(async (credentials: LoginCredentials) => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
     
-    let retryCount = 0;
-    while (retryCount < MAX_RETRY_ATTEMPTS) {
+    let attempt = 0;
+    while (attempt < MAX_RETRY_ATTEMPTS) {
       try {
         const { user, tokens } = await authService.authenticateUser(credentials);
         setState({
@@ -58,94 +59,82 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           isLoading: false,
           user,
           tokens,
-          error: null,
+          error: null
         });
         return;
       } catch (error) {
-        retryCount++;
-        if (retryCount === MAX_RETRY_ATTEMPTS) {
+        attempt++;
+        if (attempt === MAX_RETRY_ATTEMPTS) {
           setState(prev => ({
             ...prev,
             isLoading: false,
-            error: error instanceof Error ? error.message : 'Authentication failed',
+            error: error instanceof Error ? error.message : 'Authentication failed'
           }));
           throw error;
         }
-        // Exponential backoff
-        await new Promise(resolve => 
-          setTimeout(resolve, RETRY_DELAY * Math.pow(2, retryCount))
-        );
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
       }
     }
   }, [authService]);
 
   /**
-   * Secure logout implementation with state cleanup
+   * Secure logout with state cleanup
    */
   const logout = useCallback(async () => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
     try {
       await authService.logout();
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('Logout failed:', error);
     } finally {
       setState({
         isAuthenticated: false,
         isLoading: false,
         user: null,
         tokens: null,
-        error: null,
+        error: null
       });
     }
   }, [authService]);
 
   /**
-   * Token refresh implementation with error handling
+   * Token refresh with comprehensive error handling
    */
   const refreshToken = useCallback(async () => {
-    if (!state.isAuthenticated || !state.tokens) return;
-
-    setState(prev => ({ ...prev, isLoading: true }));
     try {
-      const tokens = await authService.refreshAuthToken();
-      const user = await authService.getCurrentUserProfile();
-      
-      if (!tokens || !user) {
-        throw new Error('Token refresh failed');
-      }
-
+      const newTokens = await authService.secureTokenRefresh();
       setState(prev => ({
         ...prev,
-        isLoading: false,
-        tokens,
-        user,
+        tokens: newTokens,
+        error: null
       }));
     } catch (error) {
       setState(prev => ({
         ...prev,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Token refresh failed',
+        isAuthenticated: false,
+        user: null,
+        tokens: null,
+        error: error instanceof Error ? error.message : 'Token refresh failed'
       }));
-      // Force logout on token refresh failure
-      await logout();
+      throw error;
     }
-  }, [state.isAuthenticated, state.tokens, authService, logout]);
+  }, [authService]);
 
   /**
-   * Error clearing functionality
+   * Clear authentication errors
    */
   const clearError = useCallback(() => {
     setState(prev => ({ ...prev, error: null }));
   }, []);
 
   /**
-   * Set up secure token refresh interval with cleanup
+   * Set up automatic token refresh with cleanup
    */
   useEffect(() => {
-    if (!state.isAuthenticated) return;
-
-    const refreshInterval = setInterval(refreshToken, TOKEN_REFRESH_INTERVAL);
-    return () => clearInterval(refreshInterval);
+    if (state.isAuthenticated) {
+      const refreshInterval = setInterval(refreshToken, TOKEN_REFRESH_INTERVAL);
+      return () => clearInterval(refreshInterval);
+    }
   }, [state.isAuthenticated, refreshToken]);
 
   /**
@@ -154,15 +143,15 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const tokens = await authService.validateTokens();
-        if (tokens) {
-          const user = await authService.getCurrentUserProfile();
+        if (authService.isAuthenticated()) {
+          const user = authService.getCurrentUser();
+          const tokens = await authService.secureTokenRefresh();
           setState({
             isAuthenticated: true,
             isLoading: false,
             user,
             tokens,
-            error: null,
+            error: null
           });
         } else {
           setState(prev => ({ ...prev, isLoading: false }));
@@ -173,7 +162,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           isLoading: false,
           user: null,
           tokens: null,
-          error: error instanceof Error ? error.message : 'Authentication initialization failed',
+          error: error instanceof Error ? error.message : 'Authentication initialization failed'
         });
       }
     };
@@ -181,13 +170,13 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     initializeAuth();
   }, [authService]);
 
-  // Memoize context value for performance optimization
+  // Memoize context value to prevent unnecessary re-renders
   const contextValue = useMemo(() => ({
     state,
     login,
     logout,
     refreshToken,
-    clearError,
+    clearError
   }), [state, login, logout, refreshToken, clearError]);
 
   return (

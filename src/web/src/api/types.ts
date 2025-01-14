@@ -1,14 +1,15 @@
 /**
- * Core TypeScript type definitions for API request/response structures.
- * Provides comprehensive type safety for all API interactions with enhanced security features.
+ * Core TypeScript type definitions for API request/response structures, error handling,
+ * HTTP client configurations, and multi-tenant support.
  * @version 1.0.0
  */
 
 import { AxiosRequestConfig } from 'axios'; // v1.5.0
 import { AuthTokens } from '../types/auth';
+import { UUID, JsonValue } from '../types/common';
 
 /**
- * Enum for supported HTTP methods with strict typing
+ * Enum for supported HTTP methods
  */
 export enum HttpMethod {
     GET = 'GET',
@@ -19,7 +20,7 @@ export enum HttpMethod {
 }
 
 /**
- * Enum for sort order directions
+ * Enum for sort directions in paginated requests
  */
 export enum SortOrder {
     ASC = 'ASC',
@@ -38,7 +39,7 @@ export enum ContentType {
 /**
  * Generic interface for standardized API responses
  */
-export interface ApiResponse<T = unknown> {
+export interface ApiResponse<T> {
     data: T;
     message: string;
     success: boolean;
@@ -46,28 +47,28 @@ export interface ApiResponse<T = unknown> {
 }
 
 /**
- * Interface for comprehensive API error responses
+ * Interface for enhanced API error responses with tracking
  */
 export interface ApiError {
     message: string;
     statusCode: number;
     errors: string[];
     errorCode: string;
-    requestId: string;
+    requestId: UUID;
     metadata: Record<string, unknown>;
 }
 
 /**
- * Extended Axios request configuration with security enhancements
+ * Extended Axios request configuration with security and multi-tenant support
  */
 export interface ApiRequestConfig extends AxiosRequestConfig {
     requiresAuth: boolean;
     skipErrorHandler: boolean;
-    clientId?: string;
-    organizationId?: string;
-    securityHeaders?: Record<string, string>;
-    timeout?: number;
-    validateStatus?: (status: number) => boolean;
+    clientId?: UUID;
+    organizationId?: UUID;
+    securityHeaders: Record<string, string>;
+    timeout: number;
+    validateStatus: (status: number) => boolean;
 }
 
 /**
@@ -78,91 +79,73 @@ export interface PaginationParams {
     limit: number;
     sortBy?: string;
     order?: SortOrder;
-    clientId?: string;
-    organizationId?: string;
+    clientId?: UUID;
+    organizationId?: UUID;
     searchQuery?: string;
-    filters?: Record<string, string>;
+    filters: Record<string, string>;
 }
 
 /**
  * Type for custom API headers with security considerations
  */
 export type ApiHeaders = {
-    'Authorization'?: string;
     'Content-Type': ContentType;
-    'X-Client-Id'?: string;
-    'X-Organization-Id'?: string;
-    'X-Request-Id': string;
-    'X-API-Version'?: string;
+    'Authorization'?: string;
+    'X-Client-Id'?: UUID;
+    'X-Organization-Id'?: UUID;
+    'X-Request-Id': UUID;
+    'X-API-Version': string;
 } & Record<string, string>;
 
 /**
  * Type for URL query parameters with multi-tenant support
  */
 export type QueryParams = {
-    clientId?: string;
-    organizationId?: string;
+    clientId?: UUID;
+    organizationId?: UUID;
     page?: number;
     limit?: number;
     sortBy?: string;
     order?: SortOrder;
     searchQuery?: string;
-} & Record<string, string | number | boolean | string[]>;
+    [key: string]: string | number | boolean | string[] | undefined;
+};
 
 /**
- * Type guard for validating API responses
+ * Default API request configuration
  */
-export function isApiResponse<T>(response: unknown): response is ApiResponse<T> {
-    return (
-        typeof response === 'object' &&
-        response !== null &&
-        'data' in response &&
-        'success' in response &&
-        'statusCode' in response
-    );
-}
+export const DEFAULT_API_CONFIG: Partial<ApiRequestConfig> = {
+    timeout: 30000,
+    validateStatus: (status: number) => status >= 200 && status < 300,
+    headers: {
+        'Content-Type': ContentType.APPLICATION_JSON,
+        'X-API-Version': '1.0'
+    }
+} as const;
 
 /**
- * Type guard for validating API errors
+ * Type guard for checking if a response is an API error
  */
 export function isApiError(error: unknown): error is ApiError {
     return (
         typeof error === 'object' &&
         error !== null &&
-        'message' in error &&
         'statusCode' in error &&
+        'message' in error &&
         'errorCode' in error
     );
 }
 
 /**
- * Helper function to create base API headers with auth token
+ * Type guard for validating pagination parameters
  */
-export function createApiHeaders(tokens?: AuthTokens): ApiHeaders {
-    const headers: ApiHeaders = {
-        'Content-Type': ContentType.APPLICATION_JSON,
-        'X-Request-Id': crypto.randomUUID()
-    };
-
-    if (tokens?.accessToken) {
-        headers['Authorization'] = `${tokens.tokenType} ${tokens.accessToken}`;
-    }
-
-    return headers;
-}
-
-/**
- * Helper function to create pagination query parameters
- */
-export function createPaginationParams(params: Partial<PaginationParams>): QueryParams {
-    return {
-        page: params.page ?? 1,
-        limit: params.limit ?? 10,
-        sortBy: params.sortBy,
-        order: params.order,
-        clientId: params.clientId,
-        organizationId: params.organizationId,
-        searchQuery: params.searchQuery,
-        ...params.filters
-    };
+export function isPaginationParams(params: unknown): params is PaginationParams {
+    return (
+        typeof params === 'object' &&
+        params !== null &&
+        'page' in params &&
+        'limit' in params &&
+        typeof (params as PaginationParams).page === 'number' &&
+        typeof (params as PaginationParams).limit === 'number'
+    );
 }

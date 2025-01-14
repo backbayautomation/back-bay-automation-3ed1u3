@@ -1,6 +1,6 @@
 """
 Celery tasks for handling asynchronous notifications in the AI-powered Product Catalog Search System.
-Implements secure, monitored notification distribution through Redis pub/sub and WebSocket channels.
+Implements real-time notifications with enhanced security, monitoring, and multi-tenant isolation.
 
 Version: 1.0.0
 """
@@ -9,13 +9,14 @@ import redis  # version: 4.5.0
 import json
 import logging
 import asyncio
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
+from functools import wraps
 from datetime import datetime
 
 from .celery_app import celery_app
 from ..services.cache_service import CacheService
 
-# Configure logger
+# Configure module logger
 logger = logging.getLogger(__name__)
 
 # Notification channel constants
@@ -31,115 +32,157 @@ MAX_RETRIES = 3
 RETRY_DELAY = 5
 BATCH_SIZE = 100
 
+def monitor_performance(func):
+    """Decorator for monitoring notification performance and logging metrics."""
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        start_time = datetime.now()
+        try:
+            result = await func(*args, **kwargs)
+            elapsed = (datetime.now() - start_time).total_seconds()
+            logger.info(
+                "Notification task completed",
+                extra={
+                    'task_name': func.__name__,
+                    'duration_seconds': elapsed,
+                    'success': True
+                }
+            )
+            return result
+        except Exception as e:
+            elapsed = (datetime.now() - start_time).total_seconds()
+            logger.error(
+                "Notification task failed",
+                extra={
+                    'task_name': func.__name__,
+                    'duration_seconds': elapsed,
+                    'error': str(e),
+                    'success': False
+                }
+            )
+            raise
+    return wrapper
+
 class NotificationManager:
     """Enhanced notification manager with multi-tenant support, message persistence, and monitoring."""
 
     def __init__(self, redis_client: redis.Redis, cache_service: CacheService):
         """
         Initialize notification manager with enhanced monitoring and security.
-
+        
         Args:
             redis_client: Redis client instance for pub/sub
             cache_service: Cache service for notification persistence
         """
         self._redis_client = redis_client
         self._cache_service = cache_service
-        
-        # Initialize performance metrics
         self._metrics = {
-            'notifications_sent': 0,
-            'delivery_failures': 0,
-            'average_latency': 0.0
+            'published': 0,
+            'failed': 0,
+            'latency': []
         }
-        
-        # Channel health monitoring
         self._channel_health = {
-            channel: {'status': 'healthy', 'last_check': datetime.utcnow()}
+            channel: {'errors': 0, 'last_error': None}
             for channel in NOTIFICATION_CHANNELS.values()
         }
 
-        logger.info("NotificationManager initialized", extra={
-            'channels': list(NOTIFICATION_CHANNELS.values()),
-            'cache_ttl': NOTIFICATION_TTL
-        })
-
-    async def publish_notification(self, channel: str, message: Dict, tenant_id: str) -> bool:
+    async def publish_notification(
+        self,
+        channel: str,
+        message: Dict[str, Any],
+        tenant_id: str
+    ) -> bool:
         """
         Publishes notification with enhanced reliability and monitoring.
-
+        
         Args:
             channel: Target notification channel
             message: Notification message content
             tenant_id: Client tenant identifier
-
+            
         Returns:
             bool: Success status of notification publish
         """
-        start_time = datetime.utcnow()
-
+        start_time = datetime.now()
+        
         try:
             # Validate channel
             if channel not in NOTIFICATION_CHANNELS.values():
                 raise ValueError(f"Invalid notification channel: {channel}")
 
-            # Enhance message with metadata
-            enhanced_message = {
-                'content': message,
-                'metadata': {
-                    'tenant_id': tenant_id,
-                    'timestamp': datetime.utcnow().isoformat(),
-                    'channel': channel,
-                    'message_id': f"{tenant_id}_{start_time.timestamp()}"
-                }
+            # Prepare notification payload
+            notification = {
+                'tenant_id': tenant_id,
+                'channel': channel,
+                'message': message,
+                'timestamp': datetime.now().isoformat(),
+                'message_id': f"{channel}_{tenant_id}_{start_time.timestamp()}"
             }
 
-            # Serialize message
-            message_json = json.dumps(enhanced_message)
+            # Serialize with validation
+            try:
+                payload = json.dumps(notification)
+            except Exception as e:
+                logger.error(
+                    "Notification serialization failed",
+                    extra={
+                        'channel': channel,
+                        'tenant_id': tenant_id,
+                        'error': str(e)
+                    }
+                )
+                raise
 
-            # Publish to Redis channel with tenant isolation
-            tenant_channel = f"{tenant_id}_{channel}"
+            # Publish to Redis channel
             await asyncio.to_thread(
                 self._redis_client.publish,
-                tenant_channel,
-                message_json
+                f"{channel}:{tenant_id}",
+                payload
             )
 
             # Cache notification for persistence
-            cache_key = f"notification:{enhanced_message['metadata']['message_id']}"
+            cache_key = f"notification:{notification['message_id']}"
             await self._cache_service.set(
                 cache_key,
-                enhanced_message,
+                notification,
                 ttl=NOTIFICATION_TTL
             )
 
             # Update metrics
-            self._metrics['notifications_sent'] += 1
-            latency = (datetime.utcnow() - start_time).total_seconds()
-            self._metrics['average_latency'] = (
-                (self._metrics['average_latency'] * (self._metrics['notifications_sent'] - 1) + latency) /
-                self._metrics['notifications_sent']
+            elapsed = (datetime.now() - start_time).total_seconds()
+            self._metrics['published'] += 1
+            self._metrics['latency'].append(elapsed)
+
+            logger.info(
+                "Notification published successfully",
+                extra={
+                    'channel': channel,
+                    'tenant_id': tenant_id,
+                    'message_id': notification['message_id'],
+                    'latency': elapsed
+                }
             )
-
-            logger.info("Notification published successfully", extra={
-                'channel': channel,
-                'tenant_id': tenant_id,
-                'message_id': enhanced_message['metadata']['message_id'],
-                'latency': latency
-            })
-
             return True
 
         except Exception as e:
-            self._metrics['delivery_failures'] += 1
-            logger.error("Failed to publish notification", extra={
-                'channel': channel,
-                'tenant_id': tenant_id,
-                'error': str(e),
-                'latency': (datetime.utcnow() - start_time).total_seconds()
-            })
+            # Update error metrics
+            self._metrics['failed'] += 1
+            self._channel_health[channel]['errors'] += 1
+            self._channel_health[channel]['last_error'] = str(e)
+
+            logger.error(
+                "Failed to publish notification",
+                extra={
+                    'channel': channel,
+                    'tenant_id': tenant_id,
+                    'error': str(e),
+                    'stack_trace': True
+                }
+            )
             return False
 
 @celery_app.task(bind=True, max_retries=MAX_RETRIES)
+@monitor_performance
 async def send_document_notification(
     self,
     document_id: str,
@@ -149,66 +192,62 @@ async def send_document_notification(
 ) -> bool:
     """
     Enhanced Celery task for document processing notifications with monitoring.
-
+    
     Args:
         document_id: Unique document identifier
         status: Current processing status
         progress: Processing progress percentage
         tenant_id: Client tenant identifier
-
+        
     Returns:
         bool: Notification delivery status
     """
     try:
-        # Create notification message
-        message = {
-            'document_id': document_id,
-            'status': status,
-            'progress': progress,
-            'timestamp': datetime.utcnow().isoformat(),
-            'tracking': {
-                'attempt': self.request.retries + 1,
-                'task_id': self.request.id
-            }
-        }
-
-        # Initialize NotificationManager with Redis client
-        redis_client = redis.Redis.from_url(
-            celery_app.conf.broker_url,
-            decode_responses=True
-        )
+        # Create notification manager instance
+        redis_client = redis.Redis.from_url(celery_app.conf.broker_url)
         cache_service = CacheService(
-            redis_client.connection_pool.connection_kwargs['host'],
-            redis_client.connection_pool.connection_kwargs['port'],
-            0,
-            redis_client.connection_pool.connection_kwargs['password']
+            host=redis_client.connection_pool.connection_kwargs['host'],
+            port=redis_client.connection_pool.connection_kwargs['port'],
+            db=0,
+            password=redis_client.connection_pool.connection_kwargs.get('password')
         )
         
         notification_manager = NotificationManager(redis_client, cache_service)
 
-        # Publish notification
+        # Prepare document notification message
+        message = {
+            'document_id': document_id,
+            'status': status,
+            'progress': progress,
+            'timestamp': datetime.now().isoformat(),
+            'metadata': {
+                'retry_count': self.request.retries,
+                'task_id': self.request.id
+            }
+        }
+
+        # Publish notification with tenant isolation
         success = await notification_manager.publish_notification(
             NOTIFICATION_CHANNELS['DOCUMENT'],
             message,
             tenant_id
         )
 
-        if not success:
-            raise Exception("Failed to publish document notification")
+        if not success and self.request.retries < MAX_RETRIES:
+            raise self.retry(
+                countdown=RETRY_DELAY * (2 ** self.request.retries)
+            )
 
         return success
 
     except Exception as e:
-        logger.error("Document notification task failed", extra={
-            'document_id': document_id,
-            'tenant_id': tenant_id,
-            'error': str(e),
-            'attempt': self.request.retries + 1
-        })
-
-        # Retry with exponential backoff
-        if self.request.retries < MAX_RETRIES:
-            retry_delay = RETRY_DELAY * (2 ** self.request.retries)
-            raise self.retry(exc=e, countdown=retry_delay)
-        
-        return False
+        logger.error(
+            "Document notification task failed",
+            extra={
+                'document_id': document_id,
+                'tenant_id': tenant_id,
+                'error': str(e),
+                'retry_count': self.request.retries
+            }
+        )
+        raise

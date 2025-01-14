@@ -1,19 +1,23 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Box, Typography, Alert, CircularProgress } from '@mui/material'; // v5.14.0
-import { withErrorBoundary } from 'react-error-boundary'; // v4.0.11
+import { Box, Typography, Alert, CircularProgress } from '@mui/material';
+import { ErrorBoundary } from 'react-error-boundary';
+
 import AdminLayout from '../../layouts/AdminLayout';
 import ClientList from '../../components/admin/ClientManagement/ClientList';
 import { useAuth } from '../../hooks/useAuth';
-import { UserRole } from '../../types/auth';
 
-// Error boundary fallback component with accessibility support
+// Props interface for the Clients page
+interface ClientsPageProps {
+  showArchived?: boolean;
+  initialFilter?: string;
+}
+
+// Error fallback component
 const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> = ({
   error,
   resetErrorBoundary
 }) => (
   <Box
-    role="alert"
-    aria-live="assertive"
     sx={{
       p: 3,
       display: 'flex',
@@ -22,97 +26,65 @@ const ErrorFallback: React.FC<{ error: Error; resetErrorBoundary: () => void }> 
       gap: 2
     }}
   >
-    <Typography variant="h6" color="error">
-      Error loading client management page
-    </Typography>
-    <Typography color="error">{error.message}</Typography>
-    <button
-      onClick={resetErrorBoundary}
-      style={{
-        padding: '8px 16px',
-        borderRadius: '4px',
-        backgroundColor: '#0066CC',
-        color: 'white',
-        border: 'none',
-        cursor: 'pointer'
-      }}
+    <Alert
+      severity="error"
+      action={
+        <button
+          onClick={resetErrorBoundary}
+          style={{ marginLeft: '16px' }}
+        >
+          Try Again
+        </button>
+      }
     >
-      Try Again
-    </button>
+      {error.message}
+    </Alert>
   </Box>
 );
 
-// Props interface for the Clients page component
-interface ClientsPageProps {
-  showArchived?: boolean;
-  initialFilter?: string;
-}
-
-// Main Clients page component with security and accessibility features
+// Main Clients page component with memoization
 const ClientsPage: React.FC<ClientsPageProps> = React.memo(({
   showArchived = false,
   initialFilter = ''
 }) => {
+  // Authentication and authorization
   const { isAuthenticated, user, checkPermission } = useAuth();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Verify authentication and permissions on mount
+  // Check user authorization
   useEffect(() => {
-    const verifyAccess = async () => {
+    const checkAuthorization = async () => {
       try {
         setIsLoading(true);
-        setError(null);
-
-        if (!isAuthenticated) {
-          throw new Error('Authentication required');
-        }
-
-        if (!user || !checkPermission('MANAGE_CLIENTS')) {
-          throw new Error('Insufficient permissions');
-        }
-
-        setIsLoading(false);
+        const hasPermission = await checkPermission('client_management');
+        setIsAuthorized(hasPermission);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Access verification failed');
+        setError('Failed to verify permissions');
+        console.error('Authorization check failed:', err);
+      } finally {
         setIsLoading(false);
       }
     };
 
-    verifyAccess();
+    if (isAuthenticated && user) {
+      checkAuthorization();
+    }
   }, [isAuthenticated, user, checkPermission]);
 
-  // Handle authentication errors
-  if (!isAuthenticated || !user) {
+  // Handle unauthorized access
+  const handleUnauthorized = useCallback(() => {
     return (
-      <AdminLayout>
-        <Alert 
-          severity="error"
-          sx={{ m: 2 }}
-          role="alert"
-        >
-          Please log in to access client management.
-        </Alert>
-      </AdminLayout>
-    );
-  }
-
-  // Handle permission errors
-  if (user.role !== UserRole.SYSTEM_ADMIN) {
-    return (
-      <AdminLayout>
-        <Alert 
-          severity="error"
-          sx={{ m: 2 }}
-          role="alert"
-        >
+      <Box sx={{ p: 3 }}>
+        <Alert severity="warning">
           You do not have permission to access client management.
         </Alert>
-      </AdminLayout>
+      </Box>
     );
-  }
+  }, []);
 
-  // Handle loading state
+  // Loading state
   if (isLoading) {
     return (
       <AdminLayout>
@@ -124,61 +96,63 @@ const ClientsPage: React.FC<ClientsPageProps> = React.memo(({
             minHeight: '400px'
           }}
         >
-          <CircularProgress 
-            aria-label="Loading client management"
-            size={40}
-          />
+          <CircularProgress aria-label="Loading client management" />
         </Box>
       </AdminLayout>
     );
   }
 
-  // Handle error state
+  // Error state
   if (error) {
     return (
       <AdminLayout>
-        <Alert 
-          severity="error"
-          sx={{ m: 2 }}
-          role="alert"
-        >
-          {error}
-        </Alert>
+        <Alert severity="error">{error}</Alert>
       </AdminLayout>
     );
   }
 
-  // Render main content
+  // Unauthorized state
+  if (!isAuthorized) {
+    return (
+      <AdminLayout>
+        {handleUnauthorized()}
+      </AdminLayout>
+    );
+  }
+
   return (
     <AdminLayout>
-      <Box
-        component="main"
-        role="main"
-        aria-label="Client Management"
-        sx={{
-          flexGrow: 1,
-          width: '100%',
-          backgroundColor: 'background.default',
-          overflow: 'auto'
+      <ErrorBoundary
+        FallbackComponent={ErrorFallback}
+        onReset={() => {
+          setError(null);
         }}
       >
-        <ClientList />
-      </Box>
+        <Box
+          sx={{
+            p: { xs: 2, sm: 3 },
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column'
+          }}
+        >
+          <Typography
+            variant="h4"
+            component="h1"
+            sx={{ mb: 3 }}
+            aria-label="Client Management"
+          >
+            Client Management
+          </Typography>
+
+          <ClientList />
+        </Box>
+      </ErrorBoundary>
     </AdminLayout>
   );
 });
 
-// Add display name for debugging
+// Set display name for debugging
 ClientsPage.displayName = 'ClientsPage';
 
-// Wrap with error boundary for production error handling
-const ClientsPageWithErrorBoundary = withErrorBoundary(ClientsPage, {
-  FallbackComponent: ErrorFallback,
-  onError: (error) => {
-    console.error('[ClientsPage] Error:', error);
-    // Implement error reporting service integration here
-  }
-});
-
-export type { ClientsPageProps };
-export default ClientsPageWithErrorBoundary;
+export default ClientsPage;

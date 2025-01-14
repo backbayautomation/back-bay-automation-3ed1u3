@@ -1,14 +1,13 @@
 /**
  * Core application constants defining layout measurements, UI configurations,
  * validation rules and other shared constants used across the frontend application.
- * Implements design system specifications, responsive breakpoints, and validation rules
- * while ensuring accessibility and security compliance.
+ * Implements design system specifications and ensures accessibility compliance.
  */
 
 /**
  * Interface defining layout-related constants for consistent component sizing and spacing
  */
-interface LayoutConstants {
+export interface LayoutConstants {
   SPACING_UNIT: number;
   BREAKPOINTS: {
     MOBILE: number;
@@ -30,7 +29,7 @@ interface LayoutConstants {
 /**
  * Interface defining UI-related constants for consistent component behavior and accessibility
  */
-interface UIConstants {
+export interface UIConstants {
   ANIMATION_DURATION: {
     SHORT: number;
     MEDIUM: number;
@@ -55,7 +54,7 @@ interface UIConstants {
 /**
  * Interface defining validation-related constants for secure data handling
  */
-interface ValidationConstants {
+export interface ValidationConstants {
   MAX_FILE_SIZE: number;
   ALLOWED_FILE_TYPES: string[];
   MAX_UPLOAD_FILES: number;
@@ -68,7 +67,7 @@ interface ValidationConstants {
 /**
  * Interface defining date format patterns for consistent date handling
  */
-interface DateFormatConstants {
+export interface DateFormatConstants {
   DEFAULT: string;
   WITH_TIME: string;
   DISPLAY: string;
@@ -76,7 +75,8 @@ interface DateFormatConstants {
 }
 
 /**
- * Layout and spacing constants for consistent component sizing and responsive behavior
+ * Layout constants for consistent component sizing and responsive behavior
+ * Based on the design system specifications and responsive breakpoints
  */
 export const LAYOUT_CONSTANTS: LayoutConstants = {
   SPACING_UNIT: 8,
@@ -98,7 +98,8 @@ export const LAYOUT_CONSTANTS: LayoutConstants = {
 } as const;
 
 /**
- * UI-related constants for consistent animations, layering, and accessibility compliance
+ * UI constants for consistent animations, layering, and accessibility compliance
+ * Ensures WCAG 2.1 Level AA compliance for touch targets and interactions
  */
 export const UI_CONSTANTS: UIConstants = {
   ANIMATION_DURATION: {
@@ -114,7 +115,7 @@ export const UI_CONSTANTS: UIConstants = {
     OVERLAY: 600,
     TOOLTIP: 500,
   },
-  MIN_TOUCH_TARGET: 44,
+  MIN_TOUCH_TARGET: 44, // Minimum size in pixels for touch targets (WCAG 2.1)
   BORDER_RADIUS: {
     SMALL: 4,
     MEDIUM: 8,
@@ -123,7 +124,8 @@ export const UI_CONSTANTS: UIConstants = {
 } as const;
 
 /**
- * Validation rules and limits for secure data handling and input validation
+ * Validation constants for secure data handling and input validation
+ * Implements security best practices for file uploads and user input
  */
 export const VALIDATION_CONSTANTS: ValidationConstants = {
   MAX_FILE_SIZE: 10485760, // 10MB in bytes
@@ -136,7 +138,8 @@ export const VALIDATION_CONSTANTS: ValidationConstants = {
 } as const;
 
 /**
- * Date format patterns for consistent date handling and display
+ * Date format constants for consistent date handling and display
+ * Uses ISO 8601 format for default dates and user-friendly formats for display
  */
 export const DATE_FORMAT_CONSTANTS: DateFormatConstants = {
   DEFAULT: 'YYYY-MM-DD',

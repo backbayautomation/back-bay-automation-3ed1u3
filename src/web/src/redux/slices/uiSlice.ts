@@ -67,7 +67,7 @@ const initialState: UIState = {
 /**
  * Redux Toolkit slice for UI state management
  */
-const uiSlice = createSlice({
+export const uiSlice = createSlice({
   name: 'ui',
   initialState,
   reducers: {
@@ -115,7 +115,9 @@ const uiSlice = createSlice({
         priority: action.payload.priority || 0
       };
 
-      if (state.notifications.length >= 3) {
+      const MAX_VISIBLE_NOTIFICATIONS = 3;
+
+      if (state.notifications.length >= MAX_VISIBLE_NOTIFICATIONS) {
         state.notificationQueue.push(notification);
         state.notificationQueue.sort((a, b) => b.priority - a.priority);
       } else {
@@ -127,9 +129,9 @@ const uiSlice = createSlice({
       state.notifications = state.notifications.filter(n => n.id !== action.payload);
       
       if (state.notificationQueue.length > 0) {
-        const [next, ...rest] = state.notificationQueue;
-        state.notifications.push(next);
-        state.notificationQueue = rest;
+        const [nextNotification, ...remainingQueue] = state.notificationQueue;
+        state.notifications.push(nextNotification);
+        state.notificationQueue = remainingQueue;
       }
     },
 
@@ -144,7 +146,7 @@ const uiSlice = createSlice({
       }
 
       // Update document body scroll lock
-      document.body.style.overflow = state.modalStack.length > 0 ? 'hidden' : '';
+      document.body.style.overflow = state.modalStack.length > 0 ? 'hidden' : 'auto';
     },
 
     setLoadingState: (state, action: PayloadAction<{ key: string; isLoading: boolean }>) => {
@@ -164,18 +166,16 @@ const uiSlice = createSlice({
           onClick: null,
           priority: success ? 0 : 1
         };
-        
-        if (state.notifications.length >= 3) {
-          state.notificationQueue.push(notification as NotificationState);
-          state.notificationQueue.sort((a, b) => b.priority - a.priority);
-        } else {
-          state.notifications.push(notification as NotificationState);
-        }
+        uiSlice.caseReducers.showNotification(state, { 
+          type: 'ui/showNotification', 
+          payload: notification 
+        });
       }
     }
   }
 });
 
+// Export actions and reducer
 export const {
   setTheme,
   updateBreakpoints,

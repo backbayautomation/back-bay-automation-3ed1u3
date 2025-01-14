@@ -12,64 +12,60 @@ data:
     # Memory Management
     maxmemory 5632mb
     maxmemory-policy allkeys-lru
-    
+
     # Persistence Configuration
     appendonly yes
     appendfsync everysec
     save 900 1
     save 300 10
     save 60 10000
-    
+
     # Network Settings
     tcp-keepalive 300
     timeout 0
     tcp-backlog 511
     maxclients 10000
-    
+
     # Database Configuration
     databases 16
-    
+
     # Replication Settings
     replica-serve-stale-data yes
     replica-read-only yes
     repl-diskless-sync yes
     repl-diskless-sync-delay 5
-    
+
     # Performance Optimization
     lazyfree-lazy-eviction yes
     lazyfree-lazy-expire yes
     lazyfree-lazy-server-del yes
     replica-lazy-flush yes
-    
+
     # Monitoring and Logging
     slowlog-log-slower-than 10000
     slowlog-max-len 128
     latency-monitor-threshold 100
-    
+
     # Security Settings
-    protected-mode no
-    
+    protected-mode yes
+
     # IPC Settings
     unixsocket /var/run/redis/redis.sock
-    unixsocketperm 777
-    
+    unixsocketperm 700
+
     # Additional Optimizations
     activerehashing yes
     no-appendfsync-on-rewrite yes
-    
-    # Client Output Buffer Limits
+    dynamic-hz yes
+    rdb-save-incremental-fsync yes
+    jemalloc-bg-thread yes
+
+    # Client Output/Input Buffer Limits
     client-output-buffer-limit normal 0 0 0
     client-output-buffer-limit replica 512mb 1024mb 60
     client-output-buffer-limit pubsub 32mb 8mb 60
-    
+
     # Memory Optimizations
-    activedefrag yes
-    active-defrag-ignore-bytes 100mb
-    active-defrag-threshold-lower 10
-    active-defrag-threshold-upper 100
-    active-defrag-cycle-min 1
-    active-defrag-cycle-max 25
-    
-    # IO Settings
-    aof-rewrite-incremental-fsync yes
-    rdb-save-incremental-fsync yes
+    maxmemory-samples 10
+    active-expire-effort 10
+    hz 10

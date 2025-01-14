@@ -1,10 +1,10 @@
 # Environment identifier
 environment = "staging"
 
-# Azure region for resource deployment
+# Azure region for deployment
 location = "eastus2"
 
-# Resource group name
+# Resource group configuration
 resource_group_name = "rg-catalog-search-staging"
 
 # AKS cluster configuration

@@ -1,5 +1,5 @@
-# Kubernetes LimitRange configuration v1.25+
-# Defines container-level resource constraints and defaults for the product-search namespace
+# Kubernetes API version: v1.25+
+# Purpose: Define container-level resource constraints and defaults for the product-search namespace
 apiVersion: v1
 kind: LimitRange
 metadata:

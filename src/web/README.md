@@ -79,146 +79,164 @@ npm run dev
 
 ```
 src/
-├── assets/           # Static assets
-├── components/       # Shared components
-├── features/         # Feature-based modules
-├── hooks/           # Custom React hooks
-├── layouts/         # Page layouts
-├── lib/             # Utility functions
-├── routes/          # Route definitions
-├── services/        # API services
-├── store/           # Redux store
-├── styles/          # Global styles
-└── types/           # TypeScript definitions
+├── assets/          # Static assets
+├── components/      # Shared components
+├── features/        # Feature-based modules
+├── hooks/          # Custom React hooks
+├── layouts/        # Page layouts
+├── lib/            # Utility functions
+├── routes/         # Route definitions
+├── services/       # API services
+├── store/          # Redux store
+├── styles/         # Global styles
+└── types/          # TypeScript definitions
 ```
 
 ### Code Style
 
 - ESLint configuration with TypeScript and React rules
-- Prettier for consistent code formatting
+- Prettier for consistent formatting
 - Import sorting with `@trivago/prettier-plugin-sort-imports`
 - Strict TypeScript configuration
 - React Testing Library best practices
 
-### Testing Guidelines
+### Testing
 
-- Unit tests required for all components
-- Integration tests for feature workflows
-- E2E tests for critical user journeys
-- Minimum 85% test coverage
+- Jest for unit and integration tests
+- React Testing Library for component testing
+- Cypress for E2E testing
+- Required coverage: >85%
 - Snapshot testing for UI components
-- Performance testing with Lighthouse
+- Mock service worker for API testing
 
 ## Docker Development
 
 ### Development Environment
 
-Start the development container:
+1. Build and start development container:
 ```bash
 docker-compose up --build
 ```
 
-The development server will be available at `http://localhost:3000` with hot reload enabled.
+2. Access development server:
+```
+http://localhost:3000
+```
 
 ### Production Build
 
-Build production container:
+1. Build production image:
 ```bash
 docker build -t catalog-search-web:prod --target production .
 ```
 
-Test production build locally:
+2. Test production build locally:
 ```bash
 docker-compose -f docker-compose.prod.yml up
 ```
 
 ## Deployment
 
-### Build Pipeline
+### Azure DevOps Pipeline
 
-1. Code quality checks:
-   - ESLint validation
-   - TypeScript compilation
-   - Unit test execution
-   - Code coverage verification
+1. Build stage:
+- Install dependencies
+- Type checking
+- Linting
+- Unit tests
+- Build production assets
+- Container image build
 
-2. Build process:
-   - Environment-specific builds
-   - Asset optimization
-   - Bundle analysis
-   - Docker image creation
+2. Test stage:
+- Integration tests
+- E2E tests
+- Accessibility tests
+- Performance tests
 
-3. Testing:
-   - Integration tests
-   - E2E tests
-   - Performance benchmarks
-   - Accessibility validation
+3. Security stage:
+- Container scanning
+- Dependency audit
+- SAST analysis
 
-### Deployment Pipeline
+4. Deployment stage:
+- Azure Container Registry push
+- Blue-green deployment
+- Health checks
+- Automated rollback
 
-1. Staging deployment:
-   - Azure Container Registry push
-   - Blue-green deployment
-   - Smoke tests
-   - Performance validation
+### Environment Configuration
 
-2. Production deployment:
-   - Progressive rollout
-   - Health checks
-   - Metrics verification
-   - Automated rollback capability
+Development:
+- Hot module replacement
+- Source maps
+- Redux DevTools
+- Error overlay
 
-### Monitoring
+Staging:
+- Production build
+- Staging API endpoints
+- Test authentication
+- Monitoring enabled
 
-- Azure Application Insights integration
-- Real-time error tracking
-- Performance monitoring
-- User behavior analytics
-- Custom business metrics
+Production:
+- Optimized build
+- CDN integration
+- Error tracking
+- Full monitoring
 
 ## Performance Optimization
 
 - Code splitting with React.lazy
-- Image optimization with next-gen formats
-- Efficient bundle size management
-- Browser caching strategy
-- Service Worker implementation
-- Web Vitals monitoring
+- Image optimization with next/image
+- Bundle size analysis
+- Tree shaking
+- Memoization strategies
+- Service Worker caching
+- Compression (Brotli/Gzip)
 
 ## Accessibility
 
 - WCAG 2.1 Level AA compliance
-- Semantic HTML structure
-- ARIA attributes implementation
-- Keyboard navigation support
-- Screen reader optimization
-- Color contrast verification
+- Semantic HTML
+- ARIA attributes
+- Keyboard navigation
+- Screen reader support
+- Color contrast compliance
+- Focus management
 
-## Security
+## Browser Support
 
-- Azure AD B2C authentication
-- JWT token management
-- XSS prevention
-- CSRF protection
-- Content Security Policy
-- Secure HTTP headers
+- Chrome >= 90
+- Firefox >= 88
+- Safari >= 14
+- Edge >= 90
+- iOS Safari >= 14
+- Android Chrome >= 90
 
 ## Contributing
 
-1. Create feature branch from `develop`
-2. Implement changes with tests
-3. Submit pull request with:
-   - Clear description
-   - Test coverage report
-   - Performance impact analysis
-   - Breaking changes documentation
+1. Create feature branch:
+```bash
+git checkout -b feature/feature-name
+```
+
+2. Commit changes:
+```bash
+git commit -m "feat: add feature description"
+```
+
+3. Push branch:
+```bash
+git push origin feature/feature-name
+```
+
+4. Create pull request with:
+- Feature description
+- Testing evidence
+- Performance impact
+- Breaking changes
+- Screenshots (if applicable)
 
 ## License
 
-Proprietary - All rights reserved
-
-## Support
-
-Contact the development team for support:
-- Email: support@example.com
-- Internal Slack: #catalog-search-support
+Copyright © 2024. All rights reserved.

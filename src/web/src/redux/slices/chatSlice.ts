@@ -1,32 +1,50 @@
+/**
+ * @fileoverview Redux slice for managing chat state with real-time functionality
+ * @version 1.0.0
+ */
+
 import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit'; // v1.9.5
 import { 
   ChatState, 
   WebSocketStatus, 
   Message, 
-  ChatSession,
   MessageRole,
-  UUID
+  ChatSession,
+  NewMessage
 } from '../../types/chat';
+import { UUID } from 'crypto';
 
-// Enhanced error interface for detailed error tracking
+/**
+ * Processing status for messages
+ */
+enum ProcessingStatus {
+  IDLE = 'idle',
+  SENDING = 'sending',
+  DELIVERED = 'delivered',
+  FAILED = 'failed'
+}
+
+/**
+ * Detailed error state interface
+ */
 interface ChatError {
   message: string | null;
   code: string | null;
   details: Record<string, unknown> | null;
 }
 
-// Enhanced loading state interface for granular loading tracking
+/**
+ * Loading states interface for granular tracking
+ */
 interface LoadingState {
   sendMessage: boolean;
   loadHistory: boolean;
 }
 
-// Enhanced initial state with detailed error and loading tracking
-const initialState: ChatState & { 
-  loading: LoadingState; 
-  error: ChatError;
-  wsStatus: WebSocketStatus;
-} = {
+/**
+ * Initial state with enhanced error handling and loading states
+ */
+const initialState: ChatState = {
   currentSession: null,
   sessions: [],
   loading: {
@@ -41,92 +59,86 @@ const initialState: ChatState & {
   }
 };
 
-// Async thunk for sending messages with enhanced error handling
-export const sendMessage = createAsyncThunk(
+/**
+ * Async thunk for sending messages with enhanced error handling
+ */
+export const sendMessage = createAsyncThunk<Message, NewMessage>(
   'chat/sendMessage',
-  async ({ 
-    content, 
-    sessionId, 
-    metadata 
-  }: { 
-    content: string; 
-    sessionId: UUID; 
-    metadata?: Record<string, unknown>; 
-  }, { rejectWithValue }) => {
+  async (message: NewMessage, { rejectWithValue }) => {
     try {
-      // Validate inputs
-      if (!content.trim()) {
-        throw new Error('Message content cannot be empty');
+      const response = await fetch('/api/chat/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        return rejectWithValue({
+          message: error.message,
+          code: error.code,
+          details: error.details
+        });
       }
 
-      // Create message object
-      const message: Partial<Message> = {
-        content,
-        role: MessageRole.USER,
-        sessionId,
-        metadata,
-        timestamp: new Date()
-      };
-
-      // API call would go here
-      // For now, return the message as is
-      return message as Message;
+      return await response.json();
     } catch (error) {
       return rejectWithValue({
-        message: error instanceof Error ? error.message : 'Failed to send message',
-        code: 'SEND_MESSAGE_ERROR',
-        details: { sessionId, timestamp: new Date() }
+        message: 'Failed to send message',
+        code: 'NETWORK_ERROR',
+        details: { error }
       });
     }
   }
 );
 
+/**
+ * Chat slice with enhanced functionality
+ */
 const chatSlice = createSlice({
   name: 'chat',
   initialState,
   reducers: {
-    // Update WebSocket connection status
     updateWebSocketStatus(state, action: PayloadAction<WebSocketStatus>) {
       state.wsStatus = action.payload;
     },
-
-    // Set current chat session
-    setCurrentSession(state, action: PayloadAction<ChatSession | null>) {
+    
+    setCurrentSession(state, action: PayloadAction<ChatSession>) {
       state.currentSession = action.payload;
     },
-
-    // Add new chat session
-    addSession(state, action: PayloadAction<ChatSession>) {
-      state.sessions.push(action.payload);
-    },
-
-    // Update existing chat session
-    updateSession(state, action: PayloadAction<ChatSession>) {
-      const index = state.sessions.findIndex(s => s.id === action.payload.id);
-      if (index !== -1) {
-        state.sessions[index] = action.payload;
+    
+    addMessage(state, action: PayloadAction<Message>) {
+      if (state.currentSession) {
+        state.currentSession.messages.push(action.payload);
       }
     },
-
-    // Clear error state
+    
+    updateMessageStatus(
+      state, 
+      action: PayloadAction<{ messageId: UUID; status: ProcessingStatus }>
+    ) {
+      if (state.currentSession) {
+        const message = state.currentSession.messages.find(
+          m => m.id === action.payload.messageId
+        );
+        if (message) {
+          message.processingStatus = action.payload.status;
+        }
+      }
+    },
+    
     clearError(state) {
       state.error = {
         message: null,
         code: null,
         details: null
       };
-    },
-
-    // Add message to current session
-    addMessage(state, action: PayloadAction<Message>) {
-      if (state.currentSession) {
-        state.currentSession.messages.push(action.payload);
-      }
     }
   },
   extraReducers: (builder) => {
     builder
-      // Handle sendMessage async thunk states
       .addCase(sendMessage.pending, (state) => {
         state.loading.sendMessage = true;
         state.error = {
@@ -143,24 +155,10 @@ const chatSlice = createSlice({
       })
       .addCase(sendMessage.rejected, (state, action) => {
         state.loading.sendMessage = false;
-        state.error = {
-          message: action.payload as string ?? 'Failed to send message',
-          code: 'SEND_MESSAGE_ERROR',
-          details: action.error as Record<string, unknown>
-        };
+        state.error = action.payload as ChatError;
       });
   }
 });
-
-// Export actions
-export const { 
-  updateWebSocketStatus, 
-  setCurrentSession, 
-  addSession, 
-  updateSession, 
-  clearError,
-  addMessage 
-} = chatSlice.actions;
 
 // Selectors
 export const selectCurrentSession = (state: { chat: ChatState }) => 
@@ -175,8 +173,16 @@ export const selectMessageError = (state: { chat: ChatState }) =>
 export const selectMessageLoadingState = (state: { chat: ChatState }) => 
   state.chat.loading;
 
-export const selectSessions = (state: { chat: ChatState }) => 
-  state.chat.sessions;
+export const selectMessages = (state: { chat: ChatState }) => 
+  state.chat.currentSession?.messages ?? [];
 
-// Export reducer
+// Export actions and reducer
+export const { 
+  updateWebSocketStatus, 
+  setCurrentSession, 
+  addMessage, 
+  updateMessageStatus,
+  clearError 
+} = chatSlice.actions;
+
 export default chatSlice.reducer;

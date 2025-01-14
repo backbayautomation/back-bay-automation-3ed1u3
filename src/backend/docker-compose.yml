@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # FastAPI Backend Service
+  # FastAPI Backend Application
   api:
     build:
       context: .
@@ -30,7 +30,7 @@ services:
       resources:
         limits:
           cpus: '2'
-          memory: 4G
+          memory: '4G'
         reservations:
           devices:
             - driver: nvidia
@@ -41,8 +41,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    networks:
+      - backend_network
 
-  # Celery Worker Service
+  # Celery Worker for Async Tasks
   worker:
     build:
       context: .
@@ -51,32 +53,30 @@ services:
     command: celery -A app.worker.celery worker --loglevel=info
     environment:
       - ENVIRONMENT=development
-      - DEBUG=true
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/catalog_search
       - REDIS_URL=redis://cache:6379/0
       - CELERY_BROKER_URL=redis://cache:6379/1
       - CELERY_RESULT_BACKEND=redis://cache:6379/2
     volumes:
       - ./:/app:delegated
     depends_on:
-      - api
       - cache
-      - db
     deploy:
       resources:
         limits:
           cpus: '2'
-          memory: 4G
+          memory: '4G'
         reservations:
           devices:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    networks:
+      - backend_network
 
-  # Redis Cache Service
+  # Redis Cache and Message Broker
   cache:
     image: redis:7.2-alpine
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass redis_password
     ports:
       - "6379:6379"
     volumes:
@@ -86,13 +86,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 2G
+    networks:
+      - backend_network
 
-  # PostgreSQL Database Service
+  # PostgreSQL Database
   db:
     image: postgres:15-alpine
     environment:
@@ -106,13 +103,10 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
-      timeout: 3s
+      timeout: 5s
       retries: 5
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 2G
+    networks:
+      - backend_network
 
 volumes:
   postgres_data:
@@ -121,15 +115,8 @@ volumes:
     name: catalog_search_redis_data
 
 networks:
-  default:
-    name: backend_network
+  backend_network:
     driver: bridge
-    driver_opts:
-      com.docker.network.bridge.name: backend_net
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.28.0.0/16
     internal: true
-    attachable: true
     enable_ipv6: false
+    attachable: true

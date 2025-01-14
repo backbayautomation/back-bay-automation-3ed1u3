@@ -13,24 +13,25 @@ locals {
   # Resource naming convention
   name_prefix = "az-${var.environment}"
   vnet_name   = "${local.name_prefix}-vnet"
-  appgw_name  = "${local.name_prefix}-appgw"
   ddos_name   = "${local.name_prefix}-ddos"
+  appgw_name  = "${local.name_prefix}-appgw"
 
-  # Default tags merged with provided tags
-  default_tags = {
-    Environment     = var.environment
-    ManagedBy      = "terraform"
-    SecurityLevel   = "high"
-    CostCenter     = "networking"
-    LastDeployment = timestamp()
-  }
-  tags = merge(local.default_tags, var.tags)
+  # Common tags for all resources
+  common_tags = merge(var.tags, {
+    Environment = var.environment
+    ManagedBy   = "terraform"
+    Service     = "networking"
+  })
 
   # Computed subnet configurations
-  subnet_config_with_nsg = {
-    for name, config in var.subnet_config : name => merge(config, {
-      nsg_name = "${local.name_prefix}-${name}-nsg"
-    })
+  subnet_configs = {
+    for name, config in var.subnet_config : name => {
+      name                                          = "${local.name_prefix}-subnet-${name}"
+      address_prefix                                = config.address_prefix
+      service_endpoints                             = config.service_endpoints
+      private_endpoint_network_policies_enabled     = config.private_endpoint_network_policies_enabled
+      delegation                                    = config.delegation
+    }
   }
 }
 
@@ -40,7 +41,7 @@ resource "azurerm_network_ddos_protection_plan" "main" {
   name                = local.ddos_name
   location            = var.location
   resource_group_name = var.resource_group_name
-  tags                = local.tags
+  tags                = local.common_tags
 }
 
 # Virtual Network
@@ -58,20 +59,19 @@ resource "azurerm_virtual_network" "main" {
     }
   }
 
-  tags = local.tags
+  tags = local.common_tags
 }
 
 # Subnets
-resource "azurerm_subnet" "subnets" {
-  for_each = var.subnet_config
+resource "azurerm_subnet" "main" {
+  for_each = local.subnet_configs
 
-  name                 = "${local.name_prefix}-${each.key}-subnet"
-  resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.main.name
-  address_prefixes     = [each.value.address_prefix]
-  service_endpoints    = each.value.service_endpoints
-
-  private_endpoint_network_policies_enabled = each.value.private_endpoint_network_policies_enabled
+  name                                          = each.value.name
+  resource_group_name                           = var.resource_group_name
+  virtual_network_name                          = azurerm_virtual_network.main.name
+  address_prefixes                              = [each.value.address_prefix]
+  service_endpoints                             = each.value.service_endpoints
+  private_endpoint_network_policies_enabled     = each.value.private_endpoint_network_policies_enabled
 
   dynamic "delegation" {
     for_each = each.value.delegation != null ? [each.value.delegation] : []
@@ -86,13 +86,13 @@ resource "azurerm_subnet" "subnets" {
 }
 
 # Network Security Groups
-resource "azurerm_network_security_group" "nsgs" {
+resource "azurerm_network_security_group" "main" {
   for_each = var.nsg_rules
 
-  name                = "${local.name_prefix}-${each.key}-nsg"
+  name                = "${local.name_prefix}-nsg-${each.key}"
   location            = var.location
   resource_group_name = var.resource_group_name
-  tags                = local.tags
+  tags                = local.common_tags
 
   dynamic "security_rule" {
     for_each = each.value
@@ -111,20 +111,20 @@ resource "azurerm_network_security_group" "nsgs" {
   }
 }
 
-# NSG Subnet Associations
-resource "azurerm_subnet_network_security_group_association" "nsg_associations" {
+# NSG Associations
+resource "azurerm_subnet_network_security_group_association" "main" {
   for_each = var.nsg_rules
 
-  subnet_id                 = azurerm_subnet.subnets[each.key].id
-  network_security_group_id = azurerm_network_security_group.nsgs[each.key].id
+  subnet_id                 = azurerm_subnet.main[each.key].id
+  network_security_group_id = azurerm_network_security_group.main[each.key].id
 }
 
 # Application Gateway
 resource "azurerm_application_gateway" "main" {
   name                = local.appgw_name
-  location            = var.location
   resource_group_name = var.resource_group_name
-  tags                = local.tags
+  location            = var.location
+  tags                = local.common_tags
 
   sku {
     name     = var.appgw_config.sku.name
@@ -133,47 +133,47 @@ resource "azurerm_application_gateway" "main" {
   }
 
   gateway_ip_configuration {
-    name      = "gateway-ip-config"
-    subnet_id = azurerm_subnet.subnets["appgw"].id
+    name      = "${local.appgw_name}-ip-config"
+    subnet_id = azurerm_subnet.main["appgw"].id
   }
 
   frontend_port {
-    name = "frontend-port"
+    name = "${local.appgw_name}-feport"
     port = var.appgw_config.frontend_port
   }
 
   frontend_ip_configuration {
-    name                          = "frontend-ip-config"
-    subnet_id                     = azurerm_subnet.subnets["appgw"].id
+    name                          = "${local.appgw_name}-feip"
+    subnet_id                     = azurerm_subnet.main["appgw"].id
     private_ip_address_allocation = var.appgw_config.private_ip_allocation != null ? "Static" : "Dynamic"
     private_ip_address           = var.appgw_config.private_ip_allocation != null ? var.appgw_config.private_ip_allocation.private_ip_address : null
   }
 
   backend_address_pool {
-    name = "default-backend-pool"
+    name = "${local.appgw_name}-beap"
   }
 
   backend_http_settings {
-    name                  = "default-http-settings"
+    name                  = "${local.appgw_name}-be-htst"
     cookie_based_affinity = "Disabled"
     port                  = 80
     protocol             = "Http"
-    request_timeout      = 30
+    request_timeout      = 60
   }
 
   http_listener {
-    name                           = "default-listener"
-    frontend_ip_configuration_name = "frontend-ip-config"
-    frontend_port_name            = "frontend-port"
+    name                           = "${local.appgw_name}-httplstn"
+    frontend_ip_configuration_name = "${local.appgw_name}-feip"
+    frontend_port_name            = "${local.appgw_name}-feport"
     protocol                      = "Http"
   }
 
   request_routing_rule {
-    name                       = "default-routing-rule"
+    name                       = "${local.appgw_name}-rqrt"
     rule_type                 = "Basic"
-    http_listener_name        = "default-listener"
-    backend_address_pool_name = "default-backend-pool"
-    backend_http_settings_name = "default-http-settings"
+    http_listener_name        = "${local.appgw_name}-httplstn"
+    backend_address_pool_name = "${local.appgw_name}-beap"
+    backend_http_settings_name = "${local.appgw_name}-be-htst"
     priority                  = 100
   }
 
@@ -216,9 +216,9 @@ output "vnet_id" {
 }
 
 output "subnet_ids" {
-  description = "Map of subnet names to their IDs"
+  description = "Map of subnet names to subnet IDs"
   value       = {
-    for name, subnet in azurerm_subnet.subnets : name => subnet.id
+    for name, subnet in azurerm_subnet.main : name => subnet.id
   }
 }
 
@@ -228,8 +228,8 @@ output "appgw_id" {
 }
 
 output "nsg_ids" {
-  description = "Map of NSG names to their IDs"
+  description = "Map of NSG names to NSG IDs"
   value       = {
-    for name, nsg in azurerm_network_security_group.nsgs : name => nsg.id
+    for name, nsg in azurerm_network_security_group.main : name => nsg.id
   }
 }

@@ -20,12 +20,34 @@ spec:
         tier: cache
         component: distributed-cache
     spec:
+      terminationGracePeriodSeconds: 60
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - redis
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsNonRoot: true
       containers:
       - name: redis
-        image: redis:7.0-alpine  # Latest stable Redis 7.0 Alpine-based image for minimal footprint
+        image: redis:7.0-alpine
+        imagePullPolicy: IfNotPresent
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
         ports:
-        - containerPort: 6379
-          name: redis
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
         resources:
           requests:
             cpu: 500m
@@ -44,11 +66,6 @@ spec:
             secretKeyRef:
               name: redis-secrets
               key: encryption-key
-        command:
-        - redis-server
-        - /etc/redis/redis.conf
-        - --requirepass
-        - $(REDIS_PASSWORD)
         volumeMounts:
         - name: redis-config
           mountPath: /etc/redis
@@ -74,24 +91,17 @@ spec:
           timeoutSeconds: 3
           successThreshold: 1
           failureThreshold: 3
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 999
-          allowPrivilegeEscalation: false
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - redis-cli
+              - shutdown
+              - save
       volumes:
       - name: redis-config
         configMap:
           name: redis-config
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - redis
-            topologyKey: kubernetes.io/hostname
   volumeClaimTemplates:
   - metadata:
       name: redis-data

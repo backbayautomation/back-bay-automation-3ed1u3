@@ -8,7 +8,7 @@ Version: 1.0.0
 
 import logging
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 from fastapi import Request, HTTPException  # version: ^0.100.0
 from fastapi.middleware.base import BaseHTTPMiddleware  # version: ^0.100.0
 from fastapi_limiter import RateLimiter  # version: ^0.1.5
@@ -17,10 +17,9 @@ import redis
 from ..core.security import verify_token
 from ..core.auth import check_permissions
 from ..config import settings
-from ..utils.logging import StructuredLogger
 
-# Initialize structured logger
-logger = StructuredLogger(__name__)
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 # Paths excluded from authentication
 EXCLUDED_PATHS = [
@@ -44,11 +43,11 @@ RATE_LIMIT_WINDOWS = {
     'admin': 3600     # 1 hour
 }
 
-# Rate limit request counts
+# Rate limit counts per window
 RATE_LIMIT_COUNTS = {
     'default': 1000,  # 1000 requests per minute
-    'auth': 5,        # 5 auth attempts per 5 minutes
-    'admin': 10000    # 10000 admin requests per hour
+    'auth': 5,        # 5 attempts per 5 minutes
+    'admin': 10000    # 10000 requests per hour
 }
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -57,7 +56,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, tenant_config: Dict):
         """
         Initialize auth middleware with enhanced security configuration.
-
+        
         Args:
             app: FastAPI application instance
             tenant_config: Multi-tenant configuration dictionary
@@ -65,44 +64,37 @@ class AuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.excluded_paths = set(EXCLUDED_PATHS)
         self.public_paths = set(PUBLIC_PATHS)
-        self.tenant_config = tenant_config
-
-        # Initialize Redis for rate limiting
-        self.redis_client = redis.Redis(
-            host=settings.REDIS_CONFIG["host"],
-            port=settings.REDIS_CONFIG["port"],
-            db=0,
-            decode_responses=True
-        )
-
-        # Initialize rate limiter
+        
+        # Initialize rate limiter with Redis backend
+        redis_url = settings.SECURITY_CONFIG.get('redis_url', 'redis://localhost:6379/0')
         self.rate_limiter = RateLimiter(
-            redis_client=self.redis_client,
+            redis_url=redis_url,
             prefix="rate_limit",
-            default_limits=RATE_LIMIT_COUNTS["default"]
+            expire_time=RATE_LIMIT_WINDOWS['default']
         )
+        
+        # Initialize security logger
+        self.logger = logging.getLogger("security")
+        
+        # Store tenant configuration
+        self.tenant_config = tenant_config
+        
+        # Initialize token cache
+        self.token_cache = redis.Redis.from_url(redis_url, db=1)
 
-        logger.info(
-            "Auth middleware initialized",
-            extra={
-                "excluded_paths": len(self.excluded_paths),
-                "public_paths": len(self.public_paths)
-            }
-        )
-
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """
         Process each request with comprehensive security validation.
-
+        
         Args:
             request: FastAPI request object
             call_next: Next middleware handler
-
+            
         Returns:
-            Response from next middleware or endpoint
-
+            Response: Response from next middleware or endpoint
+            
         Raises:
-            HTTPException: For various security violations
+            HTTPException: For security violations
         """
         start_time = time.time()
         path = request.url.path
@@ -113,77 +105,64 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if path in self.excluded_paths:
                 return await call_next(request)
 
-            # Apply rate limiting for all paths
+            # Apply rate limiting based on path type
             rate_key = self._get_rate_limit_key(path, client_ip)
-            if not await self._check_rate_limit(rate_key):
-                logger.warning(
-                    "Rate limit exceeded",
-                    extra={"path": path, "ip": client_ip}
-                )
-                raise HTTPException(
-                    status_code=429,
-                    detail="Too many requests"
-                )
+            if not await self.rate_limiter.is_allowed(rate_key):
+                self.logger.warning(f"Rate limit exceeded for {client_ip} on {path}")
+                raise HTTPException(status_code=429, detail="Too many requests")
 
             # Allow public paths after rate limiting
             if path in self.public_paths:
                 return await call_next(request)
 
             # Verify authorization header
-            auth_header = request.headers.get("Authorization")
+            auth_header = request.headers.get('Authorization')
             if not auth_header:
-                raise HTTPException(
-                    status_code=401,
-                    detail="Missing authorization header"
-                )
+                raise HTTPException(status_code=401, detail="Missing authorization header")
 
             # Extract and validate token
-            token = await self.verify_auth_header(auth_header)
-            payload = verify_token(token)
-
-            # Extract tenant context
-            tenant_id = request.headers.get("X-Tenant-ID")
-            if not tenant_id and payload.get("tenant_id"):
-                tenant_id = payload["tenant_id"]
+            token = await self.verify_auth_header(auth_header, request.headers.get('X-Tenant-ID'))
+            
+            # Get user data from token
+            user_data = verify_token(token)
+            
+            # Check token revocation
+            if await self._is_token_revoked(token):
+                raise HTTPException(status_code=401, detail="Token has been revoked")
 
             # Validate permissions
-            if not await check_permissions(
-                user=payload,
-                required_roles=self._get_required_roles(path),
-                tenant_id=tenant_id
+            if not await self.check_path_permissions(
+                path,
+                user_data,
+                request.headers.get('X-Tenant-ID')
             ):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Insufficient permissions"
-                )
+                raise HTTPException(status_code=403, detail="Insufficient permissions")
 
-            # Add user and tenant context to request state
-            request.state.user = payload
-            request.state.tenant_id = tenant_id
-
+            # Add user context to request state
+            request.state.user = user_data
+            
             # Process request
             response = await call_next(request)
+            
+            # Add security headers
+            response.headers.update({
+                'X-Frame-Options': 'DENY',
+                'X-Content-Type-Options': 'nosniff',
+                'X-XSS-Protection': '1; mode=block',
+                'Strict-Transport-Security': 'max-age=31536000; includeSubDomains'
+            })
 
-            # Log successful request
-            duration = time.time() - start_time
-            logger.info(
-                "Request processed successfully",
-                extra={
-                    "path": path,
-                    "duration": duration,
-                    "user_id": payload.get("sub"),
-                    "tenant_id": tenant_id
-                }
-            )
-
+            # Log request metrics
+            self._log_request_metrics(request, response, start_time)
+            
             return response
 
         except HTTPException as e:
-            # Log security exceptions
-            logger.warning(
-                "Security violation",
-                extra={
+            self._log_security_event(
+                "security_violation",
+                {
                     "path": path,
+                    "ip": client_ip,
                     "error": str(e),
                     "status_code": e.status_code
                 }
@@ -191,111 +170,137 @@ class AuthMiddleware(BaseHTTPMiddleware):
             raise
 
         except Exception as e:
-            # Log unexpected errors
-            logger.error(
-                "Middleware error",
-                extra={
-                    "path": path,
-                    "error": str(e),
-                    "error_type": type(e).__name__
-                }
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Internal server error"
-            )
+            self.logger.error(f"Middleware error: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal security error")
 
-    async def verify_auth_header(self, auth_header: str) -> str:
+    async def verify_auth_header(self, auth_header: str, tenant_id: Optional[str]) -> str:
         """
         Enhanced verification of Authorization header with security logging.
-
+        
         Args:
             auth_header: Authorization header value
-
+            tenant_id: Optional tenant ID for validation
+            
         Returns:
             str: Validated JWT token
-
+            
         Raises:
-            HTTPException: If header format or token is invalid
+            HTTPException: If header format is invalid
         """
         try:
             scheme, token = auth_header.split()
-            if scheme.lower() != "bearer":
-                raise ValueError("Invalid authorization scheme")
+            if scheme.lower() != 'bearer':
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid authentication scheme"
+                )
+                
+            if not token:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Missing token"
+                )
+
+            # Validate token format
+            if len(token.split('.')) != 3:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid token format"
+                )
+
             return token
-        except ValueError as e:
-            logger.warning(
-                "Invalid auth header",
-                extra={"error": str(e)}
-            )
+
+        except ValueError:
             raise HTTPException(
                 status_code=401,
                 detail="Invalid authorization header format"
             )
 
-    def _get_rate_limit_key(self, path: str, client_ip: str) -> str:
+    async def check_path_permissions(
+        self,
+        path: str,
+        user_data: Dict,
+        tenant_id: Optional[str]
+    ) -> bool:
         """
-        Generate rate limit key based on path and client IP.
-
+        Advanced permission checking with role hierarchy and tenant isolation.
+        
         Args:
             path: Request path
-            client_ip: Client IP address
-
+            user_data: User data from token
+            tenant_id: Optional tenant ID for validation
+            
         Returns:
-            str: Rate limit key
+            bool: True if user has required permissions
         """
-        if path.startswith("/api/v1/auth"):
+        try:
+            # Get required roles for path
+            required_roles = self._get_required_roles(path)
+            
+            # Validate tenant access
+            if tenant_id and user_data.get('tenant_id') != tenant_id:
+                self.logger.warning(f"Tenant mismatch: {user_data.get('tenant_id')} != {tenant_id}")
+                return False
+
+            # Check permissions using auth service
+            has_permission = await check_permissions(
+                user_data,
+                required_roles,
+                tenant_id
+            )
+
+            if not has_permission:
+                self.logger.warning(
+                    f"Permission denied for user {user_data.get('sub')} on path {path}"
+                )
+                
+            return has_permission
+
+        except Exception as e:
+            self.logger.error(f"Permission check error: {str(e)}", exc_info=True)
+            return False
+
+    def _get_rate_limit_key(self, path: str, client_ip: str) -> str:
+        """Generate rate limit key based on path type and client IP."""
+        if path.startswith('/api/v1/auth/'):
             return f"auth:{client_ip}"
-        elif path.startswith("/api/v1/admin"):
+        elif path.startswith('/api/v1/admin/'):
             return f"admin:{client_ip}"
         return f"default:{client_ip}"
 
-    async def _check_rate_limit(self, key: str) -> bool:
-        """
-        Check rate limit for given key.
-
-        Args:
-            key: Rate limit key
-
-        Returns:
-            bool: True if within limit, False if exceeded
-        """
-        try:
-            window = RATE_LIMIT_WINDOWS.get(
-                key.split(":")[0],
-                RATE_LIMIT_WINDOWS["default"]
-            )
-            max_requests = RATE_LIMIT_COUNTS.get(
-                key.split(":")[0],
-                RATE_LIMIT_COUNTS["default"]
-            )
-
-            count = await self.redis_client.incr(key)
-            if count == 1:
-                await self.redis_client.expire(key, window)
-
-            return count <= max_requests
-
-        except Exception as e:
-            logger.error(
-                "Rate limit check failed",
-                extra={"error": str(e)}
-            )
-            # Fail open to prevent blocking legitimate requests
-            return True
+    async def _is_token_revoked(self, token: str) -> bool:
+        """Check if token has been revoked using Redis cache."""
+        return bool(await self.token_cache.get(f"revoked:{token}"))
 
     def _get_required_roles(self, path: str) -> List[str]:
-        """
-        Determine required roles based on request path.
+        """Get required roles for path based on configuration."""
+        if path.startswith('/api/v1/admin/'):
+            return ['system_admin']
+        elif path.startswith('/api/v1/client/'):
+            return ['client_admin', 'regular_user']
+        return ['regular_user']
 
-        Args:
-            path: Request path
+    def _log_security_event(self, event_type: str, event_data: Dict) -> None:
+        """Log security event with enhanced context."""
+        self.logger.info(
+            f"Security event: {event_type}",
+            extra={
+                "event_type": event_type,
+                "timestamp": time.time(),
+                **event_data
+            }
+        )
 
-        Returns:
-            List[str]: List of required role names
-        """
-        if path.startswith("/api/v1/admin"):
-            return ["system_admin"]
-        elif path.startswith("/api/v1/clients"):
-            return ["system_admin", "client_admin"]
-        return ["system_admin", "client_admin", "regular_user"]
+    def _log_request_metrics(self, request: Request, response: Response, start_time: float) -> None:
+        """Log request metrics for monitoring."""
+        duration = time.time() - start_time
+        self.logger.info(
+            "Request metrics",
+            extra={
+                "path": request.url.path,
+                "method": request.method,
+                "status_code": response.status_code,
+                "duration": duration,
+                "client_ip": request.client.host
+            }
+        )

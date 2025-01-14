@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Container, useMediaQuery } from '@mui/material';
 import { styled } from '@mui/material/styles';
+
 import Header from './Header';
 import Footer from './Footer';
 import Sidebar from './Sidebar';
@@ -13,7 +14,7 @@ const LAYOUT_TRANSITIONS = {
   easing: 'theme.transitions.easing.sharp'
 };
 
-// Props interface with strict typing
+// Props interface for MainLayout
 interface MainLayoutProps {
   children: React.ReactNode;
   portalType: 'admin' | 'client';
@@ -26,144 +27,121 @@ const MainContainer = styled(Box)(({ theme }) => ({
   display: 'flex',
   minHeight: '100vh',
   backgroundColor: theme.palette.background.default,
-  transition: theme.transitions.create(['padding-left', 'margin-left'], {
+  transition: theme.transitions.create(['padding-left', 'padding-right'], {
     duration: LAYOUT_TRANSITIONS.duration,
-    easing: theme.transitions.easing.sharp,
+    easing: LAYOUT_TRANSITIONS.easing,
   }),
   '@media (prefers-reduced-motion: reduce)': {
-    transition: 'none',
-  },
+    transition: 'none'
+  }
 }));
 
 const ContentContainer = styled(Container)(({ theme }) => ({
   flexGrow: 1,
   padding: theme.spacing(3),
-  marginTop: '64px', // Header height
-  minHeight: `calc(100vh - 64px - ${theme.spacing(6)})`, // Account for header and footer
-  transition: theme.transitions.create('margin', {
+  marginTop: 64, // Header height
+  minHeight: `calc(100vh - 64px - 48px)`, // Viewport - Header - Footer
+  transition: theme.transitions.create(['margin', 'padding'], {
     duration: LAYOUT_TRANSITIONS.duration,
-    easing: theme.transitions.easing.sharp,
+    easing: LAYOUT_TRANSITIONS.easing,
   }),
   [theme.breakpoints.down('sm')]: {
     padding: theme.spacing(2),
+    marginLeft: 0
   },
   '@media (prefers-reduced-motion: reduce)': {
-    transition: 'none',
-  },
+    transition: 'none'
+  }
 }));
 
-// Error boundary for layout component
-class LayoutErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false };
-  }
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: Error): void {
-    console.error('Layout Error:', error);
-  }
-
-  render(): React.ReactNode {
-    if (this.state.hasError) {
-      return (
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100vh',
-            p: 3,
-          }}
-        >
-          <h1>Something went wrong with the layout. Please refresh the page.</h1>
-        </Box>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-// Memoized MainLayout component
-const MainLayout: React.FC<MainLayoutProps> = React.memo(({
+// Main layout component with memoization
+const MainLayout = React.memo<MainLayoutProps>(({
   children,
   portalType,
   className,
-  analyticsEnabled = false,
+  analyticsEnabled = false
 }) => {
-  // State and responsive hooks
+  // State and hooks
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const isMobile = useMediaQuery(`(max-width:${MOBILE_BREAKPOINT}px)`);
 
-  // Reset sidebar state on mobile/desktop switch
+  // Close sidebar on mobile by default
   useEffect(() => {
     setIsSidebarOpen(!isMobile);
   }, [isMobile]);
 
-  // Memoized sidebar toggle handler
+  // Handle sidebar toggle with analytics
   const handleSidebarToggle = useCallback(() => {
     setIsSidebarOpen(prev => !prev);
+    if (analyticsEnabled) {
+      // Track sidebar interaction
+      try {
+        window.gtag?.('event', 'sidebar_toggle', {
+          portal_type: portalType,
+          is_mobile: isMobile,
+          action: isSidebarOpen ? 'close' : 'open'
+        });
+      } catch (error) {
+        console.error('Analytics error:', error);
+      }
+    }
+  }, [isSidebarOpen, portalType, isMobile, analyticsEnabled]);
+
+  // Error boundary for layout components
+  const handleLayoutError = useCallback((error: Error) => {
+    console.error('Layout error:', error);
+    // Attempt recovery by resetting sidebar state
+    setIsSidebarOpen(false);
   }, []);
 
-  // Analytics tracking for layout interactions
-  useEffect(() => {
-    if (analyticsEnabled) {
-      // Track layout mount
-      const trackLayoutMount = async () => {
-        try {
-          await fetch('/api/analytics/layout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              event: 'layout_mount',
-              portalType,
-              viewport: isMobile ? 'mobile' : 'desktop',
-            }),
-          });
-        } catch (error) {
-          console.error('Analytics Error:', error);
-        }
-      };
-      trackLayoutMount();
-    }
-  }, [analyticsEnabled, portalType, isMobile]);
-
   return (
-    <LayoutErrorBoundary>
-      <MainContainer className={className}>
-        <Header
-          onToggleSidebar={handleSidebarToggle}
-          portalType={portalType}
-        />
-        
-        <Sidebar
-          isOpen={isSidebarOpen}
-          onClose={() => setIsSidebarOpen(false)}
-          variant={isMobile ? 'temporary' : 'persistent'}
-          items={[]} // Navigation items should be passed from parent
-          persistent={!isMobile}
-        />
+    <MainContainer 
+      className={className}
+      role="main"
+      aria-label={`${portalType === 'admin' ? 'Admin' : 'Client'} Portal Layout`}
+    >
+      <Header
+        portalType={portalType}
+        onToggleSidebar={handleSidebarToggle}
+      />
+      
+      <Sidebar
+        isOpen={isSidebarOpen}
+        onClose={handleSidebarToggle}
+        variant={isMobile ? 'temporary' : 'persistent'}
+        items={[]} // Navigation items to be passed from parent
+        persistent={!isMobile}
+        allowedRoles={[]} // Roles to be passed from parent
+        onNavigate={(path) => {
+          if (isMobile) {
+            setIsSidebarOpen(false);
+          }
+          if (analyticsEnabled) {
+            try {
+              window.gtag?.('event', 'navigation', {
+                portal_type: portalType,
+                path
+              });
+            } catch (error) {
+              console.error('Analytics error:', error);
+            }
+          }
+        }}
+      />
 
-        <ContentContainer
-          maxWidth={false}
-          sx={{
-            marginLeft: {
-              sm: isSidebarOpen ? `${DRAWER_WIDTH}px` : 0,
-            },
-            width: {
-              sm: isSidebarOpen ? `calc(100% - ${DRAWER_WIDTH}px)` : '100%',
-            },
-          }}
-        >
-          {children}
-        </ContentContainer>
+      <ContentContainer
+        maxWidth={false}
+        sx={{
+          marginLeft: {
+            sm: isSidebarOpen ? `${DRAWER_WIDTH}px` : 0
+          }
+        }}
+      >
+        {children}
+      </ContentContainer>
 
-        <Footer />
-      </MainContainer>
-    </LayoutErrorBoundary>
+      <Footer />
+    </MainContainer>
   );
 });
 
