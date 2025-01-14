@@ -1,4 +1,4 @@
-# Terraform configuration for staging environment of AI-powered Product Catalog Search System
+# Terraform configuration for staging environment
 # Version: 1.0
 # Provider Versions:
 # - terraform: ~> 1.0
@@ -12,14 +12,7 @@ terraform {
     resource_group_name  = "rg-terraform-state"
     storage_account_name = "stterraformstaging"
     container_name      = "tfstate"
-    key                 = "staging.terraform.tfstate"
-  }
-
-  required_providers {
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
-    }
+    key                = "staging.terraform.tfstate"
   }
 }
 
@@ -30,17 +23,22 @@ provider "azurerm" {
       purge_soft_delete_on_destroy = true
       recover_soft_deleted_key_vaults = true
     }
+    
+    virtual_machine {
+      delete_os_disk_on_deletion = true
+      graceful_shutdown = true
+    }
   }
 }
 
-# Main module configuration for staging environment
+# Deploy main infrastructure module with staging-specific configurations
 module "main" {
   source = "../../"
 
-  # Environment configuration
-  environment           = "staging"
-  location             = "eastus2"
-  resource_group_name  = "rg-catalog-search-staging"
+  # Core configuration
+  environment          = "staging"
+  location            = "eastus2"
+  resource_group_name = "rg-catalog-search-staging"
 
   # AKS configuration
   aks_config = {
@@ -77,7 +75,7 @@ module "main" {
       consistency_level        = "Session"
       enable_automatic_failover = true
       backup_interval_minutes   = 240
-      backup_retention_hours    = 24
+      backup_retention_hours   = 24
     }
   }
 
@@ -141,24 +139,24 @@ module "main" {
 
   # Resource tags
   tags = {
-    Environment         = "Staging"
-    Project            = "Catalog-Search"
-    Owner              = "Platform-Team"
-    CostCenter         = "IT-12345"
-    SecurityLevel      = "High"
+    Environment        = "Staging"
+    Project           = "Catalog-Search"
+    Owner             = "Platform-Team"
+    CostCenter        = "IT-12345"
+    SecurityLevel     = "High"
     DataClassification = "Confidential"
   }
 }
 
-# Output definitions
+# Output staging environment resource details
 output "resource_group_name" {
   value       = module.main.resource_group_name
-  description = "The name of the staging resource group"
+  description = "Staging environment resource group name"
 }
 
 output "aks_cluster_id" {
   value       = module.main.aks_cluster_details.id
-  description = "The ID of the staging AKS cluster"
+  description = "Staging AKS cluster ID"
   sensitive   = true
 }
 
@@ -167,6 +165,6 @@ output "database_connection_strings" {
     sql    = module.main.database_connection_details.sql_connection_string
     cosmos = module.main.database_connection_details.cosmos_connection_string
   }
-  description = "Database connection strings for the staging environment"
+  description = "Staging environment database connection strings"
   sensitive   = true
 }
