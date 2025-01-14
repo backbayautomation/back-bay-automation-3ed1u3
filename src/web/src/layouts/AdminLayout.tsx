@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useCallback } from 'react';
 import { Navigate } from 'react-router-dom';
 import { withErrorBoundary } from 'react-error-boundary';
 import { Analytics } from '@analytics/react';
@@ -9,10 +9,11 @@ import {
   Settings,
   Analytics as AnalyticsIcon
 } from '@mui/icons-material';
+
 import MainLayout from '../components/common/Layout/MainLayout';
 import { useAuth } from '../hooks/useAuth';
 
-// Navigation items for admin portal with role-based access control
+// Admin navigation items with role-based access control
 const ADMIN_NAV_ITEMS = [
   {
     id: 'dashboard',
@@ -56,87 +57,111 @@ const ADMIN_NAV_ITEMS = [
   }
 ];
 
-// Props interface with strict typing
+// Props interface for AdminLayout
 interface AdminLayoutProps {
   children: React.ReactNode;
   className?: string;
 }
 
-// Enhanced admin layout with security and analytics
-const AdminLayout: React.FC<AdminLayoutProps> = withErrorBoundary(
-  ({ children, className }) => {
-    const { isAuthenticated, user, hasRole } = useAuth();
+/**
+ * Enhanced AdminLayout component with security, analytics, and error handling
+ */
+const AdminLayout: React.FC<AdminLayoutProps> = ({ children, className }) => {
+  // Authentication and authorization hooks
+  const { isAuthenticated, user, hasRole } = useAuth();
 
-    // Track admin portal access
-    useEffect(() => {
-      Analytics.track('admin_portal_access', {
+  // Analytics instance for tracking admin portal usage
+  const analytics = useMemo(() => new Analytics({
+    app: 'admin-portal',
+    version: '1.0.0',
+    debug: process.env.NODE_ENV === 'development'
+  }), []);
+
+  // Track admin portal access attempts
+  useEffect(() => {
+    analytics.track('admin_portal_access', {
+      authenticated: isAuthenticated,
+      userId: user?.id,
+      timestamp: new Date().toISOString()
+    });
+
+    return () => {
+      analytics.flush();
+    };
+  }, [analytics, isAuthenticated, user]);
+
+  // Handle navigation with analytics tracking
+  const handleNavigation = useCallback((path: string) => {
+    const navItem = ADMIN_NAV_ITEMS.find(item => item.path === path);
+    if (navItem?.analytics) {
+      analytics.track(navItem.analytics, {
         userId: user?.id,
-        timestamp: new Date().toISOString(),
-        success: isAuthenticated && hasRole('admin')
-      });
-
-      return () => {
-        Analytics.track('admin_portal_exit', {
-          userId: user?.id,
-          timestamp: new Date().toISOString()
-        });
-      };
-    }, [isAuthenticated, user, hasRole]);
-
-    // Verify authentication and admin role
-    if (!isAuthenticated || !hasRole('admin')) {
-      Analytics.track('unauthorized_admin_access', {
-        userId: user?.id,
+        path,
         timestamp: new Date().toISOString()
       });
-      return <Navigate to="/login" replace state={{ from: '/admin' }} />;
     }
+  }, [analytics, user]);
 
-    // Filter navigation items based on user roles
-    const filteredNavItems = useMemo(() => {
-      return ADMIN_NAV_ITEMS.filter(item =>
-        item.roles.some(role => hasRole(role))
-      );
-    }, [hasRole]);
+  // Verify admin access
+  if (!isAuthenticated || !hasRole('admin')) {
+    analytics.track('admin_access_denied', {
+      userId: user?.id,
+      reason: !isAuthenticated ? 'not_authenticated' : 'insufficient_permissions',
+      timestamp: new Date().toISOString()
+    });
 
-    return (
-      <MainLayout
-        portalType="admin"
-        className={className}
-        analyticsEnabled={true}
-      >
-        <div
-          role="main"
-          aria-label="Admin Portal Content"
-          style={{
-            width: '100%',
-            height: '100%',
-            display: 'flex',
-            flexDirection: 'column'
-          }}
-        >
-          {children}
-        </div>
-      </MainLayout>
-    );
-  },
-  {
-    fallback: (
-      <div role="alert" aria-label="Error Boundary">
-        An error occurred in the admin portal. Please refresh the page.
-      </div>
-    ),
-    onError: (error) => {
-      Analytics.track('admin_portal_error', {
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
-      console.error('Admin Portal Error:', error);
-    }
+    return <Navigate to="/login" replace state={{ from: window.location.pathname }} />;
   }
-);
 
-// Display name for debugging
-AdminLayout.displayName = 'AdminLayout';
+  // Filter navigation items based on user roles
+  const filteredNavItems = useMemo(() => {
+    return ADMIN_NAV_ITEMS.filter(item => 
+      item.roles.some(role => hasRole(role))
+    );
+  }, [hasRole]);
 
-export default AdminLayout;
+  return (
+    <MainLayout
+      portalType="admin"
+      className={className}
+      analyticsEnabled={true}
+    >
+      <nav aria-label="Admin navigation">
+        {filteredNavItems.map(item => (
+          <div key={item.id} role="menuitem">
+            {item.icon}
+            {item.label}
+          </div>
+        ))}
+      </nav>
+      {children}
+    </MainLayout>
+  );
+};
+
+// Error boundary wrapper for admin layout
+const AdminLayoutWithErrorBoundary = withErrorBoundary(AdminLayout, {
+  fallback: (
+    <div role="alert" className="error-boundary">
+      <h2>Admin Portal Error</h2>
+      <p>An error occurred while loading the admin portal. Please try refreshing the page.</p>
+    </div>
+  ),
+  onError: (error) => {
+    console.error('Admin Layout Error:', error);
+    // Track error in analytics
+    const analytics = new Analytics({
+      app: 'admin-portal',
+      version: '1.0.0'
+    });
+    analytics.track('admin_portal_error', {
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Set display name for debugging
+AdminLayoutWithErrorBoundary.displayName = 'AdminLayout';
+
+export default AdminLayoutWithErrorBoundary;
