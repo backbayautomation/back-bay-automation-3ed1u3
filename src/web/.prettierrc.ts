@@ -1,5 +1,12 @@
-// Prettier configuration v3.0.0
-// Optimized for TypeScript 5.0+ and React enterprise applications
+// @prettier/plugin-typescript ^3.0.0 - Core code formatting library with TypeScript and React support
+
+/**
+ * Prettier Configuration
+ * Optimized for TypeScript 5.0+ and React components in enterprise applications
+ * 
+ * This configuration enforces consistent code formatting standards across the codebase
+ * while maintaining high readability and maintainability standards.
+ */
 
 import type { Config } from 'prettier';
 
@@ -13,13 +20,13 @@ const prettierConfig: Config = {
   // Use spaces instead of tabs for consistent rendering
   useTabs: false,
 
-  // Always use semicolons for statement termination
+  // Always use semicolons for clear statement termination
   semi: true,
 
   // Use single quotes for string literals
   singleQuote: true,
 
-  // ES5-compatible trailing commas for cleaner git diffs
+  // Use ES5 trailing comma style for cleaner git diffs
   trailingComma: 'es5',
 
   // Add spaces between brackets in object literals
