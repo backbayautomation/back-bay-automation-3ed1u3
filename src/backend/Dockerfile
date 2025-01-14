@@ -1,45 +1,45 @@
 # Builder stage
 FROM python:3.11-slim AS builder
 
-# Install system build dependencies
-RUN apt-get update && apt-get install -y \
+# Set build arguments and environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    POETRY_VERSION=1.5.1 \
+    POETRY_HOME="/opt/poetry" \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
-ENV POETRY_VERSION=1.5.1
-ENV POETRY_HOME=/opt/poetry
 RUN curl -sSL https://install.python-poetry.org | python3 - \
     && ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry
-
-# Configure Poetry
-ENV POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_CREATE=false \
-    POETRY_CACHE_DIR=/tmp/poetry_cache
 
 # Set working directory
 WORKDIR /app
 
 # Copy dependency files
-COPY --chown=root:root pyproject.toml poetry.lock ./
+COPY pyproject.toml poetry.lock ./
 
 # Install dependencies
-RUN poetry install --no-dev --no-root \
-    && rm -rf /tmp/poetry_cache
+RUN poetry install --no-dev --no-root
 
 # Copy application code
-COPY --chown=root:root app ./app
+COPY . .
 
 # Generate optimized bytecode
-RUN python -m compileall ./app
+RUN python -m compileall /app
 
 # Runtime stage
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 AS runtime
 
 # Install Python and required system libraries
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-distutils \
     python3-pip \
@@ -49,24 +49,23 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user and group
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
-# Set up application directories
-RUN mkdir -p /app/data /app/tmp \
-    && chown -R appuser:appuser /app
-
-# Set working directory
-WORKDIR /app
-
-# Copy built artifacts from builder
-COPY --from=builder --chown=appuser:appuser /app /app
-COPY --from=builder --chown=appuser:appuser /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-
-# Environment variables
+# Set environment variables
 ENV PYTHONPATH=/app \
     PYTHONUNBUFFERED=1 \
     PORT=8000 \
     NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    PYTHONDONTWRITEBYTECODE=1
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Create application directories
+RUN mkdir -p /app/data /tmp/app_cache \
+    && chown -R appuser:appuser /app /tmp/app_cache
+
+# Copy built artifacts from builder stage
+COPY --from=builder --chown=appuser:appuser /app /app
+COPY --from=builder --chown=appuser:appuser /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+
+# Set working directory
+WORKDIR /app
 
 # Switch to non-root user
 USER appuser
@@ -74,17 +73,17 @@ USER appuser
 # Expose port
 EXPOSE 8000
 
-# Volume configuration
+# Set up volumes
 VOLUME ["/app/data", "/tmp"]
+
+# Configure resource limits
+ENV NVIDIA_REQUIRE_CUDA="cuda>=11.8" \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
-
-# Resource limits
-ENV NVIDIA_VISIBLE_DEVICES=all \
-    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
-    NVIDIA_REQUIRE_CUDA="cuda>=11.8"
 
 # Labels
 LABEL maintainer="AI Product Catalog Team" \
@@ -92,7 +91,7 @@ LABEL maintainer="AI Product Catalog Team" \
       description="AI-powered Product Catalog Search System Backend" \
       gpu.support="required"
 
-# Entry point
+# Entry point with optimized settings
 ENTRYPOINT ["gunicorn"]
 CMD ["app.main:app", \
      "--workers=4", \
