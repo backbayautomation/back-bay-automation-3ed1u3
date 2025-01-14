@@ -1,6 +1,6 @@
 /**
- * Advanced browser storage utility module providing secure, type-safe storage operations
- * with encryption, compression, and comprehensive error handling.
+ * Advanced browser storage utility module with encryption, compression, and type safety.
+ * Provides secure storage operations with quota management and multi-tenant support.
  * @version 1.0.0
  */
 
@@ -29,7 +29,7 @@ export enum StorageType {
 export interface StorageOptions {
   encrypt?: boolean;
   compress?: boolean;
-  expiresIn?: number; // Expiration time in milliseconds
+  expiresIn?: number; // Milliseconds
 }
 
 /**
@@ -53,10 +53,10 @@ interface StorageQuota {
 }
 
 /**
- * Storage item wrapper containing data and metadata
+ * Storage item wrapper
  */
 interface StorageItem<T> {
-  data: T;
+  data: string;
   metadata: StorageMetadata;
 }
 
@@ -111,11 +111,11 @@ const compressData = (data: string): string => {
 const decompressData = (compressed: string): string => {
   const data = Buffer.from(compressed, 'base64');
   const decompressed = pako.inflate(data);
-  return new TextDecoder().decode(decompressed);
+  return Buffer.from(decompressed).toString();
 };
 
 /**
- * Sets data in localStorage with encryption, compression, and expiration
+ * Sets data in localStorage with encryption and compression support
  */
 export const setLocalStorage = <T>(
   key: string,
@@ -126,16 +126,15 @@ export const setLocalStorage = <T>(
   if (!validation.success) return validation;
 
   try {
-    const prefixedKey = `${STORAGE_PREFIX}${key}`;
-    let serializedData = JSON.stringify(value);
-
     const metadata: StorageMetadata = {
       version: STORAGE_VERSION,
       timestamp: Date.now(),
       expiresAt: Date.now() + (options.expiresIn || DEFAULT_EXPIRATION),
-      encrypted: options.encrypt || false,
-      compressed: options.compress || false
+      encrypted: !!options.encrypt,
+      compressed: !!options.compress
     };
+
+    let serializedData = JSON.stringify(value);
 
     if (options.compress) {
       serializedData = compressData(serializedData);
@@ -145,19 +144,27 @@ export const setLocalStorage = <T>(
       serializedData = encryptData(serializedData);
     }
 
-    const storageItem: StorageItem<string> = {
+    const storageItem: StorageItem<T> = {
       data: serializedData,
       metadata
     };
 
-    localStorage.setItem(prefixedKey, JSON.stringify(storageItem));
+    const storageKey = `${STORAGE_PREFIX}${key}`;
+    localStorage.setItem(storageKey, JSON.stringify(storageItem));
 
-    return { success: true, data: void 0, error: null, message: null, statusCode: 200, metadata: {} };
+    return {
+      success: true,
+      data: void 0,
+      error: null,
+      message: 'Data stored successfully',
+      statusCode: 200,
+      metadata: {}
+    };
   } catch (error) {
     return {
       success: false,
       data: void 0,
-      error: 'Storage operation failed',
+      error: 'Failed to store data',
       message: error instanceof Error ? error.message : 'Unknown error',
       statusCode: 500,
       metadata: {}
@@ -166,23 +173,37 @@ export const setLocalStorage = <T>(
 };
 
 /**
- * Retrieves and processes data from localStorage
+ * Retrieves data from localStorage with automatic decryption and decompression
  */
 export const getLocalStorage = <T>(key: string): ApiResponse<T | null> => {
   try {
-    const prefixedKey = `${STORAGE_PREFIX}${key}`;
-    const rawItem = localStorage.getItem(prefixedKey);
+    const storageKey = `${STORAGE_PREFIX}${key}`;
+    const rawItem = localStorage.getItem(storageKey);
 
     if (!rawItem) {
-      return { success: true, data: null, error: null, message: 'Item not found', statusCode: 404, metadata: {} };
+      return {
+        success: true,
+        data: null,
+        error: null,
+        message: 'Item not found',
+        statusCode: 404,
+        metadata: {}
+      };
     }
 
-    const storageItem: StorageItem<string> = JSON.parse(rawItem);
+    const storageItem: StorageItem<T> = JSON.parse(rawItem);
     const { data, metadata } = storageItem;
 
-    if (Date.now() > metadata.expiresAt) {
-      localStorage.removeItem(prefixedKey);
-      return { success: true, data: null, error: null, message: 'Item expired', statusCode: 404, metadata: {} };
+    if (metadata.expiresAt < Date.now()) {
+      localStorage.removeItem(storageKey);
+      return {
+        success: true,
+        data: null,
+        error: null,
+        message: 'Item expired',
+        statusCode: 404,
+        metadata: {}
+      };
     }
 
     let processedData = data;
@@ -195,14 +216,19 @@ export const getLocalStorage = <T>(key: string): ApiResponse<T | null> => {
       processedData = decompressData(processedData);
     }
 
-    const parsedData = JSON.parse(processedData) as T;
-
-    return { success: true, data: parsedData, error: null, message: null, statusCode: 200, metadata };
+    return {
+      success: true,
+      data: JSON.parse(processedData) as T,
+      error: null,
+      message: 'Data retrieved successfully',
+      statusCode: 200,
+      metadata: {}
+    };
   } catch (error) {
     return {
       success: false,
       data: null,
-      error: 'Failed to retrieve storage item',
+      error: 'Failed to retrieve data',
       message: error instanceof Error ? error.message : 'Unknown error',
       statusCode: 500,
       metadata: {}
@@ -211,7 +237,7 @@ export const getLocalStorage = <T>(key: string): ApiResponse<T | null> => {
 };
 
 /**
- * Sets data in sessionStorage with encryption and compression
+ * Sets data in sessionStorage with encryption and compression support
  */
 export const setSessionStorage = <T>(
   key: string,
@@ -222,16 +248,15 @@ export const setSessionStorage = <T>(
   if (!validation.success) return validation;
 
   try {
-    const prefixedKey = `${STORAGE_PREFIX}${key}`;
-    let serializedData = JSON.stringify(value);
-
     const metadata: StorageMetadata = {
       version: STORAGE_VERSION,
       timestamp: Date.now(),
       expiresAt: Date.now() + (options.expiresIn || DEFAULT_EXPIRATION),
-      encrypted: options.encrypt || false,
-      compressed: options.compress || false
+      encrypted: !!options.encrypt,
+      compressed: !!options.compress
     };
+
+    let serializedData = JSON.stringify(value);
 
     if (options.compress) {
       serializedData = compressData(serializedData);
@@ -241,19 +266,27 @@ export const setSessionStorage = <T>(
       serializedData = encryptData(serializedData);
     }
 
-    const storageItem: StorageItem<string> = {
+    const storageItem: StorageItem<T> = {
       data: serializedData,
       metadata
     };
 
-    sessionStorage.setItem(prefixedKey, JSON.stringify(storageItem));
+    const storageKey = `${STORAGE_PREFIX}${key}`;
+    sessionStorage.setItem(storageKey, JSON.stringify(storageItem));
 
-    return { success: true, data: void 0, error: null, message: null, statusCode: 200, metadata: {} };
+    return {
+      success: true,
+      data: void 0,
+      error: null,
+      message: 'Data stored successfully',
+      statusCode: 200,
+      metadata: {}
+    };
   } catch (error) {
     return {
       success: false,
       data: void 0,
-      error: 'Session storage operation failed',
+      error: 'Failed to store data',
       message: error instanceof Error ? error.message : 'Unknown error',
       statusCode: 500,
       metadata: {}
@@ -262,7 +295,7 @@ export const setSessionStorage = <T>(
 };
 
 /**
- * Monitors storage quota and triggers cleanup if needed
+ * Monitors storage quota usage and triggers cleanup if needed
  */
 export const monitorStorageQuota = (type: StorageType): ApiResponse<StorageQuota> => {
   try {
@@ -271,8 +304,11 @@ export const monitorStorageQuota = (type: StorageType): ApiResponse<StorageQuota
 
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
-      if (key?.startsWith(STORAGE_PREFIX)) {
-        totalSize += storage.getItem(key)?.length || 0;
+      if (key && key.startsWith(STORAGE_PREFIX)) {
+        const value = storage.getItem(key);
+        if (value) {
+          totalSize += value.length;
+        }
       }
     }
 
@@ -286,12 +322,19 @@ export const monitorStorageQuota = (type: StorageType): ApiResponse<StorageQuota
       cleanExpiredItems(type);
     }
 
-    return { success: true, data: quota, error: null, message: null, statusCode: 200, metadata: {} };
+    return {
+      success: true,
+      data: quota,
+      error: null,
+      message: 'Storage quota calculated',
+      statusCode: 200,
+      metadata: {}
+    };
   } catch (error) {
     return {
       success: false,
       data: { used: 0, available: 0, percentage: 0 },
-      error: 'Failed to monitor storage quota',
+      error: 'Failed to calculate storage quota',
       message: error instanceof Error ? error.message : 'Unknown error',
       statusCode: 500,
       metadata: {}
@@ -302,18 +345,19 @@ export const monitorStorageQuota = (type: StorageType): ApiResponse<StorageQuota
 /**
  * Removes expired items from storage
  */
-const cleanExpiredItems = (type: StorageType): ApiResponse<number> => {
+export const cleanExpiredItems = (type: StorageType): ApiResponse<number> => {
   try {
     const storage = window[type];
     let cleanedCount = 0;
+    const now = Date.now();
 
     for (let i = 0; i < storage.length; i++) {
       const key = storage.key(i);
-      if (key?.startsWith(STORAGE_PREFIX)) {
+      if (key && key.startsWith(STORAGE_PREFIX)) {
         const rawItem = storage.getItem(key);
         if (rawItem) {
-          const storageItem: StorageItem<string> = JSON.parse(rawItem);
-          if (Date.now() > storageItem.metadata.expiresAt) {
+          const storageItem: StorageItem<unknown> = JSON.parse(rawItem);
+          if (storageItem.metadata.expiresAt < now) {
             storage.removeItem(key);
             cleanedCount++;
           }
@@ -321,7 +365,14 @@ const cleanExpiredItems = (type: StorageType): ApiResponse<number> => {
       }
     }
 
-    return { success: true, data: cleanedCount, error: null, message: null, statusCode: 200, metadata: {} };
+    return {
+      success: true,
+      data: cleanedCount,
+      error: null,
+      message: `Cleaned ${cleanedCount} expired items`,
+      statusCode: 200,
+      metadata: {}
+    };
   } catch (error) {
     return {
       success: false,
