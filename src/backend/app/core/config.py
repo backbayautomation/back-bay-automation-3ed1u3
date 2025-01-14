@@ -111,18 +111,14 @@ class Settings(BaseSettings):
         }
     }
 
-    # Vector search configuration based on environment
+    # Vector search configuration based on technical specifications
     VECTOR_SEARCH_CONFIG: Dict[str, Any] = {
         'dimension': 1536,
         'similarity_threshold': 0.8,
         'top_k_results': 5,
+        'context_window_size': 8192,
         'batch_size': 32,
-        'distance_metric': 'cosine',
-        'index_settings': {
-            'development': {'nprobe': 8, 'ef_search': 100},
-            'staging': {'nprobe': 16, 'ef_search': 200},
-            'production': {'nprobe': 32, 'ef_search': 400}
-        }
+        'distance_metric': 'cosine'
     }
 
     # Security configuration
@@ -132,11 +128,12 @@ class Settings(BaseSettings):
         'access_token_expire_minutes': 30,
         'refresh_token_expire_days': 7,
         'password_hash_algorithm': 'bcrypt',
-        'min_password_length': 12,
+        'minimum_password_length': 12,
         'require_special_characters': True,
-        'cors_origins': os.getenv('CORS_ORIGINS', '').split(','),
-        'rate_limit_requests': 1000,
-        'rate_limit_period': 3600
+        'cors_origins': ['*'] if ENV == 'development' else [
+            'https://catalog-search-staging.azurewebsites.net',
+            'https://catalog-search-prod.azurewebsites.net'
+        ]
     }
 
     # Logging configuration
@@ -161,7 +158,7 @@ class Settings(BaseSettings):
                 'maxBytes': 10485760,  # 10MB
                 'backupCount': 5,
                 'level': 'INFO'
-            }
+            } if ENV != 'development' else None
         },
         'root': {
             'level': 'DEBUG' if DEBUG else 'INFO',
@@ -182,48 +179,35 @@ class Settings(BaseSettings):
     def get_azure_settings(self) -> Dict[str, Any]:
         """Returns validated Azure service configuration."""
         azure_config = self.AZURE_CONFIG.copy()
-        # Add environment-specific configurations
-        if self.ENVIRONMENT == 'production':
+        if self.ENVIRONMENT != 'development':
             azure_config.update({
-                'redis_cache': os.getenv('AZURE_REDIS_CONNECTION_STRING'),
-                'cdn_endpoint': os.getenv('AZURE_CDN_ENDPOINT')
+                'redis_connection_string': os.getenv('AZURE_REDIS_CONNECTION_STRING'),
+                'service_bus_connection_string': os.getenv('AZURE_SERVICE_BUS_CONNECTION_STRING')
             })
         return azure_config
 
     def get_vector_search_settings(self) -> Dict[str, Any]:
         """Returns optimized vector search configuration."""
-        config = self.VECTOR_SEARCH_CONFIG.copy()
-        config.update({
-            'index_settings': config['index_settings'][self.ENVIRONMENT]
-        })
-        return config
+        vector_config = self.VECTOR_SEARCH_CONFIG.copy()
+        if self.ENVIRONMENT == 'production':
+            vector_config.update({
+                'cache_ttl': 86400,  # 24 hours
+                'max_cache_size': 10737418240  # 10GB
+            })
+        return vector_config
 
     def configure_logging(self) -> None:
         """Configures application-wide logging with JSON formatting."""
-        # Create logs directory if it doesn't exist
-        log_dir = os.path.join(BASE_DIR, 'logs')
-        os.makedirs(log_dir, exist_ok=True)
-
-        # Configure logging
         logging.config.dictConfig(self.LOGGING_CONFIG)
-
-        # Set default logging level
-        logging.getLogger().setLevel(logging.DEBUG if self.DEBUG else logging.INFO)
-
-        # Log initial configuration
-        logging.info(
-            "Application logging configured",
-            extra={
-                'environment': self.ENVIRONMENT,
-                'debug_mode': self.DEBUG,
-                'log_level': 'DEBUG' if self.DEBUG else 'INFO'
-            }
-        )
-
-    class Config:
-        env_file = os.path.join(BASE_DIR, '.env')
-        env_file_encoding = 'utf-8'
-        case_sensitive = True
+        logger = logging.getLogger()
+        
+        # Add environment-specific logging configuration
+        if self.ENVIRONMENT != 'development':
+            # Configure Azure Application Insights logging
+            from opencensus.ext.azure.log_exporter import AzureLogHandler
+            logger.addHandler(AzureLogHandler(
+                connection_string=self.AZURE_CONFIG['application_insights']['connection_string']
+            ))
 
 def get_settings() -> Settings:
     """Returns thread-safe singleton instance of Settings class."""
@@ -232,23 +216,9 @@ def get_settings() -> Settings:
     if _settings_instance is None:
         with _settings_lock:
             if _settings_instance is None:
-                # Load environment variables
-                load_dotenv(os.path.join(BASE_DIR, '.env'))
-                
-                # Create settings instance
+                load_dotenv()
                 _settings_instance = Settings()
-                
-                # Configure logging
                 _settings_instance.configure_logging()
-                
-                # Log settings initialization
-                logging.info(
-                    "Application settings initialized",
-                    extra={
-                        'environment': _settings_instance.ENVIRONMENT,
-                        'debug_mode': _settings_instance.DEBUG
-                    }
-                )
     
     return _settings_instance
 
