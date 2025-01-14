@@ -1,5 +1,5 @@
 ---
-# Persistent Volume Claim for Grafana storage
+# PersistentVolumeClaim for Grafana storage
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -15,7 +15,7 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: standard
+  storageClassName: default
 
 ---
 # ConfigMap for Grafana main configuration
@@ -36,11 +36,16 @@ data:
 
     [security]
     admin_user = admin
+    disable_gravatar = true
     cookie_secure = true
     cookie_samesite = strict
     allow_embedding = true
-    disable_gravatar = true
     strict_transport_security = true
+    strict_transport_security_max_age_seconds = 31536000
+    strict_transport_security_preload = true
+    strict_transport_security_subdomains = true
+    x_content_type_options = true
+    x_xss_protection = true
 
     [auth]
     disable_login_form = false
@@ -49,9 +54,11 @@ data:
 
     [users]
     allow_sign_up = false
+    auto_assign_org = true
     auto_assign_org_role = Viewer
 
     [dashboards]
+    versions_to_keep = 20
     min_refresh_interval = 5s
 
     [metrics]
@@ -83,8 +90,11 @@ data:
         editable: false
         jsonData:
           timeInterval: "15s"
-          queryTimeout: "30s"
+          queryTimeout: "60s"
           httpMethod: "POST"
+          manageAlerts: true
+        secureJsonData:
+          httpHeaderValue1: "Bearer ${PROMETHEUS_TOKEN}"
 
 ---
 # ConfigMap for Grafana dashboards
