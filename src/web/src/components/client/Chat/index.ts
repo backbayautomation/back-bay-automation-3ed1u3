@@ -1,34 +1,38 @@
 /**
- * Barrel file for chat-related components in the client portal chat interface.
- * Centralizes exports for chat components while enabling code splitting and
- * maintainable component composition.
+ * Barrel file exporting chat-related components for the client portal chat interface.
+ * Enables code splitting and lazy loading while maintaining proper component composition.
  * @version 1.0.0
  */
 
-// Component exports with their respective types
+// Export chat interface components with their props types
+export { default as ChatInterface } from './ChatInterface';
+export type { ChatInterfaceProps } from './ChatInterface';
+
+// Export chat bubble component for message display
 export { default as ChatBubble } from './ChatBubble';
 export type { ChatBubbleProps } from './ChatBubble';
 
+// Export chat input component for message composition
 export { default as ChatInput } from './ChatInput';
 export type { ChatInputProps } from './ChatInput';
 
+// Export message list component for virtualized message display
 export { default as MessageList } from './MessageList';
 export type { MessageListProps } from './MessageList';
 
+// Export chat history component for session management
 export { default as ChatHistory } from './ChatHistory';
 export type { ChatHistoryProps } from './ChatHistory';
 
-// Main chat interface component as default export
-export { default } from './ChatInterface';
-export type { ChatInterfaceProps } from './ChatInterface';
-
-// Re-export relevant types from chat types module for convenience
+// Re-export common types used across chat components
 export type {
-    Message,
-    MessageRole,
-    ChatSession,
-    ChatSessionStatus,
-    MessageMetadata,
-    MessageRenderOptions,
-    WebSocketStatus
+  Message,
+  MessageRole,
+  ChatSession,
+  WebSocketStatus,
+  MessageMetadata,
+  MessageRenderOptions,
+  ChatSessionStatus,
+  ChatState,
+  NewMessage
 } from '../../../types/chat';
