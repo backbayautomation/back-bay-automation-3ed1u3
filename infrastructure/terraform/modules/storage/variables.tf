@@ -20,13 +20,13 @@ variable "storage_account_config" {
     versioning_enabled             = bool
     delete_retention_days          = number
     lifecycle_rules = object({
-      cool_tier_days     = number
-      archive_tier_days  = number
-      delete_after_days  = number
+      cool_tier_days    = number
+      archive_tier_days = number
+      delete_after_days = number
     })
     network_rules = object({
       default_action             = string
-      bypass                    = list(string)
+      bypass                     = list(string)
       ip_rules                  = list(string)
       virtual_network_subnet_ids = list(string)
     })
@@ -52,13 +52,13 @@ variable "storage_account_config" {
     versioning_enabled             = true
     delete_retention_days          = 30
     lifecycle_rules = {
-      cool_tier_days     = 90
-      archive_tier_days  = 365
-      delete_after_days  = 730
+      cool_tier_days    = 90
+      archive_tier_days = 365
+      delete_after_days = 730
     }
     network_rules = {
       default_action             = "Deny"
-      bypass                    = ["AzureServices"]
+      bypass                     = ["AzureServices"]
       ip_rules                  = []
       virtual_network_subnet_ids = []
     }
@@ -155,8 +155,8 @@ variable "redis_cache_config" {
       max_replicas_per_master = number
     })
     patch_schedule = object({
-      day_of_week     = string
-      start_hour_utc  = number
+      day_of_week    = string
+      start_hour_utc = number
     })
     persistence_config = object({
       enabled               = bool
@@ -184,8 +184,8 @@ variable "redis_cache_config" {
       max_replicas_per_master = 1
     }
     patch_schedule = {
-      day_of_week     = "Sunday"
-      start_hour_utc  = 2
+      day_of_week    = "Sunday"
+      start_hour_utc = 2
     }
     persistence_config = {
       enabled               = true
