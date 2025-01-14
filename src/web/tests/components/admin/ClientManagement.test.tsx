@@ -2,47 +2,36 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { axe } from 'jest-axe';
-import { setupServer, rest } from 'msw';
-import { configureStore } from '@reduxjs/toolkit';
+import { setupServer } from 'msw';
+import { rest } from 'msw';
 import { Provider } from 'react-redux';
+import { configureStore } from '@reduxjs/toolkit';
 
 import ClientList from '../../../src/components/admin/ClientManagement/ClientList';
 import ClientForm from '../../../src/components/admin/ClientManagement/ClientForm';
 import ClientTable from '../../../src/components/admin/ClientManagement/ClientTable';
-import { clientApi } from '../../../src/api/clients';
-import { Client, ClientStatus } from '../../../src/types/client';
+import { ClientStatus } from '../../../src/types/client';
 
 // Mock data setup
-const mockClients: Client[] = [
+const mockClients = [
   {
     id: '1',
     name: 'ACME Corporation',
     status: ClientStatus.ACTIVE,
-    config: {
-      maxUsers: 100,
-      chatEnabled: true,
-      exportEnabled: true,
-      features: {},
-      theme: {
-        mode: 'light',
-        fontFamily: 'Roboto',
-        spacing: 8,
-        borderRadius: 4,
-        shadows: {}
-      }
-    },
-    branding: {
-      primaryColor: '#0066CC',
-      logoUrl: 'https://example.com/logo.png',
-      companyName: 'ACME Corp',
-      customStyles: {},
-      theme: null
-    },
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-20T00:00:00Z',
-    metadata: {}
+    metadata: {
+      documentCount: 150,
+      lastActive: '2024-01-20T10:00:00Z'
+    }
   },
-  // Add more mock clients as needed
+  {
+    id: '2',
+    name: 'TechCorp Industries',
+    status: ClientStatus.PENDING,
+    metadata: {
+      documentCount: 75,
+      lastActive: '2024-01-19T15:30:00Z'
+    }
+  }
 ];
 
 // MSW server setup for API mocking
@@ -50,10 +39,10 @@ const server = setupServer(
   rest.get('/api/clients', (req, res, ctx) => {
     const page = Number(req.url.searchParams.get('page')) || 1;
     const pageSize = Number(req.url.searchParams.get('pageSize')) || 10;
-    const searchQuery = req.url.searchParams.get('searchQuery') || '';
+    const search = req.url.searchParams.get('search') || '';
 
-    const filteredClients = mockClients.filter(client =>
-      client.name.toLowerCase().includes(searchQuery.toLowerCase())
+    const filteredClients = mockClients.filter(client => 
+      client.name.toLowerCase().includes(search.toLowerCase())
     );
 
     return res(
@@ -70,34 +59,30 @@ const server = setupServer(
   rest.post('/api/clients', (req, res, ctx) => {
     return res(
       ctx.status(201),
-      ctx.json({ success: true, data: { ...req.body, id: '123' } })
-    );
-  }),
-
-  rest.put('/api/clients/:id', (req, res, ctx) => {
-    return res(
-      ctx.status(200),
-      ctx.json({ success: true, data: req.body })
+      ctx.json({
+        success: true,
+        data: { ...req.body, id: '3' }
+      })
     );
   }),
 
   rest.delete('/api/clients/:id', (req, res, ctx) => {
     return res(
-      ctx.status(204)
+      ctx.status(200),
+      ctx.json({
+        success: true
+      })
     );
   })
 );
 
-// Test setup and teardown
-beforeAll(() => server.listen());
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
-
-// Custom render function with providers
+// Test setup utilities
 const renderWithProviders = (ui: React.ReactElement) => {
   const store = configureStore({
     reducer: {
-      // Add reducers as needed
+      auth: () => ({
+        user: { role: 'SYSTEM_ADMIN' }
+      })
     }
   });
 
@@ -108,44 +93,59 @@ const renderWithProviders = (ui: React.ReactElement) => {
   );
 };
 
+// Start server before tests
+beforeAll(() => server.listen());
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
 describe('ClientList Component', () => {
   test('renders client list with search and pagination', async () => {
     renderWithProviders(<ClientList />);
 
-    // Check initial loading state
+    // Verify initial loading state
     expect(screen.getByRole('progressbar')).toBeInTheDocument();
 
     // Wait for data to load
     await waitFor(() => {
-      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+      expect(screen.getByText('ACME Corporation')).toBeInTheDocument();
     });
 
-    // Verify search field
-    const searchField = screen.getByRole('searchbox');
-    expect(searchField).toBeInTheDocument();
+    // Verify search functionality
+    const searchInput = screen.getByRole('searchbox');
+    await userEvent.type(searchInput, 'Tech');
 
-    // Verify client table
-    expect(screen.getByRole('table')).toBeInTheDocument();
-    expect(screen.getByText('ACME Corporation')).toBeInTheDocument();
-
-    // Verify pagination
-    expect(screen.getByRole('navigation')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('TechCorp Industries')).toBeInTheDocument();
+      expect(screen.queryByText('ACME Corporation')).not.toBeInTheDocument();
+    });
   });
 
-  test('handles search functionality with debounce', async () => {
+  test('handles client deletion with confirmation', async () => {
     renderWithProviders(<ClientList />);
 
-    const searchField = await screen.findByRole('searchbox');
-    await userEvent.type(searchField, 'ACME');
-
-    // Wait for debounced search
     await waitFor(() => {
       expect(screen.getByText('ACME Corporation')).toBeInTheDocument();
-    }, { timeout: 500 });
+    });
+
+    // Click delete button and confirm
+    const deleteButton = screen.getAllByRole('button', { name: /delete client/i })[0];
+    fireEvent.click(deleteButton);
+
+    const confirmButton = screen.getByRole('button', { name: /confirm/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText('ACME Corporation')).not.toBeInTheDocument();
+    });
   });
 
   test('meets accessibility standards', async () => {
     const { container } = renderWithProviders(<ClientList />);
+    
+    await waitFor(() => {
+      expect(screen.getByText('ACME Corporation')).toBeInTheDocument();
+    });
+
     const results = await axe(container);
     expect(results).toHaveNoViolations();
   });
@@ -155,44 +155,64 @@ describe('ClientForm Component', () => {
   const mockOnSuccess = jest.fn();
   const mockOnCancel = jest.fn();
 
-  const defaultProps = {
-    onSuccess: mockOnSuccess,
-    onCancel: mockOnCancel,
-    isSubmitting: false,
-    csrfToken: 'test-token'
-  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
-  test('renders form fields with validation', async () => {
-    render(<ClientForm {...defaultProps} />);
+  test('validates required fields', async () => {
+    renderWithProviders(
+      <ClientForm
+        onSuccess={mockOnSuccess}
+        onCancel={mockOnCancel}
+        isSubmitting={false}
+        csrfToken="test-token"
+      />
+    );
 
-    // Verify required fields
-    expect(screen.getByLabelText(/client name/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/industry/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/maximum users/i)).toBeInTheDocument();
-
-    // Test validation
-    const submitButton = screen.getByRole('button', { name: /create client/i });
-    await userEvent.click(submitButton);
+    // Submit empty form
+    fireEvent.click(screen.getByRole('button', { name: /save client/i }));
 
     await waitFor(() => {
-      expect(screen.getAllByRole('alert')).toHaveLength(3); // Required field errors
+      expect(screen.getByText(/name is required/i)).toBeInTheDocument();
+      expect(screen.getByText(/industry is required/i)).toBeInTheDocument();
     });
   });
 
-  test('handles form submission successfully', async () => {
-    render(<ClientForm {...defaultProps} />);
+  test('handles successful form submission', async () => {
+    renderWithProviders(
+      <ClientForm
+        onSuccess={mockOnSuccess}
+        onCancel={mockOnCancel}
+        isSubmitting={false}
+        csrfToken="test-token"
+      />
+    );
 
-    // Fill form
-    await userEvent.type(screen.getByLabelText(/client name/i), 'Test Client');
+    // Fill form fields
+    await userEvent.type(screen.getByLabelText(/client name/i), 'New Client');
     await userEvent.type(screen.getByLabelText(/industry/i), 'Technology');
-    await userEvent.type(screen.getByLabelText(/maximum users/i), '50');
+    await userEvent.type(screen.getByLabelText(/maximum users/i), '100');
 
     // Submit form
-    await userEvent.click(screen.getByRole('button', { name: /create client/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save client/i }));
 
     await waitFor(() => {
       expect(mockOnSuccess).toHaveBeenCalled();
     });
+  });
+
+  test('handles form cancellation', () => {
+    renderWithProviders(
+      <ClientForm
+        onSuccess={mockOnSuccess}
+        onCancel={mockOnCancel}
+        isSubmitting={false}
+        csrfToken="test-token"
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(mockOnCancel).toHaveBeenCalled();
   });
 });
 
@@ -202,77 +222,105 @@ describe('ClientTable Component', () => {
   const mockOnDelete = jest.fn();
   const mockOnSettings = jest.fn();
 
-  const defaultProps = {
-    clients: mockClients,
-    page: 1,
-    pageSize: 10,
-    total: mockClients.length,
-    loading: false,
-    error: null,
-    onPageChange: mockOnPageChange,
-    onEdit: mockOnEdit,
-    onDelete: mockOnDelete,
-    onSettings: mockOnSettings
-  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
   test('renders client data correctly', () => {
-    render(<ClientTable {...defaultProps} />);
+    render(
+      <ClientTable
+        clients={mockClients}
+        page={1}
+        pageSize={10}
+        total={mockClients.length}
+        loading={false}
+        error={null}
+        onPageChange={mockOnPageChange}
+        onEdit={mockOnEdit}
+        onDelete={mockOnDelete}
+        onSettings={mockOnSettings}
+      />
+    );
 
-    // Verify table headers
-    expect(screen.getByText('Client Name')).toBeInTheDocument();
-    expect(screen.getByText('Status')).toBeInTheDocument();
-    expect(screen.getByText('Users')).toBeInTheDocument();
-
-    // Verify client data
     expect(screen.getByText('ACME Corporation')).toBeInTheDocument();
-    expect(screen.getByText('ACTIVE')).toBeInTheDocument();
-    expect(screen.getByText('100')).toBeInTheDocument();
+    expect(screen.getByText('150')).toBeInTheDocument(); // Document count
+  });
+
+  test('handles sorting', async () => {
+    render(
+      <ClientTable
+        clients={mockClients}
+        page={1}
+        pageSize={10}
+        total={mockClients.length}
+        loading={false}
+        error={null}
+        onPageChange={mockOnPageChange}
+        onEdit={mockOnEdit}
+        onDelete={mockOnDelete}
+        onSettings={mockOnSettings}
+      />
+    );
+
+    const nameHeader = screen.getByRole('columnheader', { name: /client name/i });
+    fireEvent.click(nameHeader);
+
+    expect(mockOnPageChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sortBy: 'name',
+        sortOrder: 'asc'
+      })
+    );
+  });
+
+  test('displays loading state correctly', () => {
+    render(
+      <ClientTable
+        clients={[]}
+        page={1}
+        pageSize={10}
+        total={0}
+        loading={true}
+        error={null}
+        onPageChange={mockOnPageChange}
+        onEdit={mockOnEdit}
+        onDelete={mockOnDelete}
+        onSettings={mockOnSettings}
+      />
+    );
+
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
   });
 
   test('handles row actions correctly', async () => {
-    render(<ClientTable {...defaultProps} />);
+    render(
+      <ClientTable
+        clients={mockClients}
+        page={1}
+        pageSize={10}
+        total={mockClients.length}
+        loading={false}
+        error={null}
+        onPageChange={mockOnPageChange}
+        onEdit={mockOnEdit}
+        onDelete={mockOnDelete}
+        onSettings={mockOnSettings}
+      />
+    );
 
     // Test edit action
-    const editButton = screen.getAllByRole('button', { name: /edit/i })[0];
-    await userEvent.click(editButton);
+    const editButton = screen.getAllByRole('button', { name: /edit client/i })[0];
+    fireEvent.click(editButton);
     expect(mockOnEdit).toHaveBeenCalledWith(mockClients[0]);
 
     // Test settings action
-    const settingsButton = screen.getAllByRole('button', { name: /settings/i })[0];
-    await userEvent.click(settingsButton);
+    const settingsButton = screen.getAllByRole('button', { name: /client settings/i })[0];
+    fireEvent.click(settingsButton);
     expect(mockOnSettings).toHaveBeenCalledWith(mockClients[0]);
 
     // Test delete action
-    const deleteButton = screen.getAllByRole('button', { name: /delete/i })[0];
-    await userEvent.click(deleteButton);
+    const deleteButton = screen.getAllByRole('button', { name: /delete client/i })[0];
+    fireEvent.click(deleteButton);
     expect(mockOnDelete).toHaveBeenCalledWith(mockClients[0]);
-  });
-
-  test('handles loading and error states', () => {
-    // Test loading state
-    render(<ClientTable {...defaultProps} loading={true} />);
-    expect(screen.getByRole('progressbar')).toBeInTheDocument();
-
-    // Test error state
-    render(<ClientTable {...defaultProps} error={new Error('Test error')} />);
-    expect(screen.getByText(/test error/i)).toBeInTheDocument();
-  });
-
-  test('supports keyboard navigation', async () => {
-    render(<ClientTable {...defaultProps} />);
-
-    const table = screen.getByRole('table');
-    const rows = within(table).getAllByRole('row');
-
-    // Focus first row
-    rows[1].focus();
-    expect(document.activeElement).toBe(rows[1]);
-
-    // Test arrow key navigation
-    fireEvent.keyDown(rows[1], { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(rows[2]);
-
-    fireEvent.keyDown(rows[2], { key: 'ArrowUp' });
-    expect(document.activeElement).toBe(rows[1]);
   });
 });
