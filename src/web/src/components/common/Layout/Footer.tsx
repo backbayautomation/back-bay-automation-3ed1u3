@@ -2,7 +2,17 @@ import React from 'react'; // v18.2.0
 import { Box, Typography, useMediaQuery } from '@mui/material'; // v5.14.0
 import { useTheme } from '../../../contexts/ThemeContext';
 
-// Constants for footer configuration
+/**
+ * Props interface for Footer component with optional styling and testing attributes
+ */
+interface FooterProps {
+  className?: string;
+  testId?: string;
+}
+
+/**
+ * Constants for footer configuration
+ */
 const MOBILE_BREAKPOINT = 768;
 const COPYRIGHT_TEXT = '© 2024 AI-Powered Product Catalog Search System. All rights reserved.';
 const FOOTER_HEIGHT = {
@@ -11,17 +21,8 @@ const FOOTER_HEIGHT = {
 };
 
 /**
- * Props interface for Footer component
- */
-interface FooterProps {
-  /** Optional CSS class for external styling */
-  className?: string;
-  /** Optional test ID for testing purposes */
-  testId?: string;
-}
-
-/**
- * Enterprise-grade footer component with responsive design and accessibility features
+ * Footer component providing consistent footer content with theme integration,
+ * responsive design, and WCAG 2.1 AA compliance
  */
 const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
   // Theme and responsive hooks
@@ -41,18 +42,19 @@ const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
     padding: theme.spacing(isMobile ? 1.5 : 2),
     backgroundColor: theme.palette.background.paper,
     borderTop: `1px solid ${theme.palette.divider}`,
+    // Ensure sufficient contrast ratio for WCAG compliance
+    color: isDarkMode ? theme.palette.text.primary : theme.palette.text.secondary,
+    // Add z-index to ensure footer stays above content
     zIndex: theme.zIndex.appBar - 1,
-    transition: theme.transitions.create(['background-color', 'border-color'], {
+    // Prevent text selection for better UX
+    userSelect: 'none',
+    // Enable GPU acceleration for smooth animations
+    transform: 'translateZ(0)',
+    // Add transition for smooth theme switching
+    transition: theme.transitions.create(['background-color', 'color', 'border-color'], {
       duration: theme.transitions.duration.short,
-    }),
-    '&:focus-visible': {
-      outline: 'none',
-      boxShadow: theme.shadows[2],
-    },
+    })
   };
-
-  // Typography variant based on device size
-  const typographyVariant = isMobile ? 'caption' : 'body2';
 
   return (
     <Box
@@ -62,21 +64,25 @@ const Footer = React.memo<FooterProps>(({ className, testId = 'footer' }) => {
       data-testid={testId}
       role="contentinfo"
       aria-label="Footer"
-      tabIndex={0}
     >
       <Typography
-        variant={typographyVariant}
-        color="text.secondary"
-        align="center"
+        variant={isMobile ? 'caption' : 'body2'}
+        component="p"
         sx={{
-          userSelect: 'none',
-          color: isDarkMode ? 'text.primary' : 'text.secondary',
-          transition: theme.transitions.create('color'),
-          '&::selection': {
-            backgroundColor: theme.palette.primary.main,
-            color: theme.palette.primary.contrastText,
-          },
+          textAlign: 'center',
+          // Ensure text remains visible during webfont load
+          fontDisplay: 'swap',
+          // Improve readability
+          letterSpacing: '0.01em',
+          // Ensure proper line height for accessibility
+          lineHeight: 1.5,
+          // Add focus outline for keyboard navigation
+          '&:focus-visible': {
+            outline: `2px solid ${theme.palette.primary.main}`,
+            outlineOffset: '2px',
+          }
         }}
+        tabIndex={0}
       >
         {COPYRIGHT_TEXT}
       </Typography>
