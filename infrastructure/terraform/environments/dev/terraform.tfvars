@@ -22,7 +22,7 @@ aks_config = {
     enable_auto_scaling = true
   }
   
-  # Application node pool for general workloads
+  # Application node pool for workloads
   app_node_pool = {
     name                = "apppool"
     vm_size            = "Standard_D4s_v3"
@@ -46,15 +46,15 @@ aks_config = {
 # Database configurations
 database_config = {
   sql = {
-    name        = "sql-catalog-search-dev"
-    tier        = "Standard"
-    size        = "S1"
-    max_size_gb = 50
+    name         = "sql-catalog-search-dev"
+    tier         = "Standard"
+    size         = "S1"
+    max_size_gb  = 50
   }
   cosmos = {
-    name              = "cosmos-catalog-search-dev"
-    consistency_level = "Session"
-    max_throughput    = 1000
+    name               = "cosmos-catalog-search-dev"
+    consistency_level  = "Session"
+    max_throughput     = 1000
   }
 }
 
