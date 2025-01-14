@@ -1,5 +1,5 @@
-import React, { useCallback } from 'react';
-import { Box, Typography } from '@mui/material'; // @version 5.14.0
+import React from 'react'; // v18.2.0
+import { Box, Typography } from '@mui/material'; // v5.14.0
 import Modal from './Modal';
 import PrimaryButton from '../Buttons/PrimaryButton';
 
@@ -11,18 +11,18 @@ const VARIANT_COLORS = {
   success: '#28A745',
 } as const;
 
-// Modal size definitions
-const MODAL_SIZES = {
-  small: '400px',
-  medium: '600px',
-  large: '800px',
-} as const;
-
 // Default text content
 const DEFAULT_TEXTS = {
   confirm: 'Confirm',
   cancel: 'Cancel',
   close: 'Close Modal',
+} as const;
+
+// Modal size configuration
+const MODAL_SIZES = {
+  small: '400px',
+  medium: '600px',
+  large: '800px',
 } as const;
 
 export interface ConfirmModalProps {
@@ -53,24 +53,25 @@ const ConfirmModal = React.memo<ConfirmModalProps>(({
   loading = false,
 }) => {
   // Handle confirm action with loading state
-  const handleConfirm = useCallback(async () => {
+  const handleConfirm = React.useCallback(async () => {
     try {
       await onConfirm();
+      onClose();
     } catch (error) {
       console.error('Confirmation action failed:', error);
-      // Error handling could be enhanced based on requirements
+      // Error handling could be expanded based on requirements
     }
-  }, [onConfirm]);
+  }, [onConfirm, onClose]);
 
   // Handle cancel action
-  const handleCancel = useCallback(() => {
+  const handleCancel = React.useCallback(() => {
     if (!loading) {
       onClose();
     }
   }, [loading, onClose]);
 
-  // Render action buttons
-  const renderActions = () => (
+  // Render modal actions
+  const modalActions = (
     <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
       <PrimaryButton
         variant="secondary"
@@ -104,7 +105,7 @@ const ConfirmModal = React.memo<ConfirmModalProps>(({
       open={open}
       onClose={handleCancel}
       title={title}
-      actions={renderActions()}
+      actions={modalActions}
       size={size}
       disableBackdropClick={disableBackdropClick || loading}
       disableEscapeKeyDown={loading}
@@ -115,10 +116,9 @@ const ConfirmModal = React.memo<ConfirmModalProps>(({
       <Box
         id="confirm-modal-description"
         sx={{
-          minHeight: '100px',
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'center',
+          gap: 2,
         }}
       >
         <Typography
@@ -126,18 +126,24 @@ const ConfirmModal = React.memo<ConfirmModalProps>(({
           component="div"
           sx={{
             color: 'text.primary',
-            textAlign: 'center',
-            whiteSpace: 'pre-wrap',
+            '& strong': {
+              fontWeight: 600,
+            },
+            '& a': {
+              color: VARIANT_COLORS[variant],
+              textDecoration: 'none',
+              '&:hover': {
+                textDecoration: 'underline',
+              },
+            },
           }}
-        >
-          {message}
-        </Typography>
+          dangerouslySetInnerHTML={{ __html: message }}
+        />
       </Box>
     </Modal>
   );
 });
 
-// Display name for development tooling
 ConfirmModal.displayName = 'ConfirmModal';
 
 export default ConfirmModal;
