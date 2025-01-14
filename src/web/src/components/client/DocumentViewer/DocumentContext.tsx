@@ -3,7 +3,7 @@ import { Document } from '../../../types/document';
 import { getDocumentDetails } from '../../../services/documents';
 
 /**
- * Interface for document context state with enhanced error handling and loading states
+ * Interface defining the document context state with error handling and loading states
  */
 interface DocumentContextState {
     currentDocument: Document | null;
@@ -17,34 +17,33 @@ interface DocumentContextState {
     setCurrentSection: (section: string) => void;
     updateRelevanceScore: (section: string, score: number) => void;
     toggleSectionVisibility: (section: string) => void;
-    setSectionMetadata: (section: string, metadata: string) => void;
     loadDocument: (documentId: string) => Promise<void>;
     clearError: () => void;
 }
 
 /**
- * Props interface for the DocumentContext provider component
+ * Props for the DocumentContext provider component with error boundary support
  */
 interface DocumentContextProviderProps {
     children: React.ReactNode;
     errorBoundaryConfig?: {
+        fallback: React.ReactNode;
         onError?: (error: Error) => void;
-        fallback?: React.ReactNode;
     };
 }
 
-// Create context with comprehensive type safety
+// Create context with runtime validation
 const DocumentContext = createContext<DocumentContextState | null>(null);
 
 /**
- * DocumentContextProvider component with enhanced error handling and performance optimization
- * @version 1.0.0
+ * DocumentContext provider component that manages document viewing state
+ * with enhanced error handling and performance optimization
  */
-export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = ({ 
+export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = ({
     children,
-    errorBoundaryConfig 
+    errorBoundaryConfig
 }) => {
-    // State management with strict typing
+    // Core state management with proper typing
     const [currentDocument, setCurrentDocument] = useState<Document | null>(null);
     const [currentSection, setCurrentSection] = useState<string>('');
     const [relevanceScores, setRelevanceScores] = useState<Record<string, number>>({});
@@ -53,38 +52,19 @@ export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = (
     const [sectionVisibility, setSectionVisibility] = useState<Record<string, boolean>>({});
     const [sectionMetadata, setSectionMetadata] = useState<Record<string, string>>({});
 
-    // Memoized document setter with validation
-    const handleSetDocument = useCallback((document: Document | null) => {
-        if (document && (!document.id || !document.filename)) {
-            setError('Invalid document data received');
-            return;
-        }
-        setCurrentDocument(document);
-        setError(null);
-    }, []);
-
-    // Memoized section setter with validation
-    const handleSetSection = useCallback((section: string) => {
-        if (!section.trim()) {
-            setError('Invalid section identifier');
-            return;
-        }
-        setCurrentSection(section);
-    }, []);
-
-    // Debounced relevance score updater
+    /**
+     * Memoized function to update relevance scores with debouncing
+     */
     const updateRelevanceScore = useCallback((section: string, score: number) => {
-        if (score < 0 || score > 100) {
-            setError('Relevance score must be between 0 and 100');
-            return;
-        }
         setRelevanceScores(prev => ({
             ...prev,
-            [section]: score
+            [section]: Math.max(0, Math.min(100, score)) // Ensure score is between 0-100
         }));
     }, []);
 
-    // Section visibility toggle with accessibility support
+    /**
+     * Toggle section visibility with state update batching
+     */
     const toggleSectionVisibility = useCallback((section: string) => {
         setSectionVisibility(prev => ({
             ...prev,
@@ -92,31 +72,33 @@ export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = (
         }));
     }, []);
 
-    // Section metadata setter with validation
-    const handleSetSectionMetadata = useCallback((section: string, metadata: string) => {
-        if (!section || !metadata) {
-            setError('Invalid section metadata');
-            return;
-        }
-        setSectionMetadata(prev => ({
-            ...prev,
-            [section]: metadata
-        }));
+    /**
+     * Clear error state
+     */
+    const clearError = useCallback(() => {
+        setError(null);
     }, []);
 
-    // Async document loader with comprehensive error handling
+    /**
+     * Load document details with comprehensive error handling
+     */
     const loadDocument = useCallback(async (documentId: string) => {
         setIsLoading(true);
         setError(null);
-        
+
         try {
             const document = await getDocumentDetails(documentId);
             setCurrentDocument(document);
-            // Reset states for new document
-            setCurrentSection('');
-            setRelevanceScores({});
-            setSectionVisibility({});
-            setSectionMetadata({});
+            
+            // Initialize section visibility
+            const initialVisibility: Record<string, boolean> = {};
+            if (document.metadata?.sections) {
+                Object.keys(document.metadata.sections).forEach(section => {
+                    initialVisibility[section] = true;
+                });
+            }
+            setSectionVisibility(initialVisibility);
+
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to load document';
             setError(errorMessage);
@@ -126,13 +108,21 @@ export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = (
         }
     }, [errorBoundaryConfig]);
 
-    // Error clearing utility
-    const clearError = useCallback(() => {
-        setError(null);
-    }, []);
+    /**
+     * Effect to clean up state when document changes
+     */
+    useEffect(() => {
+        if (!currentDocument) {
+            setCurrentSection('');
+            setRelevanceScores({});
+            setSectionMetadata({});
+        }
+    }, [currentDocument]);
 
-    // Memoized context value to prevent unnecessary rerenders
-    const contextValue = useMemo(() => ({
+    /**
+     * Memoized context value to prevent unnecessary re-renders
+     */
+    const contextValue = useMemo<DocumentContextState>(() => ({
         currentDocument,
         currentSection,
         relevanceScores,
@@ -140,11 +130,10 @@ export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = (
         error,
         sectionVisibility,
         sectionMetadata,
-        setCurrentDocument: handleSetDocument,
-        setCurrentSection: handleSetSection,
+        setCurrentDocument,
+        setCurrentSection,
         updateRelevanceScore,
         toggleSectionVisibility,
-        setSectionMetadata: handleSetSectionMetadata,
         loadDocument,
         clearError
     }), [
@@ -155,37 +144,22 @@ export const DocumentContextProvider: React.FC<DocumentContextProviderProps> = (
         error,
         sectionVisibility,
         sectionMetadata,
-        handleSetDocument,
-        handleSetSection,
         updateRelevanceScore,
         toggleSectionVisibility,
-        handleSetSectionMetadata,
         loadDocument,
         clearError
     ]);
 
-    // Effect for cleaning up document state on unmount
-    useEffect(() => {
-        return () => {
-            setCurrentDocument(null);
-            setCurrentSection('');
-            setRelevanceScores({});
-            setSectionVisibility({});
-            setSectionMetadata({});
-            setError(null);
-        };
-    }, []);
-
     return (
         <DocumentContext.Provider value={contextValue}>
-            {children}
+            {error && errorBoundaryConfig?.fallback ? errorBoundaryConfig.fallback : children}
         </DocumentContext.Provider>
     );
 };
 
 /**
- * Custom hook for accessing document context with runtime validation
- * @throws {Error} When used outside of DocumentContextProvider
+ * Custom hook to access document context state and actions with runtime validation
+ * @throws Error if used outside of DocumentContextProvider
  */
 export const useDocumentContext = (): DocumentContextState => {
     const context = useContext(DocumentContext);
@@ -198,4 +172,4 @@ export const useDocumentContext = (): DocumentContextState => {
 };
 
 // Export context for advanced use cases
-export default DocumentContext;
+export { DocumentContext };
