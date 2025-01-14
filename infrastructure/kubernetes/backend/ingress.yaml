@@ -1,51 +1,36 @@
 # Kubernetes Ingress resource for backend FastAPI service
-# Version: networking.k8s.io/v1 (Kubernetes v1.25+)
-# Purpose: Configure external access with TLS termination and security controls
-
+# External dependency: networking.k8s.io/v1 (Kubernetes v1.25+)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: backend-ingress
   namespace: product-search
   annotations:
-    # Ingress Controller Configuration
+    # Azure Application Gateway Ingress Controller configuration
     kubernetes.io/ingress.class: "azure/application-gateway"
-    
-    # SSL/TLS Configuration
     appgw.ingress.kubernetes.io/ssl-redirect: "true"
-    appgw.ingress.kubernetes.io/ssl-protocols: "TLSv1.3"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    
-    # Connection and Timeout Settings
     appgw.ingress.kubernetes.io/connection-draining: "true"
     appgw.ingress.kubernetes.io/connection-draining-timeout: "30"
     appgw.ingress.kubernetes.io/request-timeout: "30"
+    appgw.ingress.kubernetes.io/waf-policy-for-path: "waf-policy-product-search"
+    
+    # NGINX-specific configurations for additional security and performance
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
-    
-    # Security Controls
-    appgw.ingress.kubernetes.io/waf-policy-for-path: "waf-policy-product-search"
-    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/enable-cors: "true"
     
-    # Additional Security Headers
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      more_set_headers "X-Frame-Options: DENY";
-      more_set_headers "X-Content-Type-Options: nosniff";
-      more_set_headers "X-XSS-Protection: 1; mode=block";
-      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains";
-    
-    # Health Monitoring
-    appgw.ingress.kubernetes.io/health-probe-path: "/health"
-    appgw.ingress.kubernetes.io/health-probe-interval: "30"
-    appgw.ingress.kubernetes.io/health-probe-timeout: "10"
-    appgw.ingress.kubernetes.io/health-probe-unhealthy-threshold: "3"
+    # TLS certificate management
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 
 spec:
+  # TLS configuration for HTTPS
   tls:
     - hosts:
         - api.product-search.example.com
       secretName: tls-secret
+  
+  # Routing rules
   rules:
     - host: api.product-search.example.com
       http:
