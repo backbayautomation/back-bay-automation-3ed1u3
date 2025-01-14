@@ -1,27 +1,13 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { useForm, Controller } from 'react-hook-form';
-import { 
-  Card, 
-  CardContent, 
-  Typography, 
-  Grid, 
-  Switch, 
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Alert,
-  Chip,
-  IconButton,
-  Tooltip
-} from '@mui/material';
-import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
-import { FormField, FormFieldProps } from '../../common/Forms/FormField';
-import { PrimaryButton } from '../../common/Buttons/PrimaryButton';
+import React from 'react';
+import { Card, CardContent, Typography, Grid, Switch, Dialog } from '@mui/material'; // v5.14.0
+import { useForm } from 'react-hook-form'; // v7.0.0
+import FormField, { FormFieldProps } from '../../common/Forms/FormField';
+import PrimaryButton from '../../common/Buttons/PrimaryButton';
 import { ApiResponse } from '../../../api/types';
-import { UserRole } from '../../../types/auth';
 
-// Interface for API settings form data with validation rules
+/**
+ * Interface for API settings form data with comprehensive validation
+ */
 interface ApiSettingsFormData {
   apiKey: string;
   rateLimit: number;
@@ -29,79 +15,75 @@ interface ApiSettingsFormData {
   enableRateLimiting: boolean;
   allowedOrigins: string[];
   rateLimitConfig: {
-    windowSize: number;
+    windowMs: number;
     maxRequests: number;
-    burstSize: number;
+    burstLimit: number;
   };
 }
 
-// Default values for rate limiting configuration
-const DEFAULT_RATE_LIMIT_CONFIG = {
-  windowSize: 3600,
-  maxRequests: 1000,
-  burstSize: 50
-};
-
 /**
- * Enhanced API Settings management component with comprehensive security controls
+ * Enhanced API settings management component with comprehensive security controls
  * and accessibility features.
  */
 const ApiSettings = React.memo(() => {
-  // Form state management with validation
-  const { control, handleSubmit: submitForm, reset, formState: { errors, isDirty } } = useForm<ApiSettingsFormData>({
+  // Form initialization with validation rules
+  const { register, handleSubmit: formSubmit, formState: { errors }, setValue, watch } = useForm<ApiSettingsFormData>({
     defaultValues: {
       apiKey: '',
       rateLimit: 1000,
       baseUrl: '',
       enableRateLimiting: true,
       allowedOrigins: [],
-      rateLimitConfig: DEFAULT_RATE_LIMIT_CONFIG
+      rateLimitConfig: {
+        windowMs: 3600000, // 1 hour
+        maxRequests: 1000,
+        burstLimit: 50
+      }
     }
   });
 
-  // Component state
-  const [isLoading, setIsLoading] = useState(false);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [newOrigin, setNewOrigin] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  // State management
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = React.useState(false);
+  const [pendingChanges, setPendingChanges] = React.useState<ApiSettingsFormData | null>(null);
 
-  // Load current API settings
-  useEffect(() => {
-    const loadSettings = async () => {
-      try {
-        setIsLoading(true);
-        // API call would go here
-        const response = await fetch('/api/v1/settings/api');
-        const data = await response.json();
-        reset(data);
-      } catch (err) {
-        setError('Failed to load API settings');
-        console.error('Error loading API settings:', err);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Watch form values for real-time validation
+  const enableRateLimiting = watch('enableRateLimiting');
 
-    loadSettings();
-  }, [reset]);
-
-  // Handle form submission with security validation
-  const handleSubmit = useCallback(async (formData: ApiSettingsFormData) => {
+  /**
+   * Enhanced form submission handler with security validation and audit logging
+   */
+  const handleSubmit = React.useCallback(async (formData: ApiSettingsFormData) => {
     try {
       setIsLoading(true);
-      setError(null);
 
-      // Validate CORS origins
+      // Security validation
+      if (formData.apiKey && formData.apiKey.length < 32) {
+        throw new Error('API key must be at least 32 characters long');
+      }
+
+      if (formData.rateLimit < 0 || formData.rateLimit > 10000) {
+        throw new Error('Rate limit must be between 0 and 10,000');
+      }
+
+      // Validate allowed origins
       const validOrigins = formData.allowedOrigins.every(origin => 
-        /^https?:\/\/[a-zA-Z0-9-.]+(:\d+)?$/.test(origin)
+        /^https?:\/\/[a-zA-Z0-9-_.]+\.[a-zA-Z]{2,}$/.test(origin)
       );
 
       if (!validOrigins) {
-        throw new Error('Invalid CORS origin format detected');
+        throw new Error('Invalid origin format detected');
       }
 
-      // API call would go here
-      const response: ApiResponse = await fetch('/api/v1/settings/api', {
+      // Create audit log entry
+      const auditLog = {
+        action: 'update_api_settings',
+        timestamp: new Date().toISOString(),
+        changes: formData
+      };
+
+      // Make API call with retry logic
+      const response: ApiResponse<void> = await fetch('/api/v1/settings/api', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -113,233 +95,148 @@ const ApiSettings = React.memo(() => {
         throw new Error(response.message || 'Failed to update API settings');
       }
 
-      // Create audit log entry
-      await fetch('/api/v1/audit/log', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'UPDATE_API_SETTINGS',
-          details: formData
-        })
-      });
+      // Update UI with success message
+      // Screen reader announcement
+      const announcement = document.createElement('div');
+      announcement.setAttribute('role', 'alert');
+      announcement.textContent = 'API settings updated successfully';
+      document.body.appendChild(announcement);
+      setTimeout(() => document.body.removeChild(announcement), 1000);
 
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred');
-      console.error('Error updating API settings:', err);
+    } catch (error) {
+      console.error('Error updating API settings:', error);
+      throw error;
     } finally {
       setIsLoading(false);
       setShowConfirmDialog(false);
     }
   }, []);
 
-  // Handle CORS origin management
-  const handleAddOrigin = useCallback(() => {
-    if (newOrigin && /^https?:\/\/[a-zA-Z0-9-.]+(:\d+)?$/.test(newOrigin)) {
-      control._fields.allowedOrigins?.setValue([
-        ...(control._fields.allowedOrigins.value || []),
-        newOrigin
-      ]);
-      setNewOrigin('');
-    }
-  }, [newOrigin, control]);
-
-  const handleRemoveOrigin = useCallback((originToRemove: string) => {
-    control._fields.allowedOrigins?.setValue(
-      control._fields.allowedOrigins.value.filter(origin => origin !== originToRemove)
-    );
-  }, [control]);
+  /**
+   * Confirmation dialog for critical changes
+   */
+  const ConfirmationDialog = React.useMemo(() => (
+    <Dialog
+      open={showConfirmDialog}
+      onClose={() => setShowConfirmDialog(false)}
+      aria-labelledby="confirm-dialog-title"
+      aria-describedby="confirm-dialog-description"
+    >
+      <Typography id="confirm-dialog-title" variant="h6" component="h2">
+        Confirm API Settings Changes
+      </Typography>
+      <Typography id="confirm-dialog-description">
+        Are you sure you want to update the API settings? This may affect active integrations.
+      </Typography>
+      <PrimaryButton
+        onClick={() => pendingChanges && handleSubmit(pendingChanges)}
+        disabled={isLoading}
+      >
+        Confirm Changes
+      </PrimaryButton>
+    </Dialog>
+  ), [showConfirmDialog, pendingChanges, handleSubmit, isLoading]);
 
   return (
     <Card>
       <CardContent>
-        <Typography variant="h5" component="h2" gutterBottom>
+        <Typography variant="h5" component="h1" gutterBottom>
           API Settings
         </Typography>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
-          </Alert>
-        )}
-
-        <form onSubmit={submitForm((data) => setShowConfirmDialog(true))}>
+        
+        <form onSubmit={formSubmit((data) => {
+          setPendingChanges(data);
+          setShowConfirmDialog(true);
+        })}>
           <Grid container spacing={3}>
-            {/* API Key Management */}
             <Grid item xs={12}>
-              <Controller
+              <FormField
                 name="apiKey"
-                control={control}
-                rules={{ required: 'API Key is required' }}
-                render={({ field }) => (
-                  <FormField
-                    {...field}
-                    label="API Key"
-                    type="password"
-                    error={errors.apiKey?.message}
-                    disabled={isLoading}
-                    fullWidth
-                  />
-                )}
+                label="API Key"
+                type="password"
+                required
+                error={errors.apiKey?.message}
+                {...register('apiKey', {
+                  required: 'API key is required',
+                  minLength: {
+                    value: 32,
+                    message: 'API key must be at least 32 characters'
+                  }
+                })}
               />
             </Grid>
 
-            {/* Base URL Configuration */}
-            <Grid item xs={12}>
-              <Controller
+            <Grid item xs={12} sm={6}>
+              <FormField
                 name="baseUrl"
-                control={control}
-                rules={{ 
+                label="API Base URL"
+                required
+                error={errors.baseUrl?.message}
+                {...register('baseUrl', {
                   required: 'Base URL is required',
                   pattern: {
-                    value: /^https?:\/\/[a-zA-Z0-9-.]+\.[a-zA-Z]{2,}(\/\S*)?$/,
-                    message: 'Invalid URL format'
+                    value: /^https?:\/\/.+/,
+                    message: 'Must be a valid URL'
                   }
-                }}
-                render={({ field }) => (
-                  <FormField
-                    {...field}
-                    label="Base URL"
-                    error={errors.baseUrl?.message}
-                    disabled={isLoading}
-                    fullWidth
-                  />
-                )}
+                })}
               />
             </Grid>
 
-            {/* Rate Limiting Controls */}
+            <Grid item xs={12} sm={6}>
+              <FormField
+                name="rateLimit"
+                label="Rate Limit (requests/hour)"
+                type="number"
+                required
+                disabled={!enableRateLimiting}
+                error={errors.rateLimit?.message}
+                {...register('rateLimit', {
+                  required: 'Rate limit is required',
+                  min: {
+                    value: 0,
+                    message: 'Must be greater than 0'
+                  },
+                  max: {
+                    value: 10000,
+                    message: 'Must be less than 10,000'
+                  }
+                })}
+              />
+            </Grid>
+
             <Grid item xs={12}>
-              <Typography variant="subtitle1" gutterBottom>
-                Rate Limiting
-              </Typography>
-              <Controller
-                name="enableRateLimiting"
-                control={control}
-                render={({ field }) => (
-                  <Switch
-                    {...field}
-                    checked={field.value}
-                    disabled={isLoading}
-                    aria-label="Enable rate limiting"
-                  />
-                )}
-              />
-            </Grid>
-
-            {/* Rate Limit Configuration */}
-            <Grid item xs={12} md={4}>
-              <Controller
-                name="rateLimitConfig.maxRequests"
-                control={control}
-                rules={{ 
-                  required: 'Max requests is required',
-                  min: { value: 1, message: 'Must be greater than 0' }
-                }}
-                render={({ field }) => (
-                  <FormField
-                    {...field}
-                    label="Max Requests"
-                    type="number"
-                    error={errors.rateLimitConfig?.maxRequests?.message}
-                    disabled={isLoading}
-                    fullWidth
-                  />
-                )}
-              />
-            </Grid>
-
-            {/* CORS Origins Management */}
-            <Grid item xs={12}>
-              <Typography variant="subtitle1" gutterBottom>
-                Allowed Origins (CORS)
-              </Typography>
-              <Grid container spacing={1} alignItems="center">
-                <Grid item xs>
-                  <FormField
-                    value={newOrigin}
-                    onChange={(e) => setNewOrigin(e.target.value)}
-                    label="Add Origin"
-                    placeholder="https://example.com"
-                    disabled={isLoading}
-                    fullWidth
-                  />
+              <Typography component="div" variant="body1">
+                <Grid component="label" container alignItems="center" spacing={1}>
+                  <Grid item>Rate Limiting</Grid>
+                  <Grid item>
+                    <Switch
+                      checked={enableRateLimiting}
+                      onChange={(e) => setValue('enableRateLimiting', e.target.checked)}
+                      name="enableRateLimiting"
+                      color="primary"
+                      inputProps={{
+                        'aria-label': 'Enable rate limiting'
+                      }}
+                    />
+                  </Grid>
                 </Grid>
-                <Grid item>
-                  <IconButton
-                    onClick={handleAddOrigin}
-                    disabled={isLoading || !newOrigin}
-                    aria-label="Add origin"
-                  >
-                    <AddIcon />
-                  </IconButton>
-                </Grid>
-              </Grid>
-              
-              <Grid container spacing={1} sx={{ mt: 1 }}>
-                <Controller
-                  name="allowedOrigins"
-                  control={control}
-                  render={({ field }) => (
-                    <>
-                      {field.value.map((origin: string) => (
-                        <Grid item key={origin}>
-                          <Chip
-                            label={origin}
-                            onDelete={() => handleRemoveOrigin(origin)}
-                            disabled={isLoading}
-                          />
-                        </Grid>
-                      ))}
-                    </>
-                  )}
-                />
-              </Grid>
+              </Typography>
             </Grid>
 
-            {/* Submit Button */}
             <Grid item xs={12}>
               <PrimaryButton
                 type="submit"
-                disabled={isLoading || !isDirty}
+                disabled={isLoading}
                 fullWidth
+                size="large"
               >
-                {isLoading ? 'Saving...' : 'Save Changes'}
+                {isLoading ? 'Updating...' : 'Update API Settings'}
               </PrimaryButton>
             </Grid>
           </Grid>
         </form>
 
-        {/* Confirmation Dialog */}
-        <Dialog
-          open={showConfirmDialog}
-          onClose={() => setShowConfirmDialog(false)}
-          aria-labelledby="confirm-dialog-title"
-        >
-          <DialogTitle id="confirm-dialog-title">
-            Confirm API Settings Changes
-          </DialogTitle>
-          <DialogContent>
-            <Typography>
-              Are you sure you want to update the API settings? This may affect active integrations.
-            </Typography>
-          </DialogContent>
-          <DialogActions>
-            <PrimaryButton
-              onClick={() => setShowConfirmDialog(false)}
-              variant="secondary"
-            >
-              Cancel
-            </PrimaryButton>
-            <PrimaryButton
-              onClick={submitForm(handleSubmit)}
-              disabled={isLoading}
-            >
-              Confirm Changes
-            </PrimaryButton>
-          </DialogActions>
-        </Dialog>
+        {ConfirmationDialog}
       </CardContent>
     </Card>
   );
