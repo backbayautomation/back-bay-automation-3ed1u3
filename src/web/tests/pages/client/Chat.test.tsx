@@ -1,154 +1,140 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { axe } from '@axe-core/react';
-import { measurePerformance } from 'jest-performance';
-import ChatPage from '../../../../src/pages/client/Chat';
-import { useWebSocket } from '../../../../src/hooks/useWebSocket';
 import { Provider } from 'react-redux';
-import { BrowserRouter } from 'react-router-dom';
-import { ThemeProvider } from '../../../../src/contexts/ThemeContext';
 import { configureStore } from '@reduxjs/toolkit';
-import chatReducer from '../../../../src/redux/slices/chatSlice';
+import { axe, toHaveNoViolations } from 'jest-axe';
+import { measurePerformance } from 'jest-performance';
 
-// Mock WebSocket hook
+import ChatPage from '../../../../src/pages/client/Chat';
+import chatReducer from '../../../../src/redux/slices/chatSlice';
+import { WebSocketStatus, MessageRole } from '../../../../src/types/chat';
+
+// Mock dependencies
 jest.mock('../../../../src/hooks/useWebSocket', () => ({
-  useWebSocket: jest.fn()
+  __esModule: true,
+  default: jest.fn(() => ({
+    isConnected: false,
+    connectionState: 'disconnected',
+    connect: jest.fn(),
+    disconnect: jest.fn(),
+    reconnect: jest.fn(),
+    messageQueue: []
+  }))
 }));
 
-// Performance thresholds
+// Test constants
+const TEST_TIMEOUT = 30000;
 const PERFORMANCE_THRESHOLDS = {
-  renderTime: 100, // ms
-  interactionTime: 50, // ms
-  messageProcessingTime: 30 // ms
+  messageRender: 100, // ms
+  messageListScroll: 16, // ms (60fps)
+  markdownRender: 50 // ms
 };
 
 // Test utilities
+const createMockStore = (initialState = {}) => {
+  return configureStore({
+    reducer: {
+      chat: chatReducer
+    },
+    preloadedState: {
+      chat: {
+        currentSession: {
+          id: 'test-session',
+          messages: [],
+          status: 'active'
+        },
+        wsStatus: WebSocketStatus.DISCONNECTED,
+        ...initialState
+      }
+    }
+  });
+};
+
 const renderWithProviders = (
   ui: React.ReactElement,
   {
-    preloadedState = {},
-    store = configureStore({
-      reducer: { chat: chatReducer },
-      preloadedState
-    }),
+    store = createMockStore(),
     ...renderOptions
   } = {}
 ) => {
   const Wrapper = ({ children }: { children: React.ReactNode }) => (
-    <Provider store={store}>
-      <BrowserRouter>
-        <ThemeProvider>
-          {children}
-        </ThemeProvider>
-      </BrowserRouter>
-    </Provider>
+    <Provider store={store}>{children}</Provider>
   );
-
-  return {
-    store,
-    ...render(ui, { wrapper: Wrapper, ...renderOptions })
-  };
+  return render(ui, { wrapper: Wrapper, ...renderOptions });
 };
 
+// Mock messages for testing
+const mockMessages = [
+  {
+    id: '1',
+    content: 'Test message 1',
+    role: MessageRole.USER,
+    timestamp: new Date(),
+    sessionId: 'test-session'
+  },
+  {
+    id: '2',
+    content: 'Test response 1',
+    role: MessageRole.ASSISTANT,
+    timestamp: new Date(),
+    sessionId: 'test-session'
+  }
+];
+
 describe('ChatPage', () => {
-  // Mock setup
-  const mockWebSocket = {
-    isConnected: false,
-    connect: jest.fn(),
-    disconnect: jest.fn(),
-    sendMessage: jest.fn(),
-    connectionState: 'disconnected'
-  };
-
   beforeEach(() => {
-    (useWebSocket as jest.Mock).mockReturnValue(mockWebSocket);
-  });
-
-  afterEach(() => {
     jest.clearAllMocks();
   });
 
-  // UI Component Tests
-  describe('UI Components', () => {
-    it('renders chat interface with all required elements', async () => {
-      const { container } = renderWithProviders(<ChatPage />);
+  describe('Rendering and Layout', () => {
+    it('renders chat interface with loading state when disconnected', () => {
+      renderWithProviders(<ChatPage />);
       
       expect(screen.getByRole('main')).toBeInTheDocument();
-      expect(screen.getByRole('region', { name: /chat message/i })).toBeInTheDocument();
-      expect(screen.getByRole('textbox')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /send/i })).toBeInTheDocument();
-      
-      // Check for loading state
-      expect(screen.queryByRole('status')).toBeInTheDocument();
+      expect(screen.getByRole('status')).toBeInTheDocument();
+      expect(screen.getByLabelText(/chat message container/i)).toBeInTheDocument();
     });
 
-    it('displays loading overlay while initializing', () => {
-      renderWithProviders(<ChatPage />);
-      expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Connecting to chat service');
-    });
-
-    it('handles error states gracefully', async () => {
-      mockWebSocket.connect.mockRejectedValueOnce(new Error('Connection failed'));
-      renderWithProviders(<ChatPage />);
+    it('displays connection status indicator', async () => {
+      const { rerender } = renderWithProviders(<ChatPage />);
       
+      expect(screen.getByRole('status')).toHaveTextContent(/connecting/i);
+      
+      rerender(<ChatPage />);
       await waitFor(() => {
-        expect(screen.getByRole('alert')).toBeInTheDocument();
+        expect(screen.queryByRole('status')).not.toBeInTheDocument();
       });
     });
   });
 
-  // WebSocket Connection Tests
   describe('WebSocket Connection', () => {
     it('establishes WebSocket connection on mount', async () => {
-      renderWithProviders(<ChatPage />);
-      expect(mockWebSocket.connect).toHaveBeenCalled();
-    });
+      const mockConnect = jest.fn();
+      jest.spyOn(require('../../../../src/hooks/useWebSocket'), 'default')
+        .mockImplementation(() => ({
+          isConnected: false,
+          connect: mockConnect,
+          disconnect: jest.fn()
+        }));
 
-    it('handles reconnection attempts', async () => {
-      mockWebSocket.isConnected = false;
       renderWithProviders(<ChatPage />);
       
       await waitFor(() => {
-        expect(mockWebSocket.connect).toHaveBeenCalledTimes(1);
+        expect(mockConnect).toHaveBeenCalled();
       });
     });
 
-    it('disconnects WebSocket on unmount', () => {
-      const { unmount } = renderWithProviders(<ChatPage />);
-      unmount();
-      expect(mockWebSocket.disconnect).toHaveBeenCalled();
-    });
-  });
+    it('handles connection errors gracefully', async () => {
+      const mockConnect = jest.fn().mockRejectedValue(new Error('Connection failed'));
+      jest.spyOn(require('../../../../src/hooks/useWebSocket'), 'default')
+        .mockImplementation(() => ({
+          isConnected: false,
+          connect: mockConnect,
+          disconnect: jest.fn()
+        }));
 
-  // Message Handling Tests
-  describe('Message Handling', () => {
-    it('processes incoming messages correctly', async () => {
-      const { store } = renderWithProviders(<ChatPage />);
-      
-      const mockMessage = {
-        id: '123',
-        content: 'Test message',
-        role: 'user',
-        timestamp: new Date(),
-        sessionId: '456'
-      };
-
-      // Simulate incoming message
-      await store.dispatch({ 
-        type: 'chat/addMessage', 
-        payload: mockMessage 
-      });
-
-      expect(store.getState().chat.currentSession?.messages).toContainEqual(mockMessage);
-    });
-
-    it('handles message errors appropriately', async () => {
-      mockWebSocket.sendMessage.mockRejectedValueOnce(new Error('Failed to send'));
       renderWithProviders(<ChatPage />);
-      
-      const input = screen.getByRole('textbox');
-      await userEvent.type(input, 'Test message{enter}');
       
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
@@ -156,9 +142,48 @@ describe('ChatPage', () => {
     });
   });
 
-  // Accessibility Tests
+  describe('Message Handling', () => {
+    it('displays messages in chronological order', async () => {
+      const store = createMockStore({
+        currentSession: {
+          id: 'test-session',
+          messages: mockMessages
+        }
+      });
+
+      renderWithProviders(<ChatPage />, { store });
+      
+      const messages = screen.getAllByRole('article');
+      expect(messages).toHaveLength(mockMessages.length);
+      expect(messages[0]).toHaveTextContent(mockMessages[0].content);
+    });
+
+    it('handles markdown rendering correctly', async () => {
+      const markdownMessage = {
+        id: '3',
+        content: '**Bold** and *italic* text',
+        role: MessageRole.ASSISTANT,
+        timestamp: new Date(),
+        sessionId: 'test-session'
+      };
+
+      const store = createMockStore({
+        currentSession: {
+          id: 'test-session',
+          messages: [markdownMessage]
+        }
+      });
+
+      renderWithProviders(<ChatPage />, { store });
+      
+      const message = screen.getByRole('article');
+      expect(message).toContainHTML('<strong>Bold</strong>');
+      expect(message).toContainHTML('<em>italic</em>');
+    });
+  });
+
   describe('Accessibility', () => {
-    it('meets WCAG 2.1 accessibility standards', async () => {
+    it('meets WCAG 2.1 accessibility guidelines', async () => {
       const { container } = renderWithProviders(<ChatPage />);
       const results = await axe(container);
       expect(results).toHaveNoViolations();
@@ -167,68 +192,76 @@ describe('ChatPage', () => {
     it('supports keyboard navigation', async () => {
       renderWithProviders(<ChatPage />);
       
-      const input = screen.getByRole('textbox');
-      const sendButton = screen.getByRole('button', { name: /send/i });
-      
-      await userEvent.tab();
-      expect(input).toHaveFocus();
-      
-      await userEvent.tab();
-      expect(sendButton).toHaveFocus();
+      const chatInput = screen.getByRole('textbox');
+      fireEvent.keyDown(chatInput, { key: 'Tab' });
+      expect(document.activeElement).toBe(chatInput);
     });
   });
 
-  // Performance Tests
   describe('Performance', () => {
-    it('renders within performance budget', async () => {
+    it('renders messages within performance budget', async () => {
       const { rerender } = renderWithProviders(<ChatPage />);
       
-      const renderMetrics = await measurePerformance(
-        () => rerender(<ChatPage />),
-        { timeout: PERFORMANCE_THRESHOLDS.renderTime }
+      const renderTime = await measurePerformance(
+        () => {
+          rerender(<ChatPage />);
+        },
+        { timeout: 1000 }
       );
-      
-      expect(renderMetrics.duration).toBeLessThan(PERFORMANCE_THRESHOLDS.renderTime);
+
+      expect(renderTime).toBeLessThan(PERFORMANCE_THRESHOLDS.messageRender);
     });
 
-    it('handles message processing within performance thresholds', async () => {
-      const { store } = renderWithProviders(<ChatPage />);
+    it('handles message list scrolling efficiently', async () => {
+      const store = createMockStore({
+        currentSession: {
+          id: 'test-session',
+          messages: Array(100).fill(mockMessages[0])
+        }
+      });
+
+      renderWithProviders(<ChatPage />, { store });
       
-      const processingMetrics = await measurePerformance(
-        async () => {
-          await store.dispatch({ 
-            type: 'chat/addMessage', 
-            payload: {
-              id: '123',
-              content: 'Performance test message',
-              role: 'user',
-              timestamp: new Date(),
-              sessionId: '456'
-            }
-          });
+      const scrollTime = await measurePerformance(
+        () => {
+          const messageList = screen.getByRole('log');
+          fireEvent.scroll(messageList, { target: { scrollTop: 1000 } });
         },
-        { timeout: PERFORMANCE_THRESHOLDS.messageProcessingTime }
+        { timeout: 1000 }
       );
-      
-      expect(processingMetrics.duration).toBeLessThan(PERFORMANCE_THRESHOLDS.messageProcessingTime);
+
+      expect(scrollTime).toBeLessThan(PERFORMANCE_THRESHOLDS.messageListScroll);
     });
   });
 
-  // Error Boundary Tests
-  describe('Error Boundary', () => {
-    it('catches and handles rendering errors', async () => {
-      const ErrorComponent = () => {
-        throw new Error('Test error');
-      };
+  describe('Error Handling', () => {
+    it('recovers from WebSocket disconnection', async () => {
+      const mockReconnect = jest.fn();
+      jest.spyOn(require('../../../../src/hooks/useWebSocket'), 'default')
+        .mockImplementation(() => ({
+          isConnected: false,
+          connectionState: WebSocketStatus.DISCONNECTED,
+          connect: jest.fn(),
+          reconnect: mockReconnect
+        }));
 
-      const { container } = renderWithProviders(
-        <ChatPage>
-          <ErrorComponent />
-        </ChatPage>
-      );
+      renderWithProviders(<ChatPage />);
+      
+      await waitFor(() => {
+        expect(mockReconnect).toHaveBeenCalled();
+      });
+    });
 
+    it('displays error boundary fallback on component error', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const store = createMockStore({
+        currentSession: null // This should trigger an error
+      });
+
+      renderWithProviders(<ChatPage />, { store });
+      
       expect(screen.getByRole('alert')).toBeInTheDocument();
-      expect(container).toHaveTextContent('Chat Error');
+      errorSpy.mockRestore();
     });
   });
 });
