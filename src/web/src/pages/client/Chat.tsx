@@ -1,12 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Box, CircularProgress, styled } from '@mui/material';
+import React, { useCallback, useEffect } from 'react';
+import { Box, styled, CircularProgress } from '@mui/material';
 import { ErrorBoundary } from 'react-error-boundary';
 
 // Internal imports
 import ClientLayout from '../../layouts/ClientLayout';
 import ChatInterface from '../../components/client/Chat/ChatInterface';
 import useWebSocket from '../../hooks/useWebSocket';
-import { WEBSOCKET_OPTIONS, ACCESSIBILITY_CONFIG } from './constants';
 
 // Styled components with accessibility and responsive design
 const ChatPageContainer = styled(Box)(({ theme }) => ({
@@ -18,12 +17,20 @@ const ChatPageContainer = styled(Box)(({ theme }) => ({
   backgroundColor: theme.palette.background.default,
   position: 'relative',
   overflow: 'hidden',
-  '@media (max-width: theme.breakpoints.values.sm)': {
-    padding: theme.spacing(1)
+
+  // Mobile responsiveness
+  [theme.breakpoints.down('sm')]: {
+    padding: theme.spacing(1),
   },
-  '@media (max-width: theme.breakpoints.values.md)': {
-    height: `calc(100vh - ${theme.spacing(7)})`
-  }
+
+  [theme.breakpoints.down('md')]: {
+    height: `calc(100vh - ${theme.spacing(7)})`,
+  },
+
+  // Reduced motion support
+  '@media (prefers-reduced-motion: reduce)': {
+    transition: 'none',
+  },
 }));
 
 const LoadingOverlay = styled(Box)(({ theme }) => ({
@@ -36,120 +43,113 @@ const LoadingOverlay = styled(Box)(({ theme }) => ({
   alignItems: 'center',
   justifyContent: 'center',
   backgroundColor: 'rgba(255, 255, 255, 0.8)',
-  zIndex: theme.zIndex.modal
+  zIndex: theme.zIndex.modal,
 }));
 
-// Error boundary fallback component
-const ErrorFallback = ({ error }: { error: Error }) => (
+// WebSocket configuration
+const WEBSOCKET_OPTIONS = {
+  autoConnect: true,
+  reconnectInterval: 3000,
+  maxRetries: 5,
+  pingInterval: 30000,
+  pingTimeout: 5000,
+  debug: false,
+};
+
+// Accessibility configuration
+const ACCESSIBILITY_CONFIG = {
+  ariaLabels: {
+    chatContainer: 'Chat message container',
+    messageInput: 'Type your message',
+    sendButton: 'Send message',
+    loadingState: 'Connecting to chat service',
+  },
+  keyboardShortcuts: {
+    sendMessage: 'Ctrl + Enter',
+    clearInput: 'Escape',
+  },
+};
+
+// Error fallback component
+const ErrorFallback = ({ error, resetErrorBoundary }: { error: Error; resetErrorBoundary: () => void }) => (
   <Box
     role="alert"
-    sx={{
-      p: 3,
-      color: 'error.main',
-      textAlign: 'center'
-    }}
+    aria-live="assertive"
+    p={3}
+    color="error.main"
+    bgcolor="error.light"
+    borderRadius={1}
   >
-    <h2>Chat Error</h2>
-    <pre style={{ whiteSpace: 'pre-wrap' }}>{error.message}</pre>
+    <h3>Something went wrong with the chat interface:</h3>
+    <pre>{error.message}</pre>
+    <button onClick={resetErrorBoundary}>Try again</button>
   </Box>
 );
 
-// Main chat page component
+/**
+ * ChatPage component providing the main chat interface with real-time communication
+ * and accessibility features
+ */
 const ChatPage = React.memo(() => {
-  const [sessionId] = useState(() => crypto.randomUUID());
-  const [isInitializing, setIsInitializing] = useState(true);
-
-  // Initialize WebSocket connection with configuration
+  // WebSocket connection management
   const {
     isConnected,
     connectionState,
     connect,
-    disconnect
+    disconnect,
   } = useWebSocket({
     baseUrl: process.env.REACT_APP_WS_URL || 'ws://localhost:8080',
-    token: sessionId,
-    autoConnect: WEBSOCKET_OPTIONS.autoConnect,
-    reconnectAttempts: WEBSOCKET_OPTIONS.maxRetries,
-    reconnectInterval: WEBSOCKET_OPTIONS.reconnectInterval,
-    messageQueueSize: 100,
-    monitoringEnabled: true
+    token: 'session-token', // Replace with actual session token
+    ...WEBSOCKET_OPTIONS,
   });
 
-  // Handle WebSocket connection lifecycle
+  // Initialize WebSocket connection
   useEffect(() => {
-    const initializeConnection = async () => {
-      try {
-        await connect();
-      } catch (error) {
-        console.error('WebSocket connection failed:', error);
-      } finally {
-        setIsInitializing(false);
-      }
-    };
-
-    initializeConnection();
-
+    connect().catch(console.error);
     return () => {
       disconnect();
     };
   }, [connect, disconnect]);
 
-  // Handle error states
-  const handleError = useCallback((error: { type: string; message: string }) => {
+  // Handle connection errors
+  const handleError = useCallback((error: Error) => {
     console.error('Chat error:', error);
-    // Additional error handling logic could be added here
+    // Implement error reporting/logging here
   }, []);
 
   return (
-    <ErrorBoundary FallbackComponent={ErrorFallback}>
+    <ErrorBoundary
+      FallbackComponent={ErrorFallback}
+      onReset={() => {
+        // Reset error state and reconnect
+        connect().catch(console.error);
+      }}
+      onError={handleError}
+    >
       <ClientLayout>
         <ChatPageContainer
           role="main"
           aria-label={ACCESSIBILITY_CONFIG.ariaLabels.chatContainer}
         >
-          {isInitializing && (
+          {!isConnected && (
             <LoadingOverlay
               role="status"
               aria-label={ACCESSIBILITY_CONFIG.ariaLabels.loadingState}
             >
-              <CircularProgress />
+              <CircularProgress size={48} thickness={4} />
             </LoadingOverlay>
           )}
           
           <ChatInterface
-            sessionId={sessionId}
+            sessionId="current-session-id" // Replace with actual session ID
             onError={handleError}
-            aria-label={ACCESSIBILITY_CONFIG.ariaLabels.chatContainer}
+            aria-label="Product catalog chat interface"
           />
         </ChatPageContainer>
       </ClientLayout>
     </ErrorBoundary>
   );
 });
-
-// Constants for component configuration
-const constants = {
-  WEBSOCKET_OPTIONS: {
-    autoConnect: true,
-    reconnectInterval: 3000,
-    maxRetries: 5,
-    pingInterval: 30000,
-    pingTimeout: 5000,
-    debug: false
-  },
-  ACCESSIBILITY_CONFIG: {
-    ariaLabels: {
-      chatContainer: 'Chat message container',
-      messageInput: 'Type your message',
-      sendButton: 'Send message',
-      loadingState: 'Connecting to chat service'
-    },
-    keyboardShortcuts: {
-      sendMessage: 'Ctrl + Enter',
-      clearInput: 'Escape'
-    }
-  }
-} as const;
 
 // Display name for debugging
 ChatPage.displayName = 'ChatPage';
