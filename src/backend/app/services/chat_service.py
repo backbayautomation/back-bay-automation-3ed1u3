@@ -1,20 +1,19 @@
 """
-Enhanced chat service implementation for AI-powered Product Catalog Search System.
+Enhanced chat service implementation for the AI-powered Product Catalog Search System.
 Provides secure, monitored, and context-aware chat functionality with multi-tenant isolation.
 
 Version: 1.0.0
 """
 
 import logging
-import asyncio
 from uuid import UUID
 from datetime import datetime
 from typing import Dict, Optional, List
 from tenacity import retry, stop_after_attempt, wait_exponential  # version: ^8.2.0
-from prometheus_client import Counter, Histogram, Gauge  # version: ^0.17.0
+from prometheus_client import Counter, Histogram  # version: ^0.16.0
 from opentelemetry import trace  # version: ^1.18.0
-from sqlalchemy.orm import Session  # version: ^1.4.0
-from redis import Redis  # version: ^4.5.0
+from sqlalchemy.orm import Session
+from redis import Redis
 
 from ..models.chat_session import ChatSession
 from ..models.message import Message
@@ -23,26 +22,20 @@ from .vector_search import VectorSearchService
 from ..core.security import encrypt_sensitive_data
 from ..utils.logging import StructuredLogger
 
-# Configure logger
+# Initialize logger
 logger = StructuredLogger(__name__)
 
-# Prometheus metrics
-CHAT_REQUESTS = Counter('chat_requests_total', 'Total number of chat requests')
-CHAT_ERRORS = Counter('chat_errors_total', 'Total number of chat errors')
-CHAT_LATENCY = Histogram('chat_request_latency_seconds', 'Chat request latency')
-ACTIVE_SESSIONS = Gauge('chat_active_sessions', 'Number of active chat sessions')
+# Initialize tracer
+tracer = trace.get_tracer(__name__)
 
-# Constants
-MAX_HISTORY_MESSAGES = 50
-CACHE_TTL = 3600  # 1 hour
-RATE_LIMIT_REQUESTS = 100
-RATE_LIMIT_PERIOD = 60  # 1 minute
+# Initialize Prometheus metrics
+CHAT_REQUESTS = Counter('chat_requests_total', 'Total chat requests', ['tenant_id', 'status'])
+CHAT_LATENCY = Histogram('chat_request_duration_seconds', 'Chat request duration')
+MESSAGE_COUNT = Counter('chat_messages_total', 'Total chat messages', ['tenant_id', 'role'])
+CACHE_HITS = Counter('chat_cache_hits_total', 'Chat cache hits', ['tenant_id'])
 
 class ChatService:
-    """
-    Enhanced service class implementing chat functionality with production-ready features
-    including monitoring, caching, and security controls.
-    """
+    """Enhanced service class implementing chat functionality with production-ready features."""
 
     def __init__(
         self,
@@ -52,21 +45,31 @@ class ChatService:
         cache_client: Redis,
         config: Dict
     ):
-        """Initialize chat service with required dependencies and monitoring."""
+        """
+        Initialize chat service with required dependencies and monitoring.
+        
+        Args:
+            db_session: Database session
+            ai_service: AI processing service
+            vector_search: Vector search service
+            cache_client: Redis cache client
+            config: Service configuration
+        """
         self._db = db_session
         self._ai_service = ai_service
         self._vector_search = vector_search
         self._cache = cache_client
         self._config = config
         
-        # Initialize OpenTelemetry tracer
-        self._tracer = trace.get_tracer(__name__)
+        # Initialize metrics tracking
+        self._metrics = {
+            'requests': 0,
+            'errors': 0,
+            'cache_hits': 0,
+            'start_time': datetime.utcnow()
+        }
         
-        # Initialize rate limiting
-        self._rate_limit = {}
-        
-        logger.info("Chat service initialized", 
-                   extra={'config': str(config)})
+        logger.info("Chat service initialized successfully")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -75,217 +78,278 @@ class ChatService:
     async def create_session(
         self,
         user_id: UUID,
-        client_id: UUID,
         title: str,
         metadata: Optional[Dict] = None
     ) -> ChatSession:
         """
-        Create a new chat session with enhanced security and validation.
-
+        Create new chat session with enhanced security and validation.
+        
         Args:
             user_id: User identifier
-            client_id: Client/tenant identifier
             title: Session title
             metadata: Optional session metadata
-
+            
         Returns:
-            ChatSession: Newly created session
-
+            ChatSession: Created session instance
+            
         Raises:
             ValueError: If validation fails
         """
-        with self._tracer.start_as_current_span("create_chat_session") as span:
+        with tracer.start_as_current_span("create_chat_session") as span:
             try:
-                # Validate rate limits
-                if not self._check_rate_limit(str(user_id)):
-                    raise ValueError("Rate limit exceeded")
-
-                # Create session with security context
+                # Validate inputs
+                if not title or len(title) > 255:
+                    raise ValueError("Invalid title length")
+                
+                # Initialize metadata with defaults
+                session_metadata = {
+                    'context': {},
+                    'preferences': {},
+                    'analytics': {
+                        'created_at': datetime.utcnow().isoformat(),
+                        'client_info': metadata.get('client_info', {}) if metadata else {}
+                    }
+                }
+                
+                if metadata:
+                    # Encrypt sensitive metadata
+                    if 'sensitive' in metadata:
+                        session_metadata['encrypted_data'] = encrypt_sensitive_data(
+                            str(metadata['sensitive'])
+                        )
+                    session_metadata.update(metadata)
+                
+                # Create session
                 session = ChatSession(
                     user_id=user_id,
-                    client_id=client_id,
                     title=title,
-                    metadata={
-                        **(metadata or {}),
-                        'created_at': datetime.utcnow().isoformat(),
-                        'client_info': self._get_client_info()
+                    metadata=session_metadata
+                )
+                
+                self._db.add(session)
+                await self._db.commit()
+                
+                # Update metrics
+                CHAT_REQUESTS.labels(
+                    tenant_id=str(session.client_id),
+                    status='created'
+                ).inc()
+                
+                span.set_attribute("session_id", str(session.id))
+                logger.info(
+                    "Chat session created",
+                    extra={
+                        'session_id': str(session.id),
+                        'user_id': str(user_id)
                     }
                 )
-
-                # Add to database
-                self._db.add(session)
-                await asyncio.to_thread(self._db.commit)
-
-                ACTIVE_SESSIONS.inc()
-                logger.info("Chat session created",
-                          extra={'session_id': str(session.id),
-                                'user_id': str(user_id)})
-
-                span.set_attribute("session_id", str(session.id))
+                
                 return session
-
+                
             except Exception as e:
-                CHAT_ERRORS.inc()
-                logger.error("Failed to create chat session",
-                           extra={'error': str(e), 'user_id': str(user_id)})
+                await self._db.rollback()
+                CHAT_REQUESTS.labels(
+                    tenant_id='unknown',
+                    status='error'
+                ).inc()
+                logger.error(
+                    "Failed to create chat session",
+                    extra={'error': str(e)}
+                )
                 raise
 
-    @CHAT_LATENCY.time()
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10)
+    )
     async def process_message(
         self,
         session_id: UUID,
         content: str,
-        metadata: Optional[Dict] = None
+        context: Optional[Dict] = None
     ) -> Dict:
         """
-        Process chat message with context management and monitoring.
-
+        Process chat message with enhanced error handling and monitoring.
+        
         Args:
             session_id: Chat session identifier
             content: Message content
-            metadata: Optional message metadata
-
+            context: Optional processing context
+            
         Returns:
             Dict containing response and context
-
+            
         Raises:
             ValueError: If validation fails
         """
-        with self._tracer.start_as_current_span("process_chat_message") as span:
-            try:
-                CHAT_REQUESTS.inc()
-
-                # Validate session and rate limits
-                session = await self._get_session(session_id)
-                if not self._check_rate_limit(str(session.user_id)):
-                    raise ValueError("Rate limit exceeded")
-
-                # Check cache for similar queries
-                cache_key = f"chat:{session_id}:{hash(content)}"
-                cached_response = await self._cache.get(cache_key)
-                if cached_response:
-                    return cached_response
-
-                # Create user message
-                user_message = Message(
-                    chat_session_id=session_id,
-                    content=content,
-                    role='user',
-                    metadata=metadata
-                )
-                self._db.add(user_message)
-
-                # Get chat history
-                history = await self._get_chat_history(session_id)
-
-                # Process with AI service
-                ai_response = await self._ai_service.process_query(
-                    content,
-                    history,
-                    {
-                        'session_id': str(session_id),
-                        'user_id': str(session.user_id)
+        with tracer.start_as_current_span("process_message") as span:
+            with CHAT_LATENCY.time():
+                try:
+                    # Validate session and content
+                    session = await self._db.query(ChatSession).get(session_id)
+                    if not session:
+                        raise ValueError("Invalid session ID")
+                    
+                    if not content or len(content) > Message.MAX_CONTENT_LENGTH:
+                        raise ValueError("Invalid message content")
+                    
+                    # Check cache for similar queries
+                    cache_key = f"chat:response:{session_id}:{hash(content)}"
+                    cached_response = await self._cache.get(cache_key)
+                    if cached_response:
+                        CACHE_HITS.labels(tenant_id=str(session.client_id)).inc()
+                        return cached_response
+                    
+                    # Create user message
+                    user_message = Message(
+                        chat_session_id=session_id,
+                        content=content,
+                        role='user',
+                        metadata={
+                            'context': context or {},
+                            'analytics': {
+                                'timestamp': datetime.utcnow().isoformat()
+                            }
+                        }
+                    )
+                    self._db.add(user_message)
+                    
+                    # Get chat history for context
+                    history = await self._get_chat_history(session_id)
+                    
+                    # Process query with AI service
+                    ai_response = await self._ai_service.process_query(
+                        content,
+                        history,
+                        {
+                            'session_id': str(session_id),
+                            'tenant_id': str(session.client_id)
+                        }
+                    )
+                    
+                    # Create AI response message
+                    ai_message = Message(
+                        chat_session_id=session_id,
+                        content=ai_response['response'],
+                        role='system',
+                        metadata={
+                            'context': {
+                                'chunks_used': ai_response['context_used']
+                            },
+                            'analytics': {
+                                'processing_time': ai_response['processing_time'],
+                                'timestamp': datetime.utcnow().isoformat()
+                            }
+                        }
+                    )
+                    self._db.add(ai_message)
+                    
+                    # Update session activity
+                    session.update_activity()
+                    await self._db.commit()
+                    
+                    # Update metrics
+                    MESSAGE_COUNT.labels(
+                        tenant_id=str(session.client_id),
+                        role='user'
+                    ).inc()
+                    MESSAGE_COUNT.labels(
+                        tenant_id=str(session.client_id),
+                        role='system'
+                    ).inc()
+                    
+                    # Prepare response
+                    response = {
+                        'message_id': str(ai_message.id),
+                        'content': ai_message.content,
+                        'context': ai_message.metadata['context'],
+                        'timestamp': ai_message.created_at.isoformat()
                     }
-                )
-
-                # Create AI response message
-                ai_message = Message(
-                    chat_session_id=session_id,
-                    content=ai_response['response'],
-                    role='system',
-                    metadata={
-                        'context': ai_response['context'],
-                        'metrics': ai_response['metrics']
-                    }
-                )
-                self._db.add(ai_message)
-                await asyncio.to_thread(self._db.commit)
-
-                # Prepare response
-                response = {
-                    'message_id': str(ai_message.id),
-                    'content': ai_response['response'],
-                    'context': ai_response['context'],
-                    'created_at': ai_message.created_at.isoformat()
-                }
-
-                # Cache response
-                await self._cache.set(cache_key, response, ttl=CACHE_TTL)
-
-                span.set_attribute("message_id", str(ai_message.id))
-                logger.info("Message processed successfully",
-                          extra={'session_id': str(session_id),
-                                'message_id': str(ai_message.id)})
-
-                return response
-
-            except Exception as e:
-                CHAT_ERRORS.inc()
-                logger.error("Failed to process message",
-                           extra={'error': str(e),
-                                 'session_id': str(session_id)})
-                raise
-
-    async def _get_session(self, session_id: UUID) -> ChatSession:
-        """Retrieve and validate chat session."""
-        session = await asyncio.to_thread(
-            self._db.query(ChatSession)
-            .filter(ChatSession.id == session_id)
-            .first
-        )
-        
-        if not session:
-            raise ValueError("Invalid session ID")
-        
-        if not session.is_active:
-            raise ValueError("Session is inactive")
-            
-        return session
+                    
+                    # Cache response
+                    await self._cache.set(cache_key, response, ttl=3600)
+                    
+                    span.set_attribute("session_id", str(session_id))
+                    logger.info(
+                        "Message processed successfully",
+                        extra={
+                            'session_id': str(session_id),
+                            'message_id': str(ai_message.id)
+                        }
+                    )
+                    
+                    return response
+                    
+                except Exception as e:
+                    await self._db.rollback()
+                    CHAT_REQUESTS.labels(
+                        tenant_id='unknown',
+                        status='error'
+                    ).inc()
+                    logger.error(
+                        "Failed to process message",
+                        extra={
+                            'session_id': str(session_id),
+                            'error': str(e)
+                        }
+                    )
+                    raise
 
     async def _get_chat_history(self, session_id: UUID) -> str:
-        """Retrieve formatted chat history with security filtering."""
-        messages = await asyncio.to_thread(
-            self._db.query(Message)
-            .filter(Message.chat_session_id == session_id)
-            .order_by(Message.created_at.desc())
-            .limit(MAX_HISTORY_MESSAGES)
-            .all
-        )
+        """
+        Retrieve formatted chat history for context.
+        
+        Args:
+            session_id: Chat session identifier
+            
+        Returns:
+            str: Formatted chat history
+        """
+        messages = await self._db.query(Message).filter(
+            Message.chat_session_id == session_id
+        ).order_by(
+            Message.created_at.desc()
+        ).limit(10).all()
         
         history = []
         for msg in reversed(messages):
             history.append(f"{msg.role}: {msg.content}")
-            
+        
         return "\n".join(history)
 
-    def _check_rate_limit(self, identifier: str) -> bool:
-        """Check rate limiting with sliding window."""
-        now = datetime.utcnow().timestamp()
+    async def get_session_stats(self, session_id: UUID) -> Dict:
+        """
+        Get detailed session statistics.
         
-        # Clean expired entries
-        self._rate_limit = {
-            k: v for k, v in self._rate_limit.items()
-            if now - v['timestamp'] < RATE_LIMIT_PERIOD
-        }
-        
-        # Check current rate
-        if identifier not in self._rate_limit:
-            self._rate_limit[identifier] = {
-                'count': 1,
-                'timestamp': now
+        Args:
+            session_id: Chat session identifier
+            
+        Returns:
+            Dict containing session statistics
+        """
+        try:
+            session = await self._db.query(ChatSession).get(session_id)
+            if not session:
+                raise ValueError("Invalid session ID")
+            
+            message_count = await self._db.query(Message).filter(
+                Message.chat_session_id == session_id
+            ).count()
+            
+            return {
+                'session_id': str(session_id),
+                'message_count': message_count,
+                'created_at': session.created_at.isoformat(),
+                'last_activity': session.last_activity_at.isoformat(),
+                'status': session.status
             }
-            return True
             
-        if self._rate_limit[identifier]['count'] >= RATE_LIMIT_REQUESTS:
-            return False
-            
-        self._rate_limit[identifier]['count'] += 1
-        return True
-
-    def _get_client_info(self) -> Dict:
-        """Get sanitized client information."""
-        return {
-            'version': '1.0.0',
-            'environment': self._config.get('environment', 'production'),
-            'timestamp': datetime.utcnow().isoformat()
-        }
+        except Exception as e:
+            logger.error(
+                "Failed to get session stats",
+                extra={
+                    'session_id': str(session_id),
+                    'error': str(e)
+                }
+            )
+            raise
