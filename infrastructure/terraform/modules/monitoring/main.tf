@@ -1,5 +1,4 @@
-# Azure provider configuration for monitoring resources
-# Provider version: ~> 3.0
+# Azure Resource Manager provider configuration
 terraform {
   required_providers {
     azurerm = {
@@ -9,30 +8,30 @@ terraform {
   }
 }
 
-# Log Analytics workspace for centralized logging and monitoring
+# Log Analytics Workspace for centralized logging
 resource "azurerm_log_analytics_workspace" "main" {
   name                       = "${var.environment}-ai-catalog-logs"
   location                   = var.location
   resource_group_name        = var.resource_group_name
   sku                       = "PerGB2018"
   retention_in_days         = var.log_retention_days
-  daily_quota_gb           = 5
+  daily_quota_gb            = var.log_daily_quota_gb
   internet_ingestion_enabled = true
-  internet_query_enabled    = true
+  internet_query_enabled     = true
   tags                      = merge(var.tags, { "component" = "monitoring" })
 }
 
-# Application Insights for application performance monitoring
+# Application Insights for application monitoring
 resource "azurerm_application_insights" "main" {
-  name                          = "${var.environment}-ai-catalog-insights"
-  location                      = var.location
-  resource_group_name           = var.resource_group_name
-  workspace_id                  = azurerm_log_analytics_workspace.main.id
-  application_type             = "web"
-  sampling_percentage          = var.app_insights_sampling_percentage
-  disable_ip_masking           = false
+  name                       = "${var.environment}-ai-catalog-insights"
+  location                   = var.location
+  resource_group_name        = var.resource_group_name
+  workspace_id              = azurerm_log_analytics_workspace.main.id
+  application_type          = "web"
+  sampling_percentage       = var.app_insights_sampling_percentage
+  disable_ip_masking        = false
   local_authentication_disabled = true
-  tags                         = merge(var.tags, { "component" = "monitoring" })
+  tags                      = merge(var.tags, { "component" = "monitoring" })
 }
 
 # Action group for alert notifications
@@ -48,6 +47,12 @@ resource "azurerm_monitor_action_group" "main" {
     use_common_alert_schema = true
   }
 
+  sms_receiver {
+    name         = "oncall"
+    country_code = "1"
+    phone_number = var.alert_notification_phone
+  }
+
   webhook_receiver {
     name                    = "teams"
     service_uri            = var.teams_webhook_url
@@ -60,7 +65,6 @@ resource "azurerm_monitor_metric_alert" "cpu_alert" {
   name                = "${var.environment}-cpu-alert"
   resource_group_name = var.resource_group_name
   scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when CPU usage exceeds threshold"
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT15M"
@@ -83,7 +87,6 @@ resource "azurerm_monitor_metric_alert" "memory_alert" {
   name                = "${var.environment}-memory-alert"
   resource_group_name = var.resource_group_name
   scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when memory usage exceeds threshold"
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT15M"
@@ -106,7 +109,6 @@ resource "azurerm_monitor_metric_alert" "response_time_alert" {
   name                = "${var.environment}-response-time-alert"
   resource_group_name = var.resource_group_name
   scopes              = [azurerm_application_insights.main.id]
-  description         = "Alert when response time exceeds threshold"
   severity            = 2
   frequency           = "PT5M"
   window_size         = "PT15M"
@@ -127,13 +129,12 @@ resource "azurerm_monitor_metric_alert" "response_time_alert" {
 # Diagnostic settings for comprehensive logging
 resource "azurerm_monitor_diagnostic_setting" "main" {
   name                       = "${var.environment}-ai-catalog-diagnostics"
-  target_resource_id         = azurerm_application_insights.main.id
+  target_resource_id        = azurerm_application_insights.main.id
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
 
   log {
     category = "AppAvailabilityResults"
     enabled  = true
-
     retention_policy {
       enabled = true
       days    = var.log_retention_days
@@ -143,7 +144,6 @@ resource "azurerm_monitor_diagnostic_setting" "main" {
   log {
     category = "AppPerformanceCounters"
     enabled  = true
-
     retention_policy {
       enabled = true
       days    = var.log_retention_days
@@ -153,7 +153,6 @@ resource "azurerm_monitor_diagnostic_setting" "main" {
   log {
     category = "AppTraces"
     enabled  = true
-
     retention_policy {
       enabled = true
       days    = var.log_retention_days
