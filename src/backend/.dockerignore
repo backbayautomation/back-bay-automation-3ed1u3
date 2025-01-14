@@ -44,34 +44,18 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Temporary files
-tmp/
-*.tmp
-*.temp
+# Build and temporary files
+*.so
+*.dylib
+*.dll
+build/
+dist/
+*.egg-info/
 
-# Docker specific
-Dockerfile*
-docker-compose*.yml
-.docker/
-
-# Certificate files
-*.crt
-*.key
-*.pem
-*.p12
-*.pfx
-
-# Local development environment
-.env
-.env.local
-.env.*.local
-.env.development
-.env.test
-.env.production
-
-# Debug files
-*.debug
-debug/
+# Local data and media
+media/
+static/
+uploads/
 
 # System files
 .DS_Store
