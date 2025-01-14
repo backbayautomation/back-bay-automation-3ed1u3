@@ -1,12 +1,12 @@
 """
 SQLAlchemy session management and database connection handling module.
-Implements thread-safe session factories, connection pooling, and multi-tenant database access.
+Provides thread-safe session factories and connection pooling with comprehensive monitoring.
 
 Version: 1.0.0
 """
 
-from contextlib import contextmanager
 import logging
+from contextlib import contextmanager
 from typing import Generator, Dict, Any
 
 from sqlalchemy import create_engine, event  # version: 2.0.0
@@ -20,21 +20,22 @@ from ..core.config import get_settings
 # Configure module logger
 logger = logging.getLogger(__name__)
 
-# Initialize database settings
+# Initialize settings
 settings = get_settings()
-db_config = settings.get_database_settings()
+db_settings = settings.get_database_settings()
 
-# Create SQLAlchemy engine with optimized pool settings
+# Create SQLAlchemy engine with optimized connection pooling
 engine = create_engine(
-    f"postgresql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}",
-    pool_size=db_config['pool_size'],
-    max_overflow=db_config['max_overflow'],
+    f"postgresql://{db_settings['username']}:{db_settings['password']}@"
+    f"{db_settings['host']}:{db_settings['port']}/{db_settings['database']}",
+    pool_size=db_settings['pool_size'],
+    max_overflow=db_settings['max_overflow'],
     pool_timeout=30,
     pool_recycle=3600,
     pool_pre_ping=True,
     connect_args={
         'connect_timeout': 10,
-        'application_name': 'catalog_search',
+        'application_name': 'catalog_search_app',
         'options': '-c statement_timeout=30000'  # 30 second query timeout
     } if settings.ENVIRONMENT == 'production' else {}
 )
@@ -50,109 +51,105 @@ SessionLocal = sessionmaker(
 # Create declarative base for models
 Base = declarative_base()
 
-# Prometheus metrics
+# Initialize Prometheus metrics
 session_metrics = Counter('db_session_total', 'Total number of database sessions created')
 pool_metrics = Gauge('db_pool_connections', 'Current number of database connections in pool')
-query_duration_metrics = Counter('db_query_duration_seconds', 'Database query duration in seconds')
+query_duration_metrics = Counter('db_query_duration_seconds', 'Total duration of database queries')
 transaction_metrics = Counter('db_transaction_total', 'Total number of database transactions', ['status'])
 
 @event.listens_for(engine, 'checkout')
 def receive_checkout(dbapi_connection, connection_record, connection_proxy):
     """Monitor connection pool checkouts and update metrics."""
     pool_metrics.inc()
-    logger.debug("Database connection checked out from pool", 
-                extra={'pool_id': id(connection_record)})
 
 @event.listens_for(engine, 'checkin')
 def receive_checkin(dbapi_connection, connection_record):
     """Monitor connection pool checkins and update metrics."""
     pool_metrics.dec()
-    logger.debug("Database connection returned to pool",
-                extra={'pool_id': id(connection_record)})
 
 @contextmanager
 def get_db() -> Generator[Session, None, None]:
     """
     Enhanced context manager for database sessions with comprehensive error handling
-    and monitoring. Implements connection pooling and multi-tenant isolation.
+    and monitoring. Provides thread-safe session management with automatic cleanup.
     """
     session_metrics.inc()
     session = SessionLocal()
     
     try:
-        # Set session configuration
+        # Set session configuration for production environment
         if settings.ENVIRONMENT == 'production':
-            # Enable read-only mode for specific roles
-            session.execute("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL READ COMMITTED")
-            session.execute("SET statement_timeout = '30s'")
+            session.execute("SET SESSION statement_timeout = '30s'")
+            session.execute("SET SESSION idle_in_transaction_session_timeout = '60s'")
         
-        logger.debug("Database session created", 
-                    extra={'session_id': id(session)})
-        
+        logger.debug("Database session created")
         yield session
         
         session.commit()
-        transaction_metrics.labels(status='committed').inc()
-        
-        logger.debug("Database session committed successfully",
-                    extra={'session_id': id(session)})
+        transaction_metrics.labels(status='success').inc()
+        logger.debug("Transaction committed successfully")
         
     except SQLAlchemyError as e:
         session.rollback()
-        transaction_metrics.labels(status='rolled_back').inc()
-        
-        logger.error("Database session error",
-                    extra={
-                        'session_id': id(session),
-                        'error_type': type(e).__name__,
-                        'error_message': str(e)
-                    })
+        transaction_metrics.labels(status='error').inc()
+        logger.error(f"Database error occurred: {str(e)}", exc_info=True)
+        raise
+    
+    except Exception as e:
+        session.rollback()
+        transaction_metrics.labels(status='error').inc()
+        logger.error(f"Unexpected error in database session: {str(e)}", exc_info=True)
         raise
     
     finally:
         session.close()
-        logger.debug("Database session closed",
-                    extra={'session_id': id(session)})
+        logger.debug("Database session closed")
 
 def init_db() -> bool:
     """
     Initialize database with enhanced validation and monitoring.
-    Returns True if initialization is successful, False otherwise.
+    Returns success status of initialization.
     """
     try:
         # Validate database connection
-        with engine.connect() as conn:
-            conn.execute("SELECT 1")
+        with engine.connect() as connection:
+            connection.execute("SELECT 1")
         
         # Create all tables
         Base.metadata.create_all(bind=engine)
         
-        logger.info("Database initialized successfully",
-                   extra={'tables_created': len(Base.metadata.tables)})
-        return True
+        # Verify database permissions
+        with SessionLocal() as session:
+            session.execute("SELECT current_user")
+            session.execute("SELECT session_user")
         
-    except SQLAlchemyError as e:
-        logger.error("Database initialization failed",
-                    extra={
-                        'error_type': type(e).__name__,
-                        'error_message': str(e)
-                    })
+        logger.info("Database initialized successfully")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Database initialization failed: {str(e)}", exc_info=True)
         return False
 
 def monitor_pool_health() -> Dict[str, Any]:
     """
     Monitor database connection pool health and metrics.
-    Returns dictionary containing pool statistics and health metrics.
+    Returns dictionary of pool health statistics.
     """
-    pool_stats = {
-        'pool_size': engine.pool.size(),
-        'checkedin': engine.pool.checkedin(),
-        'checkedout': engine.pool.checkedout(),
-        'overflow': engine.pool.overflow(),
-        'timeout_count': getattr(engine.pool, '_timeout_count', 0)
-    }
+    try:
+        pool_stats = {
+            'pool_size': engine.pool.size(),
+            'checkedin': engine.pool.checkedin(),
+            'checkedout': engine.pool.checkedout(),
+            'overflow': engine.pool.overflow(),
+            'timeout': engine.pool.timeout()
+        }
+        
+        # Log warning if pool utilization is high
+        if pool_stats['checkedout'] / pool_stats['pool_size'] > 0.8:
+            logger.warning("Database connection pool utilization above 80%")
+        
+        return pool_stats
     
-    logger.info("Database pool health metrics collected",
-                extra=pool_stats)
-    
-    return pool_stats
+    except Exception as e:
+        logger.error(f"Error monitoring pool health: {str(e)}", exc_info=True)
+        return {}
