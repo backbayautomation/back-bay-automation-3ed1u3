@@ -6,14 +6,12 @@ metadata:
   labels:
     app: frontend
     component: web
-    environment: production
-    managed-by: kubernetes
 data:
-  # Application Environment Configuration
+  # Application Environment
   VITE_APP_ENV: "production"
   VITE_APP_NAME: "AI-Powered Product Catalog Search"
   
-  # API Endpoints
+  # API Configuration
   VITE_API_BASE_URL: "https://api.productcatalog.com/api/v1"
   VITE_WEBSOCKET_URL: "wss://api.productcatalog.com/ws"
   VITE_AUTH_DOMAIN: "auth.productcatalog.com"
@@ -23,7 +21,7 @@ data:
   VITE_ENABLE_SENTRY: "true"
   VITE_ENABLE_CACHE: "true"
   
-  # Performance and Resource Limits
+  # Performance and Limits
   VITE_MAX_FILE_SIZE: "10485760"  # 10MB in bytes
   VITE_API_TIMEOUT: "30000"       # 30 seconds in milliseconds
   VITE_RETRY_ATTEMPTS: "3"        # Number of API retry attempts
