@@ -1,16 +1,15 @@
-import React from 'react'; // v18.2.0
-import { Select, MenuItem, Button } from '@mui/material'; // v5.14.0
-import { useForm } from 'react-hook-form'; // v7.45.0
-import { zodResolver } from '@hookform/resolvers/zod'; // v3.0.0
+import React from 'react';
+import { Select, MenuItem, Button } from '@mui/material';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
 
 import FormField from '../../common/Forms/FormField';
 import type { FormFieldProps } from '../../common/Forms/FormField';
-import { User, UserRole } from '../../../types/user';
-import { userValidation } from '../../../validators/user';
-import { sanitizeString } from '../../../utils/validation';
+import { User, UserRole, UserCreateInput, UserUpdateInput } from '../../../types/user';
+import { userCreateSchema, userUpdateSchema } from '../../../validators/user';
 
 /**
- * Props interface for UserForm component with comprehensive type safety
+ * Props interface for UserForm component with enhanced type safety
  */
 interface UserFormProps {
   initialData?: User;
@@ -22,20 +21,7 @@ interface UserFormProps {
 }
 
 /**
- * Type for form data with strict validation
- */
-interface UserFormData {
-  email: string;
-  fullName: string;
-  password?: string;
-  role: UserRole;
-  isActive: boolean;
-  clientId: string | null;
-}
-
-/**
- * Enhanced form component for creating and editing users with accessibility
- * and comprehensive validation support. Implements WCAG 2.1 AA standards.
+ * Enhanced form component for creating and editing users with accessibility and validation
  */
 export const UserForm = React.memo<UserFormProps>(({
   initialData,
@@ -43,81 +29,77 @@ export const UserForm = React.memo<UserFormProps>(({
   onCancel,
   isLoading,
   clientId,
-  allowedRoles
+  allowedRoles,
 }) => {
-  // Initialize form with react-hook-form and zod validation
+  // Initialize form with Zod schema validation
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
     watch,
-    setValue
-  } = useForm<UserFormData>({
-    resolver: zodResolver(initialData ? userValidation.updateSchema : userValidation.createSchema),
+    setValue,
+  } = useForm<UserCreateInput | UserUpdateInput>({
+    resolver: zodResolver(initialData ? userUpdateSchema : userCreateSchema),
     defaultValues: {
       email: initialData?.email || '',
       fullName: initialData?.fullName || '',
       role: initialData?.role || UserRole.REGULAR_USER,
+      clientId: clientId,
       isActive: initialData?.isActive ?? true,
-      clientId: clientId || null
-    }
+    },
   });
 
   // Watch form values for dynamic validation
   const selectedRole = watch('role');
 
-  // Common field props for accessibility and validation
-  const getFieldProps = (name: keyof UserFormData, label: string): FormFieldProps => ({
-    name,
-    label,
-    error: errors[name]?.message,
-    required: true,
-    disabled: isLoading,
+  // Common field props for accessibility
+  const getFieldProps = (name: string): Partial<FormFieldProps> => ({
     fullWidth: true,
-    onChange: (e) => setValue(name, sanitizeString(e.target.value)),
-    'aria-label': label,
-    'aria-invalid': !!errors[name],
-    'aria-describedby': `${name}-error`
+    required: true,
+    error: errors[name]?.message as string,
+    disabled: isLoading,
+    'aria-describedby': `${name}-error`,
   });
 
   // Handle form submission with validation
-  const onFormSubmit = async (data: UserFormData) => {
+  const handleFormSubmit = async (data: UserCreateInput | UserUpdateInput) => {
     try {
-      await onSubmit({
-        ...data,
-        clientId: selectedRole === UserRole.SYSTEM_ADMIN ? null : clientId
-      });
+      await onSubmit(data);
     } catch (error) {
+      // Error handling is managed by the parent component
       console.error('Form submission error:', error);
     }
   };
 
   return (
     <form 
-      onSubmit={handleSubmit(onFormSubmit)}
+      onSubmit={handleSubmit(handleFormSubmit)}
+      aria-label={initialData ? 'Edit User Form' : 'Create User Form'}
       noValidate
-      aria-label="User form"
-      role="form"
     >
       <FormField
-        {...getFieldProps('email', 'Email Address')}
+        {...register('email')}
+        {...getFieldProps('email')}
+        label="Email Address"
         type="email"
+        placeholder="user@example.com"
         inputMode="email"
-        autoComplete="email"
       />
 
       <FormField
-        {...getFieldProps('fullName', 'Full Name')}
+        {...register('fullName')}
+        {...getFieldProps('fullName')}
+        label="Full Name"
         type="text"
-        inputMode="text"
-        autoComplete="name"
+        placeholder="John Doe"
       />
 
       {!initialData && (
         <FormField
-          {...getFieldProps('password', 'Password')}
+          {...register('password')}
+          {...getFieldProps('password')}
+          label="Password"
           type="password"
-          autoComplete="new-password"
           helperText="Must be at least 8 characters with uppercase, lowercase, number and special character"
         />
       )}
@@ -129,22 +111,30 @@ export const UserForm = React.memo<UserFormProps>(({
         fullWidth
         disabled={isLoading}
         error={!!errors.role}
-        aria-label="User role"
-        aria-invalid={!!errors.role}
-        aria-describedby="role-error"
+        aria-label="User Role"
         sx={{ my: 2 }}
       >
         {allowedRoles.map((role) => (
           <MenuItem 
             key={role} 
             value={role}
-            role="option"
-            aria-selected={selectedRole === role}
+            aria-label={`Role: ${role}`}
           >
             {role.replace('_', ' ')}
           </MenuItem>
         ))}
       </Select>
+
+      {selectedRole === UserRole.CLIENT_ADMIN && (
+        <FormField
+          {...register('clientId')}
+          {...getFieldProps('clientId')}
+          label="Client ID"
+          type="text"
+          value={clientId}
+          disabled={true}
+        />
+      )}
 
       <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
         <Button
@@ -152,7 +142,7 @@ export const UserForm = React.memo<UserFormProps>(({
           variant="contained"
           color="primary"
           disabled={isLoading || isSubmitting}
-          aria-busy={isSubmitting}
+          aria-busy={isLoading || isSubmitting}
         >
           {initialData ? 'Update User' : 'Create User'}
         </Button>
