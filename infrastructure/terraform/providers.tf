@@ -71,8 +71,10 @@ provider "azurerm" {
 
 # Random provider configuration for generating unique identifiers
 provider "random" {
+  # Default configuration is sufficient for basic random value generation
 }
 
 # TLS provider configuration for managing certificates and secure communications
 provider "tls" {
+  # Default configuration is sufficient for TLS operations
 }
