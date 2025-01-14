@@ -1,137 +1,130 @@
 /**
- * Custom React hook for type-safe localStorage management with encryption, compression,
- * and cross-tab synchronization support.
+ * Custom React hook for type-safe localStorage management with encryption and state synchronization.
+ * Provides secure client-side storage with automatic JSON serialization and error handling.
  * @version 1.0.0
  */
 
 import { useState, useEffect, useCallback } from 'react'; // v18.2.0
-import { setLocalStorage, getLocalStorage } from '../utils/storage';
-import type { ApiResponse } from '../types/common';
+import { setLocalStorage, getLocalStorage, StorageOptions } from '../utils/storage';
+import { ApiResponse } from '../types/common';
 
 /**
- * Options for configuring storage behavior
+ * Hook return type with strongly typed value and operations
  */
-interface StorageOptions {
-  encrypt?: boolean;
-  compress?: boolean;
-  expiresIn?: number;
-  syncTabs?: boolean;
-}
+type UseLocalStorageReturn<T> = [
+  T, // Current value
+  (value: T) => Promise<void>, // Setter function
+  () => Promise<void>, // Remove function
+  boolean, // Loading state
+  string | null // Error message
+];
 
 /**
- * Custom hook for managing localStorage with React state synchronization
+ * Custom hook for managing localStorage values with React state synchronization
  * @param key - Storage key
  * @param initialValue - Initial value of type T
- * @param options - Storage configuration options
- * @returns Tuple containing [value, setter, remove, loading, error]
+ * @param options - Storage options for encryption and compression
+ * @returns Tuple containing value, setter, remove function, loading state, and error
  */
 export function useLocalStorage<T>(
   key: string,
   initialValue: T,
   options: StorageOptions = {}
-): [T, (value: T) => Promise<void>, () => Promise<void>, boolean, string | null] {
+): UseLocalStorageReturn<T> {
   // Initialize state with loading and error handling
   const [value, setValue] = useState<T>(initialValue);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load value from storage on mount
+  /**
+   * Load value from localStorage on mount and handle storage events
+   */
   useEffect(() => {
-    const loadStoredValue = async () => {
+    const loadValue = async () => {
       try {
         setIsLoading(true);
         setError(null);
 
         const response = getLocalStorage<T>(key);
-        
         if (response.success && response.data !== null) {
           setValue(response.data);
         } else if (!response.success) {
-          setError(response.error || 'Failed to load stored value');
-          // Fallback to initial value on error
-          setValue(initialValue);
+          setError(response.error || 'Failed to load value');
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error occurred');
-        setValue(initialValue);
+        setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadStoredValue();
-  }, [key, initialValue]);
+    // Load initial value
+    loadValue();
 
-  // Memoized setter function with storage update
-  const updateValue = useCallback(async (newValue: T): Promise<void> => {
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      const response: ApiResponse<void> = setLocalStorage(key, newValue, {
-        encrypt: options.encrypt,
-        compress: options.compress,
-        expiresIn: options.expiresIn
-      });
-
-      if (response.success) {
-        setValue(newValue);
-      } else {
-        setError(response.error || 'Failed to update stored value');
-        throw new Error(response.error || 'Storage update failed');
+    /**
+     * Handle storage events for cross-tab synchronization
+     */
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key && event.key.endsWith(key)) {
+        loadValue();
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
-      throw err;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [key, options]);
+    };
 
-  // Memoized remove function
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [key]);
+
+  /**
+   * Memoized setter function with error handling
+   */
+  const updateValue = useCallback(
+    async (newValue: T): Promise<void> => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        const response: ApiResponse<void> = setLocalStorage(key, newValue, options);
+        
+        if (response.success) {
+          setValue(newValue);
+        } else {
+          setError(response.error || 'Failed to update value');
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+        throw err;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [key, options]
+  );
+
+  /**
+   * Memoized remove function with cleanup
+   */
   const removeValue = useCallback(async (): Promise<void> => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const response: ApiResponse<void> = setLocalStorage(key, null, {
-        expiresIn: 0 // Immediate expiration
-      });
-
+      const response = setLocalStorage<null>(key, null, options);
+      
       if (response.success) {
         setValue(initialValue);
       } else {
-        setError(response.error || 'Failed to remove stored value');
-        throw new Error(response.error || 'Storage removal failed');
+        setError(response.error || 'Failed to remove value');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      setError(err instanceof Error ? err.message : 'Unknown error');
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, [key, initialValue]);
-
-  // Set up storage event listener for cross-tab synchronization
-  useEffect(() => {
-    if (!options.syncTabs) return;
-
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === key && event.newValue !== null) {
-        try {
-          const response = getLocalStorage<T>(key);
-          if (response.success && response.data !== null) {
-            setValue(response.data);
-          }
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Sync error occurred');
-        }
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [key, options.syncTabs]);
+  }, [key, initialValue, options]);
 
   return [value, updateValue, removeValue, isLoading, error];
 }
