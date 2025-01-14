@@ -1,14 +1,14 @@
 """
 Logging configuration module for the AI-powered Product Catalog Search System.
-Implements comprehensive logging infrastructure with Azure Monitor integration,
-structured logging, and security audit capabilities.
+Implements comprehensive logging with Azure Monitor integration, structured logging,
+and security audit capabilities.
 
 Version: 1.0.0
 """
 
 import os  # version: latest
-import logging  # version: 3.11+
-from logging.handlers import RotatingFileHandler  # version: 3.11+
+import logging  # version: latest
+from logging.handlers import RotatingFileHandler  # version: latest
 from pythonjsonlogger import jsonlogger  # version: 2.0.0
 from azure.monitor.opentelemetry import AzureMonitorTraceExporter  # version: 1.0.0
 
@@ -21,7 +21,7 @@ LOG_LEVELS = {
     "production": "WARNING"
 }
 
-# Log format with correlation ID and component tracking
+# Log format with correlation ID and environment tracking
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(correlation_id)s - %(environment)s - %(component)s - %(message)s"
 
 # JSON log format with enhanced fields
@@ -44,44 +44,49 @@ class JsonFormatter(jsonlogger.JsonFormatter):
 
     def format(self, record):
         """Formats log record as JSON with enhanced fields and security features."""
-        # Add correlation ID if not present
-        if not hasattr(record, 'correlation_id'):
-            record.correlation_id = 'undefined'
+        # Extract base log record fields
+        log_dict = {
+            'timestamp': self.formatTime(record),
+            'level': record.levelname,
+            'name': record.name,
+            'message': record.getMessage(),
+            'environment': getattr(record, 'environment', settings.get('ENVIRONMENT', 'development')),
+            'component': getattr(record, 'component', 'unknown'),
+            'correlation_id': getattr(record, 'correlation_id', 'unknown')
+        }
 
-        # Add environment tag
-        record.environment = os.getenv('ENVIRONMENT', 'development')
-
-        # Add component name
-        if not hasattr(record, 'component'):
-            record.component = record.name
-
-        # Format stack trace if present
+        # Add stack trace for errors
         if record.exc_info:
-            record.stack_trace = self.formatException(record.exc_info)
-        else:
-            record.stack_trace = None
-
-        # Apply data masking for sensitive information
-        if hasattr(record, 'msg'):
-            for sensitive in ['password', 'token', 'key', 'secret']:
-                if sensitive in str(record.msg).lower():
-                    record.msg = f'[MASKED {sensitive.upper()}]'
+            log_dict['stack_trace'] = self.formatException(record.exc_info)
 
         # Add security context
-        for key, value in self.security_context.items():
-            setattr(record, key, value)
+        if hasattr(record, 'security_context'):
+            log_dict.update(record.security_context)
 
         # Add performance metrics
-        for key, value in self.performance_metrics.items():
-            setattr(record, key, value)
+        if hasattr(record, 'performance_metrics'):
+            log_dict.update(record.performance_metrics)
 
-        return super().format(record)
+        # Mask sensitive data
+        self._mask_sensitive_data(log_dict)
+
+        return self.serialize(log_dict)
+
+    def _mask_sensitive_data(self, log_dict):
+        """Masks sensitive data in log entries."""
+        sensitive_fields = ['password', 'token', 'key', 'secret', 'credential']
+        for key in log_dict:
+            if any(field in key.lower() for field in sensitive_fields):
+                log_dict[key] = '********'
 
 def setup_logging():
     """Initializes and configures application-wide logging settings with comprehensive monitoring integration."""
     # Get environment-specific log level
-    log_level = getattr(logging, LOG_LEVELS.get(os.getenv('ENVIRONMENT', 'development')))
-    
+    log_level = getattr(logging, LOG_LEVELS.get(
+        settings.get('ENVIRONMENT', 'development').lower(),
+        'INFO'
+    ))
+
     # Configure root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -92,11 +97,9 @@ def setup_logging():
     # Configure console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(json_formatter)
-    console_handler.setLevel(log_level)
     root_logger.addHandler(console_handler)
 
     # Configure rotating file handler
-    os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
     file_handler = RotatingFileHandler(
         LOG_FILE_PATH,
         maxBytes=MAX_BYTES,
@@ -104,65 +107,58 @@ def setup_logging():
         encoding='utf-8'
     )
     file_handler.setFormatter(json_formatter)
-    file_handler.setLevel(log_level)
     root_logger.addHandler(file_handler)
 
     # Configure Azure Monitor integration for production
-    if os.getenv('ENVIRONMENT') == 'production':
+    if settings.get('ENVIRONMENT') == 'production':
         configure_azure_monitor()
 
 def get_logger(module_name: str) -> logging.Logger:
     """Returns a configured logger instance for the specified module with enhanced tracking capabilities."""
     logger = logging.getLogger(module_name)
     
-    # Set environment-specific level
-    logger.setLevel(getattr(logging, LOG_LEVELS.get(os.getenv('ENVIRONMENT', 'development'))))
-    
+    # Set environment-specific configuration
+    logger.setLevel(LOG_LEVELS.get(
+        settings.get('ENVIRONMENT', 'development').lower(),
+        'INFO'
+    ))
+
     # Add correlation ID support
-    logger.correlation_id = None
-    
-    # Configure component tagging
-    logger.component = module_name
-    
-    # Set up performance tracking
-    logger.performance_metrics = {}
-    
-    # Enable security context
-    logger.security_context = {}
-    
+    logger = logging.LoggerAdapter(logger, {
+        'correlation_id': 'unknown',
+        'environment': settings.get('ENVIRONMENT', 'development'),
+        'component': module_name
+    })
+
     return logger
 
 @staticmethod
 def configure_azure_monitor():
     """Sets up Azure Monitor integration for production logging with enhanced reliability."""
     try:
-        # Initialize Azure Monitor exporter with connection string
-        exporter = AzureMonitorTraceExporter.from_connection_string(
-            settings['azure']['application_insights']['connection_string']
+        # Initialize Azure Monitor exporter
+        exporter = AzureMonitorTraceExporter(
+            connection_string=settings['azure']['application_insights']['connection_string']
         )
 
-        # Configure connection pooling
-        exporter.connection_pool_settings.max_connections = 100
-        exporter.connection_pool_settings.timeout_seconds = 30
-
-        # Set up custom dimensions
+        # Configure custom dimensions
         exporter.add_telemetry_processor(lambda envelope: {
-            'Environment': os.getenv('ENVIRONMENT'),
-            'Component': envelope.tags.get('ai.cloud.role', 'undefined'),
-            'CorrelationId': envelope.tags.get('ai.operation.id', 'undefined')
+            envelope.tags['ai.cloud.role'] = 'catalog-search-api',
+            envelope.tags['ai.cloud.roleInstance'] = os.getenv('HOSTNAME', 'unknown')
         })
 
-        # Initialize performance metrics
-        exporter.track_metric('ProcessingTime')
-        exporter.track_metric('RequestCount')
-        exporter.track_metric('ErrorCount')
+        # Configure sampling rate
+        sampling_rate = 1.0 if settings.get('ENVIRONMENT') != 'production' else 0.1
+        exporter.sampling_rate = sampling_rate
 
-        # Configure distributed tracing
-        exporter.sampling_percentage = settings['azure']['application_insights']['sampling_percentage']
+        # Initialize trace provider
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        trace_provider = TracerProvider()
+        trace_provider.add_span_processor(BatchSpanProcessor(exporter))
+        trace.set_tracer_provider(trace_provider)
 
     except Exception as e:
         logging.error(f"Failed to configure Azure Monitor: {str(e)}")
-        raise
-
-# Export required components
-__all__ = ['setup_logging', 'get_logger', 'JsonFormatter']
