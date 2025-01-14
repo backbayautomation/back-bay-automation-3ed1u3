@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
-  Typography,
+  LinearProgress,
   IconButton,
   Tooltip,
-  LinearProgress,
+  Typography,
   Alert,
-  useTheme,
 } from '@mui/material'; // v5.14.0
 import {
   Refresh as RefreshIcon,
@@ -21,21 +20,25 @@ import { Document, ProcessingStatus } from '../../../types/document';
 import { useWebSocket } from '../../../hooks/useWebSocket';
 import documentService from '../../../services/documents';
 
+// Enhanced props interface with accessibility and monitoring support
 interface ProcessingQueueProps {
   refreshInterval?: number;
   autoRefresh?: boolean;
   onProcessingComplete?: (document: Document) => void;
   onError?: (error: Error) => void;
+  ariaLabel?: string;
 }
 
+// Enhanced queue state interface with WebSocket support
 interface QueueState {
   documents: Document[];
   loading: boolean;
   error: string | null;
-  total: number;
-  page: number;
+  cursor: string | null;
   pageSize: number;
   progressMap: Map<string, number>;
+  totalCount: number;
+  currentPage: number;
 }
 
 const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
@@ -43,257 +46,256 @@ const ProcessingQueue: React.FC<ProcessingQueueProps> = ({
   autoRefresh = true,
   onProcessingComplete,
   onError,
+  ariaLabel = 'Document processing queue'
 }) => {
-  const theme = useTheme();
+  // Enhanced state management with WebSocket integration
   const [state, setState] = useState<QueueState>({
     documents: [],
     loading: true,
     error: null,
-    total: 0,
-    page: 1,
+    cursor: null,
     pageSize: 10,
     progressMap: new Map(),
+    totalCount: 0,
+    currentPage: 1
   });
 
   // WebSocket connection for real-time updates
-  const { addListener, removeListener } = useWebSocket({
+  const { isConnected, addListener, removeListener } = useWebSocket({
     baseUrl: `${process.env.VITE_WS_URL}/documents`,
     autoConnect: true,
-    monitoringEnabled: true,
+    monitoringEnabled: true
   });
 
-  // Fetch documents with pagination and error handling
-  const fetchDocuments = useCallback(async () => {
-    try {
-      setState(prev => ({ ...prev, loading: true, error: null }));
-      const response = await documentService.getDocumentList({
-        page: state.page,
-        pageSize: state.pageSize,
-        sortBy: 'created_at',
-        order: 'desc',
-        filters: {
-          status: ['pending', 'queued', 'processing'],
-        },
-      });
-
-      setState(prev => ({
-        ...prev,
-        documents: response.items,
-        total: response.total,
-        loading: false,
-      }));
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch documents';
-      setState(prev => ({ ...prev, error: errorMessage, loading: false }));
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
-    }
-  }, [state.page, state.pageSize, onError]);
-
-  // Handle document processing updates via WebSocket
-  const handleProcessingUpdate = useCallback((update: { 
-    documentId: string; 
-    status: ProcessingStatus; 
-    progress: number;
-    error?: string;
-  }) => {
-    setState(prev => {
-      const newDocs = prev.documents.map(doc => {
-        if (doc.id === update.documentId) {
-          const updatedDoc = { 
-            ...doc, 
-            status: update.status,
-            error_message: update.error
-          };
-          
-          if (update.status === 'completed') {
-            onProcessingComplete?.(updatedDoc);
-          }
-          
-          return updatedDoc;
-        }
-        return doc;
-      });
-
-      const newProgressMap = new Map(prev.progressMap);
-      if (update.progress) {
-        newProgressMap.set(update.documentId, update.progress);
-      }
-
-      return {
-        ...prev,
-        documents: newDocs,
-        progressMap: newProgressMap,
-      };
-    });
-  }, [onProcessingComplete]);
-
-  // Set up WebSocket listeners and auto-refresh
-  useEffect(() => {
-    addListener('document.processing', handleProcessingUpdate);
-
-    let refreshTimer: NodeJS.Timeout;
-    if (autoRefresh) {
-      refreshTimer = setInterval(fetchDocuments, refreshInterval);
-    }
-
-    return () => {
-      removeListener('document.processing', handleProcessingUpdate);
-      if (refreshTimer) {
-        clearInterval(refreshTimer);
-      }
-    };
-  }, [addListener, removeListener, handleProcessingUpdate, fetchDocuments, autoRefresh, refreshInterval]);
-
-  // Initial data fetch
-  useEffect(() => {
-    fetchDocuments();
-  }, [fetchDocuments]);
-
-  // Handle retry action
-  const handleRetry = useCallback(async (documentId: string) => {
-    try {
-      await documentService.startDocumentProcessing(documentId);
-      fetchDocuments();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to retry processing';
-      setState(prev => ({ ...prev, error: errorMessage }));
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
-    }
-  }, [fetchDocuments, onError]);
-
-  // Handle cancel action
-  const handleCancel = useCallback(async (documentId: string) => {
-    try {
-      await documentService.cancelProcessing(documentId);
-      fetchDocuments();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to cancel processing';
-      setState(prev => ({ ...prev, error: errorMessage }));
-      onError?.(error instanceof Error ? error : new Error(errorMessage));
-    }
-  }, [fetchDocuments, onError]);
-
-  // Table columns configuration
+  // Memoized table columns with accessibility support
   const columns = useMemo(() => [
     {
       id: 'filename',
-      label: 'Document',
+      label: 'Document Name',
+      sortable: true,
       render: (doc: Document) => (
-        <Typography variant="body2" component="div">
+        <Typography variant="body2" component="span">
           {doc.filename}
-          {doc.error_message && (
-            <Tooltip title={doc.error_message}>
-              <ErrorIcon
-                sx={{
-                  color: theme.palette.error.main,
-                  marginLeft: 1,
-                  fontSize: 16,
-                }}
-              />
-            </Tooltip>
-          )}
         </Typography>
       ),
+      ariaLabel: 'Document filename'
+    },
+    {
+      id: 'type',
+      label: 'Type',
+      sortable: true,
+      render: (doc: Document) => doc.type.toUpperCase(),
+      ariaLabel: 'Document type'
     },
     {
       id: 'status',
       label: 'Status',
+      sortable: true,
       render: (doc: Document) => (
-        <Box sx={{ minWidth: 200 }}>
-          <Typography variant="body2" sx={{ mb: 1 }}>
-            {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
-          </Typography>
-          {(doc.status === 'processing' || doc.status === 'queued') && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {doc.status === 'processing' && (
             <LinearProgress
               variant="determinate"
               value={state.progressMap.get(doc.id) || 0}
-              sx={{ height: 4, borderRadius: 2 }}
+              sx={{ width: 100 }}
+              aria-label={`Processing progress: ${state.progressMap.get(doc.id) || 0}%`}
             />
+          )}
+          <Typography variant="body2" component="span">
+            {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
+          </Typography>
+          {doc.status === 'failed' && doc.error_message && (
+            <Tooltip title={doc.error_message}>
+              <ErrorIcon color="error" />
+            </Tooltip>
           )}
         </Box>
       ),
-    },
-    {
-      id: 'created_at',
-      label: 'Created',
-      render: (doc: Document) => (
-        <Typography variant="body2">
-          {format(new Date(doc.createdAt), 'MMM dd, yyyy HH:mm')}
-        </Typography>
-      ),
+      ariaLabel: 'Processing status'
     },
     {
       id: 'actions',
       label: 'Actions',
       render: (doc: Document) => (
-        <Box>
-          {doc.status === 'failed' && (
-            <Tooltip title="Retry Processing">
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          {doc.status === 'processing' && (
+            <Tooltip title="Cancel processing">
               <IconButton
+                onClick={() => handleCancelProcessing(doc.id)}
                 size="small"
-                onClick={() => handleRetry(doc.id)}
-                aria-label="retry processing"
-              >
-                <RetryIcon />
-              </IconButton>
-            </Tooltip>
-          )}
-          {(doc.status === 'processing' || doc.status === 'queued') && (
-            <Tooltip title="Cancel Processing">
-              <IconButton
-                size="small"
-                onClick={() => handleCancel(doc.id)}
-                aria-label="cancel processing"
+                aria-label={`Cancel processing for ${doc.filename}`}
               >
                 <CancelIcon />
               </IconButton>
             </Tooltip>
           )}
+          {doc.status === 'failed' && (
+            <Tooltip title="Retry processing">
+              <IconButton
+                onClick={() => handleRetryProcessing(doc.id)}
+                size="small"
+                aria-label={`Retry processing for ${doc.filename}`}
+              >
+                <RetryIcon />
+              </IconButton>
+            </Tooltip>
+          )}
         </Box>
       ),
-    },
-  ], [theme, state.progressMap, handleRetry, handleCancel]);
+      ariaLabel: 'Document actions'
+    }
+  ], [state.progressMap]);
+
+  // Load documents with cursor-based pagination
+  const loadDocuments = useCallback(async () => {
+    try {
+      setState(prev => ({ ...prev, loading: true, error: null }));
+      const response = await documentService.getDocumentList({
+        cursor: state.cursor,
+        limit: state.pageSize
+      });
+
+      setState(prev => ({
+        ...prev,
+        documents: response.items,
+        totalCount: response.total_count,
+        loading: false,
+        cursor: response.metadata?.next_cursor || null
+      }));
+    } catch (error) {
+      setState(prev => ({
+        ...prev,
+        loading: false,
+        error: (error as Error).message
+      }));
+      onError?.(error as Error);
+    }
+  }, [state.cursor, state.pageSize, onError]);
+
+  // Handle WebSocket document updates
+  const handleDocumentUpdate = useCallback((update: any) => {
+    setState(prev => {
+      const updatedDocs = prev.documents.map(doc => {
+        if (doc.id === update.documentId) {
+          if (update.status === 'completed' && onProcessingComplete) {
+            onProcessingComplete({ ...doc, ...update });
+          }
+          return { ...doc, ...update };
+        }
+        return doc;
+      });
+
+      const updatedProgress = new Map(prev.progressMap);
+      if (update.progress) {
+        updatedProgress.set(update.documentId, update.progress);
+      }
+
+      return {
+        ...prev,
+        documents: updatedDocs,
+        progressMap: updatedProgress
+      };
+    });
+  }, [onProcessingComplete]);
+
+  // Cancel document processing
+  const handleCancelProcessing = async (documentId: string) => {
+    try {
+      await documentService.cancelProcessing(documentId);
+      loadDocuments();
+    } catch (error) {
+      onError?.(error as Error);
+    }
+  };
+
+  // Retry failed document processing
+  const handleRetryProcessing = async (documentId: string) => {
+    try {
+      await documentService.retryProcessing(documentId);
+      loadDocuments();
+    } catch (error) {
+      onError?.(error as Error);
+    }
+  };
+
+  // Handle pagination changes
+  const handlePageChange = useCallback(({ page, pageSize }) => {
+    setState(prev => ({
+      ...prev,
+      currentPage: page,
+      pageSize,
+      cursor: null // Reset cursor on page change
+    }));
+  }, []);
+
+  // Set up WebSocket listeners and auto-refresh
+  useEffect(() => {
+    addListener('document.update', handleDocumentUpdate);
+    
+    let refreshTimer: NodeJS.Timeout;
+    if (autoRefresh) {
+      refreshTimer = setInterval(loadDocuments, refreshInterval);
+    }
+
+    return () => {
+      removeListener('document.update', handleDocumentUpdate);
+      if (refreshTimer) {
+        clearInterval(refreshTimer);
+      }
+    };
+  }, [addListener, removeListener, handleDocumentUpdate, loadDocuments, autoRefresh, refreshInterval]);
+
+  // Initial load and cursor changes
+  useEffect(() => {
+    loadDocuments();
+  }, [loadDocuments, state.cursor]);
 
   return (
-    <Box sx={{ width: '100%' }}>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="h6" component="h2">
-          Processing Queue
-        </Typography>
-        <Tooltip title="Refresh Queue">
+    <Box
+      role="region"
+      aria-label={ariaLabel}
+      sx={{ width: '100%', overflow: 'hidden' }}
+    >
+      {!isConnected && (
+        <Alert 
+          severity="warning" 
+          sx={{ mb: 2 }}
+        >
+          Real-time updates are currently unavailable. Trying to reconnect...
+        </Alert>
+      )}
+
+      {state.error && (
+        <Alert 
+          severity="error" 
+          sx={{ mb: 2 }}
+        >
+          {state.error}
+        </Alert>
+      )}
+
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Tooltip title="Refresh queue">
           <IconButton
-            onClick={fetchDocuments}
+            onClick={() => loadDocuments()}
             disabled={state.loading}
-            aria-label="refresh queue"
+            aria-label="Refresh processing queue"
           >
             <RefreshIcon />
           </IconButton>
         </Tooltip>
       </Box>
 
-      {state.error && (
-        <Alert 
-          severity="error" 
-          sx={{ mb: 2 }}
-          onClose={() => setState(prev => ({ ...prev, error: null }))}
-        >
-          {state.error}
-        </Alert>
-      )}
-
       <DataTable
         data={state.documents}
         columns={columns}
-        page={state.page}
-        pageSize={state.pageSize}
-        total={state.total}
         loading={state.loading}
-        onPageChange={({ page, pageSize }) => {
-          setState(prev => ({ ...prev, page, pageSize }));
-        }}
+        page={state.currentPage}
+        pageSize={state.pageSize}
+        total={state.totalCount}
+        onPageChange={handlePageChange}
         enableVirtualization
-        emptyMessage="No documents in processing queue"
-        ariaLabel="Document processing queue"
+        ariaLabel="Document processing queue table"
       />
     </Box>
   );
