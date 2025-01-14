@@ -1,34 +1,39 @@
+"""
+Pydantic schema models for document chunks used in vector search.
+Implements comprehensive validation for document segments that are processed for embeddings and similarity search.
+"""
+
 # pydantic v2.0.0
+from pydantic import BaseModel, UUID4, Field, ConfigDict
 from datetime import datetime
 from typing import Optional, Dict, Any
-from pydantic import BaseModel, UUID4, Field, ConfigDict
 
 from app.schemas.document import Document
 
 class ChunkBase(BaseModel):
-    """Base Pydantic model for chunk data with common attributes and validation rules."""
+    """Base Pydantic model for chunk data with common attributes and validation."""
     content: str = Field(
         ...,
         min_length=10,
         max_length=8192,
         description="Text content of the document chunk",
-        examples=["Technical specifications for the A123 pump model include flow rate of 500 GPM..."]
+        examples=["Technical specifications for pump model A123 include flow rate of 500 GPM"]
     )
     sequence: int = Field(
         ...,
         ge=0,
         le=999999,
-        description="Sequential position of the chunk within the document",
-        examples=[0, 1, 2]
+        description="Sequential position of chunk in document",
+        examples=[1, 42, 156]
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional metadata about the chunk",
+        description="Additional metadata for the chunk",
         examples=[{
             "page_number": 1,
             "position": 0,
             "confidence": 0.95,
-            "word_count": 150
+            "section": "Technical Specifications"
         }]
     )
 
@@ -38,13 +43,13 @@ class ChunkBase(BaseModel):
         strict=True,
         json_schema_extra={
             "example": {
-                "content": "Technical specifications for the A123 pump model include flow rate of 500 GPM...",
-                "sequence": 0,
+                "content": "Technical specifications for pump model A123 include flow rate of 500 GPM",
+                "sequence": 1,
                 "metadata": {
                     "page_number": 1,
                     "position": 0,
                     "confidence": 0.95,
-                    "word_count": 150
+                    "section": "Technical Specifications"
                 }
             }
         }
@@ -58,23 +63,7 @@ class ChunkCreate(ChunkBase):
         examples=["123e4567-e89b-12d3-a456-426614174000"]
     )
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "document_id": "123e4567-e89b-12d3-a456-426614174000",
-                "content": "Technical specifications for the A123 pump model include flow rate of 500 GPM...",
-                "sequence": 0,
-                "metadata": {
-                    "page_number": 1,
-                    "position": 0,
-                    "confidence": 0.95,
-                    "word_count": 150
-                }
-            }
-        }
-    )
-
-class ChunkInDB(ChunkBase):
+class ChunkInDB(BaseModel):
     """Pydantic model for chunk data as stored in database with system fields."""
     id: UUID4 = Field(
         ...,
@@ -91,34 +80,35 @@ class ChunkInDB(ChunkBase):
 
     model_config = ConfigDict(
         from_attributes=True,
+        populate_by_name=True,
         strict=True
     )
 
-class Chunk(ChunkInDB):
+class Chunk(ChunkBase, ChunkInDB):
     """Complete Pydantic model for chunk response data with relationships and embeddings."""
     document: Optional[Document] = Field(
         None,
-        description="Parent document reference"
+        description="Parent document details"
     )
     embedding: Optional[Dict[str, Any]] = Field(
         None,
-        description="Vector embedding data for similarity search",
+        description="Vector embedding data",
         examples=[{
             "vector": [0.1, 0.2, 0.3],
-            "dimensions": 1536,
+            "dimension": 1536,
             "model": "text-embedding-ada-002"
         }]
     )
 
     @classmethod
-    def from_orm(cls, orm_model: Any) -> 'Chunk':
-        """Create Chunk schema from ORM model with relationship handling.
+    def from_orm(cls, orm_model: Any) -> "Chunk":
+        """Create Chunk schema from ORM model with validation.
         
         Args:
             orm_model: SQLAlchemy ORM model instance
             
         Returns:
-            Chunk: Validated Chunk schema instance
+            Chunk: Validated chunk schema instance
             
         Raises:
             ValueError: If ORM model is invalid or missing required fields
@@ -141,29 +131,31 @@ class Chunk(ChunkInDB):
             
             # Create and validate Chunk instance
             return cls(**data)
+            
         except Exception as e:
             raise ValueError(f"Failed to create Chunk from ORM model: {str(e)}")
 
     model_config = ConfigDict(
         from_attributes=True,
+        populate_by_name=True,
         strict=True,
         json_schema_extra={
             "example": {
                 "id": "123e4567-e89b-12d3-a456-426614174000",
-                "document_id": "987fcdeb-51a2-43f7-9876-543210987654",
-                "content": "Technical specifications for the A123 pump model include flow rate of 500 GPM...",
-                "sequence": 0,
+                "document_id": "987fcdeb-51a2-43f7-9012-345678901234",
+                "content": "Technical specifications for pump model A123 include flow rate of 500 GPM",
+                "sequence": 1,
                 "metadata": {
                     "page_number": 1,
                     "position": 0,
                     "confidence": 0.95,
-                    "word_count": 150
+                    "section": "Technical Specifications"
                 },
                 "created_at": "2024-01-20T12:00:00Z",
                 "document": None,
                 "embedding": {
                     "vector": [0.1, 0.2, 0.3],
-                    "dimensions": 1536,
+                    "dimension": 1536,
                     "model": "text-embedding-ada-002"
                 }
             }
