@@ -1,21 +1,11 @@
-/// <reference types="vite/client" /> // vite ^4.4.9
+/// <reference types="vite/client" /> // Vite ^4.4.9
 
-// Environment variable declarations
-interface ImportMetaEnv {
-  readonly VITE_APP_TITLE: string;
-  readonly VITE_API_URL: string;
-  readonly VITE_AUTH_DOMAIN: string;
-}
-
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
-}
-
-// Asset type definitions
+// Interface for image assets supporting multiple formats
 export interface ImageAsset {
   src: string;
 }
 
+// Interface for SVG assets with React component support
 export interface SVGComponent {
   ReactComponent: React.FC<React.SVGProps<SVGSVGElement>>;
   src: string;
@@ -61,4 +51,15 @@ declare module '*.css' {
 declare module '*.scss' {
   const content: { [className: string]: string };
   export default content;
+}
+
+// Environment variable declarations
+interface ImportMetaEnv {
+  readonly VITE_APP_TITLE: string;
+  readonly VITE_API_URL: string;
+  readonly VITE_AUTH_DOMAIN: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
 }
